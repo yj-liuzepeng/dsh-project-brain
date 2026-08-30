@@ -7,11 +7,11 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-public_beta-orange)](./RELEASE_CHECKLIST.md)
 
-**A persistent project brain for DSH Desktop.** It analyzes the active workspace, explains the architecture, preserves decisions and development history, and restores the right context in future sessions.
+**A persistent project intelligence and memory plugin for DSH.** It analyzes the active workspace, explains the architecture, preserves decisions and development history, and restores the right context in future sessions.
 
 Instead of making every new conversation rediscover the repository, dsh-project-brain stores structured knowledge inside the project itself and keeps getting more useful as the project evolves.
 
-> Current release: `0.7.0-beta.1`. The core workflows, release build, isolation checks, and privacy checks pass automatically. Broader real-world DSH Desktop testing is still in progress.
+> Current release: `0.7.0-beta.1`. The core workflows, release build, isolation checks, and privacy checks pass automatically. Broader real-world testing across DSH profiles and clients is still in progress.
 
 [GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
@@ -133,13 +133,19 @@ Set `architectureLlmIncludeSource: false` to send structure only, or `architectu
 
 ## Quick start
 
-Install the tagged public beta into your DSH Desktop profile:
+Install the tagged public beta into the DSH profile you use:
 
 ```bash
-dsh plugin --profile desktop add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile <profile> add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
 ```
 
-Fully restart DSH Desktop after installation or upgrade. The package contains prebuilt Host and Client bundles, so users do not need Node.js or a local build.
+For example, use `--profile web` with `dsh web`, or `--profile desktop` when your Desktop distribution runs that profile. Restart the active DSH process after installation or upgrade; for DSH Desktop, quit and reopen the application completely. The package contains prebuilt Host and Client bundles, so users do not need Node.js or a local build.
+
+### Runtime compatibility
+
+- The Host plugin provides workspace analysis, 13 `project_*` tools, persistent memory, context injection, TODOs, and architecture analysis to a compatible DSH profile.
+- The Dashboard and TodoStrip are a DSH Web client plugin (`platform: web`). They work in DSH Web and in Desktop distributions that host the DSH Web client.
+- A pure CLI/TUI client does not render the Dashboard. Core Host capabilities may still be used when that profile provides the plugin's required DSH services; non-Web profile coverage is still being validated during beta.
 
 For source development, Node.js `22.19+` or `24+` is required:
 

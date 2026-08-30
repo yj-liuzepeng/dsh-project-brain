@@ -17,6 +17,7 @@
 
 - 扩展 DSH `0.1.0-rc.x` / `0.1.1-rc.x` peer 兼容范围，修复空项目安装 tarball 时 `@deepseek-ai/dsh-tools` 版本冲突导致的 `ERESOLVE`。
 - 新增 `npm run verify:install`，在临时干净项目中验证真实发布包和可选 DSH peer 依赖解析。
+- 修正公开定位文案：插件面向 DSH profile，Dashboard 属于 Web Client 能力，DSH Desktop 是支持的承载方式之一而非唯一运行环境。
 
 ## [v0.7.0-beta.1] - 2026-08-30
 

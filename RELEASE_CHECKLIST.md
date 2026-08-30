@@ -19,9 +19,9 @@ npm audit
 
 `verify:install` 会从当前源码生成真实 tarball，在临时空项目中让 npm 正常解析可选 DSH peers 并安装，再验证 Host、Client 和 patch 入口；用于提前发现用户安装时的 `ERESOLVE` 或缺少构建产物问题。
 
-## DSH Desktop 人工验收
+## DSH profile 与客户端人工验收
 
-- [ ] 从干净 profile 安装 GitHub/NPM 包并完整重启 DSH Desktop
+- [ ] 从干净 profile 安装 GitHub/NPM 包并重启当前 DSH 进程
 - [ ] 普通单仓库初始化、重扫、四个 Dashboard 页签正常
 - [ ] Monorepo 初始化后生成职责级架构报告
 - [ ] 在两个 workspace 间切换，项目数据和记忆不串台
@@ -31,6 +31,8 @@ npm audit
 - [ ] LLM 不可用、超时或 JSON 异常时正确降级为本地分析
 - [ ] 默认关键词检索正常；可选 Embedding 配置后混合检索正常
 - [ ] 卸载插件不会删除 workspace 中的 `.project-brain/`
+- [ ] 在 DSH Web 或承载 Web Client 的 Desktop 环境验证 Dashboard 与 TodoStrip
+- [ ] 在至少一个非 Web profile 验证 Host 工具兼容性，或明确记录缺失的 required service
 
 ## 发布分级
 

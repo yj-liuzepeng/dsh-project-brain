@@ -7,11 +7,11 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-public_beta-orange)](./RELEASE_CHECKLIST.md)
 
-**DSH Desktop 的持久化项目大脑。** 它分析当前工作区、解释项目架构、保存开发决策与历史，并在后续 Session 中自动恢复正确的项目上下文。
+**DSH 的持久化项目智能与记忆插件。** 它分析当前工作区、解释项目架构、保存开发决策与历史，并在后续 Session 中自动恢复正确的项目上下文。
 
 它的目标不是让每个新对话重新理解仓库，而是把重要知识沉淀在项目内部，随着持续开发越来越熟悉项目。
 
-> 当前版本：`0.7.0-beta.1` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大真实 DSH Desktop 环境的试用范围。
+> 当前版本：`0.7.0-beta.1` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大不同 DSH profile 与客户端环境的真实试用范围。
 
 [GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
@@ -133,13 +133,19 @@ embeddingApiKeyEnv: PROJECT_BRAIN_EMBEDDING_API_KEY
 
 ## 快速开始
 
-将已发布的公测标签安装到 DSH Desktop profile：
+将已发布的公测标签安装到你正在使用的 DSH profile：
 
 ```bash
-dsh plugin --profile desktop add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile <profile> add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
 ```
 
-安装或升级后请完整重启 DSH Desktop。发布包已包含预构建 Host/Client bundle，普通用户无需安装 Node.js 或本地编译。
+例如，`dsh web` 通常使用 `--profile web`；如果你的 Desktop 发行版运行 `desktop` profile，则使用 `--profile desktop`。安装或升级后需要重启当前 DSH 进程；使用 DSH Desktop 时应完全退出并重新打开。发布包已包含预构建 Host/Client bundle，普通用户无需安装 Node.js 或本地编译。
+
+### 运行环境兼容性
+
+- Host 插件为兼容的 DSH profile 提供工作区分析、13 个 `project_*` 工具、长期记忆、上下文注入、待办和架构分析。
+- Dashboard 与 TodoStrip 是 DSH Web Client 插件（`platform: web`），可用于 DSH Web，以及承载 DSH Web Client 的 Desktop 发行版。
+- 纯 CLI/TUI 客户端不会显示 Dashboard；当对应 profile 提供插件所需的 DSH Host services 时，仍可使用核心 Host 能力。非 Web profile 的真实兼容矩阵仍在公测验证中。
 
 参与源码开发时需要 Node.js `22.19+` 或 `24+`：
 

@@ -1,6 +1,6 @@
 # DSH 插件市场文案
 
-> 发布状态：`0.7.0-beta.1` 公测候选。允许 GitHub 用户安装试用；完成目标 DSH Desktop 真实安装矩阵和商店截图后再提交稳定版。
+> 发布状态：`0.7.0-beta.1` 公测候选。允许 GitHub 用户安装试用；完成目标 DSH profiles、Web Client 与 Desktop 承载环境的真实安装矩阵后再提交稳定版。
 
 ## 名称
 
@@ -53,5 +53,5 @@ dsh-project-brain 为每个 DSH workspace 建立独立的本地“项目大脑�
 - [x] `npm audit`：0 vulnerabilities
 - [x] MIT License
 - [x] README 已包含 Dashboard、架构分层和任务时间线截图
-- [ ] 在目标 DSH Desktop 版本完成一次真实安装和跨项目切换验收
+- [ ] 在目标 DSH profile 与客户端环境完成一次真实安装和跨项目切换验收
 - [ ] 补充 TodoStrip、项目初始化和跨 Session 恢复截图

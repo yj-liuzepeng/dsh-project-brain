@@ -1,7 +1,7 @@
 {
   "name": "dsh-project-brain",
   "version": "0.7.0-beta.1",
-  "description": "DSH 持久化项目大脑：理解代码架构、记住项目历史、跨 Session 保持上下文",
+  "description": "Persistent project intelligence and memory plugin for DSH: architecture analysis, cross-session context, TODOs, and optional hybrid retrieval",
   "license": "MIT",
   "repository": {
     "type": "git",
