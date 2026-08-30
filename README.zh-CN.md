@@ -2,7 +2,7 @@
 
 [English](./README.md) · **简体中文**
 
-[![Version](https://img.shields.io/badge/version-0.7.0--beta.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0--beta.2-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-public_beta-orange)](./RELEASE_CHECKLIST.md)
@@ -11,9 +11,9 @@
 
 它的目标不是让每个新对话重新理解仓库，而是把重要知识沉淀在项目内部，随着持续开发越来越熟悉项目。
 
-> 当前版本：`0.7.0-beta.1` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大不同 DSH profile 与客户端环境的真实试用范围。
+> 当前版本：`0.7.0-beta.2` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大不同 DSH profile 与客户端环境的真实试用范围。
 
-[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.2) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## 界面预览
 
@@ -92,10 +92,12 @@ V2 记忆包含重要性、可信度、生命周期状态、来源、时间、�
 记忆主要通过三条路径产生：
 
 1. Agent 使用 `project_memory_add` 主动记录稳定决策和经验。
-2. Session 结束时，为已初始化项目记录去重后的 Git 变更摘要。
+2. Session 结束时，记录去重后的 Git 变更摘要，并复用当前 DSH 模型抽取少量、有证据的长期项目事实。凭据、工具输出和非文本内容会被过滤；模型不可用或输出异常时安全降级为仅 Git 记忆。
 3. 架构差异分析生成 architecture/change 类型记忆。
 
 “整理记忆”会先预览合并和归档候选，只有用户确认后才真正写入。
+
+Session 抽取可通过 `sessionSemanticMemoryEnabled`、`sessionSemanticMaxChars`、`sessionSemanticMaxItems` 和 `sessionSemanticTimeoutMs` 配置；关闭后仍保留纯 Git 摘要。
 
 ## 记忆检索
 
@@ -136,7 +138,7 @@ embeddingApiKeyEnv: PROJECT_BRAIN_EMBEDDING_API_KEY
 将已发布的公测标签安装到你正在使用的 DSH profile：
 
 ```bash
-dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.2
 ```
 
 例如，`dsh web` 通常使用 `--profile web`；如果你的 Desktop 发行版运行 `desktop` profile，则使用 `--profile desktop`。安装或升级后需要重启当前 DSH 进程；使用 DSH Desktop 时应完全退出并重新打开。发布包已包含预构建 Host/Client bundle，普通用户无需安装 Node.js 或本地编译。
@@ -187,6 +189,7 @@ Dashboard 快捷操作会在后台执行这些工作流，并提供加载、确�
 ## 隐私与安全
 
 - 项目知识保存在 `<workspace>/.project-brain/`；只有显式启用的模型能力才会向对应服务发送受限制的内容。
+- Session 语义记忆会把受长度限制的用户/助手文本发送给 DSH 当前选择的模型服务；发送前会排除工具输出、System 消息并清洗可识别凭据。可设置 `sessionSemanticMemoryEnabled: false` 关闭。
 - Client RPC 不能传入文件路径，Host 只使用实时 Session 工作区。
 - 工具执行优先使用可信 Session 路径，而不是模型提供的参数。
 - 未初始化项目不会被 Session summarizer 静默创建数据。
@@ -211,11 +214,11 @@ npm audit
 
 ## 当前限制
 
-- Session 摘要目前基于 Git commit 窗口，完整对话语义仍需要主动调用记忆或 TODO 工具沉淀。
+- Session 语义抽取有严格长度与数量限制，只保存少量稳定事实；关键意图仍建议通过记忆或 TODO 工具显式沉淀。
 - Session 第一次正常模型请求前可能没有可复用的 DSH 模型路由；此时先进行一次对话再重扫。
 - `project_diff` 使用独立的 OpenAI/Anthropic-compatible 配置；初始化架构分析使用当前 DSH Session 模型。
 - Git multi-pack-index（MIDX）尚未完整支持。
-- Host bundle 升级后需要完整重启 DSH Desktop。
+- Host bundle 升级后需要重启当前 DSH 进程；Desktop 用户应完整退出并重新打开应用。
 
 ## 文档
 

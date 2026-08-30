@@ -7,9 +7,26 @@
 //   fs.listDir(target)
 // 本模块只依赖 resolve/readText/writeText（+ 可选 mkdir），全部容错。
 
+export function assertSafeProjectPath(projectPath) {
+  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!rawBase || rawBase === "." || rawBase.includes("\u0000") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase)
+    || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
+    const error = new Error("Refusing Project Brain access without a concrete workspace root");
+    error.code = "E_UNSAFE_PROJECT_PATH";
+    throw error;
+  }
+  return rawBase.replace(/[\\/]+$/, "");
+}
+
 export function brainPath(projectPath, file) {
-  const base = String(projectPath || ".").replace(/[\\/]+$/, "");
-  return base + "/.project-brain/" + file;
+  const base = assertSafeProjectPath(projectPath);
+  const relativeFile = String(file || "").replace(/\\/g, "/");
+  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
+    const error = new Error("Refusing Project Brain path outside .project-brain");
+    error.code = "E_UNSAFE_BRAIN_FILE";
+    throw error;
+  }
+  return base + "/.project-brain/" + relativeFile;
 }
 
 export async function readText(fs, path) {

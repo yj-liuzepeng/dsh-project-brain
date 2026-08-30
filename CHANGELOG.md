@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+## [v0.7.0-beta.2] - 2026-08-30
+
+### Added（新增）
+
+- Session 结束时复用当前 DSH Session 的 provider/model，从用户与助手文本中抽取最多 4 条稳定项目记忆；无需单独配置对话模型。
+- 语义记忆增加输入长度限制、凭据清洗、严格 JSON 校验、相对文件路径验证、跨 Session 内容指纹去重和失败降级。
+- 发布门禁统一覆盖 13 组 smoke suite、构建、发布隐私检查、干净 tarball 安装与依赖审计。
+
+### Fixed（修复）
+
+- 无法确认 workspace 时不再允许回退写入进程当前目录；所有 Project Brain 文件被限制在已解析项目的 `.project-brain/` 内。
+- 公开定位统一为 DSH 插件；Dashboard/TodoStrip 明确属于 Web Client 能力，Desktop 只是支持的承载方式之一。
+- 扩展 DSH `0.1.0-rc.x` / `0.1.1-rc.x` peer 兼容范围，修复干净安装时的 `ERESOLVE`。
+
+### Tests（测试）
+
+- 新增 Session 语义记忆测试，覆盖当前模型路由复用、敏感内容过滤、工具输出排除、路径校验、去重和无服务降级。
+- 发布校验新增 README/CHANGELOG/包版本一致性、DSH 通用定位和 Git tag 对齐检查。
+
 ### Documentation（文档）
 
 - README 改为英文主页面，并提供顶部简体中文切换入口和完整 `README.zh-CN.md`。
@@ -15,7 +34,6 @@
 
 ### Fixed（修复）
 
-- 扩展 DSH `0.1.0-rc.x` / `0.1.1-rc.x` peer 兼容范围，修复空项目安装 tarball 时 `@deepseek-ai/dsh-tools` 版本冲突导致的 `ERESOLVE`。
 - 新增 `npm run verify:install`，在临时干净项目中验证真实发布包和可选 DSH peer 依赖解析。
 - 修正公开定位文案：插件面向 DSH profile，Dashboard 属于 Web Client 能力，DSH Desktop 是支持的承载方式之一而非唯一运行环境。
 

@@ -2,7 +2,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-[![Version](https://img.shields.io/badge/version-0.7.0--beta.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0--beta.2-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-public_beta-orange)](./RELEASE_CHECKLIST.md)
@@ -11,9 +11,9 @@
 
 Instead of making every new conversation rediscover the repository, dsh-project-brain stores structured knowledge inside the project itself and keeps getting more useful as the project evolves.
 
-> Current release: `0.7.0-beta.1`. The core workflows, release build, isolation checks, and privacy checks pass automatically. Broader real-world testing across DSH profiles and clients is still in progress.
+> Current release: `0.7.0-beta.2`. The core workflows, release build, isolation checks, and privacy checks pass automatically. Broader real-world testing across DSH profiles and clients is still in progress.
 
-[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.2) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## Preview
 
@@ -92,10 +92,12 @@ Every new V2 memory includes importance, confidence, lifecycle status, source, t
 The plugin writes memories through three paths:
 
 1. The Agent records durable decisions and lessons with `project_memory_add`.
-2. Session shutdown records a deduplicated Git change summary for initialized projects.
+2. Session shutdown records a deduplicated Git change summary and uses the active DSH model to extract a small set of durable, evidence-based project facts. Credentials and non-text/tool output are excluded; unavailable or invalid model output degrades safely to Git-only memory.
 3. Architecture-diff analysis can generate architecture/change memories.
 
 The **Organize Memory** action first previews merge and archive candidates. It only writes changes after confirmation.
+
+Session extraction is configurable with `sessionSemanticMemoryEnabled`, `sessionSemanticMaxChars`, `sessionSemanticMaxItems`, and `sessionSemanticTimeoutMs`. Disable it to keep Session summarization Git-only.
 
 ## Retrieval
 
@@ -136,7 +138,7 @@ Set `architectureLlmIncludeSource: false` to send structure only, or `architectu
 Install the tagged public beta into the DSH profile you use:
 
 ```bash
-dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.2
 ```
 
 For example, use `--profile web` with `dsh web`, or `--profile desktop` when your Desktop distribution runs that profile. Restart the active DSH process after installation or upgrade; for DSH Desktop, quit and reopen the application completely. The package contains prebuilt Host and Client bundles, so users do not need Node.js or a local build.
@@ -187,6 +189,7 @@ Dashboard quick actions run these workflows in the background and provide loadin
 ## Privacy and security
 
 - Project knowledge stays under `<workspace>/.project-brain/` unless an explicitly enabled model capability sends bounded content to its configured provider.
+- Session semantic memory sends bounded user/assistant text to the provider already selected by DSH; tool output, system messages, and recognizable credentials are removed first. Set `sessionSemanticMemoryEnabled: false` to disable it.
 - Client RPC cannot provide a filesystem path; the Host uses the live Session workspace.
 - Tool execution prioritizes the trusted live Session path over model-provided arguments.
 - Uninitialized projects are not silently populated by the Session summarizer.
@@ -211,11 +214,11 @@ The automated suite covers runtime workspace resolution, cross-workspace isolati
 
 ## Current limitations
 
-- Session summaries currently use the Git commit window; complete conversational semantics still need explicit memory/TODO tool calls.
+- Session semantic extraction is intentionally bounded and only records a few durable facts. Explicit memory/TODO tools remain the most reliable way to preserve critical intent.
 - The current DSH model route may not exist before the Session makes its first normal model request. If so, chat once and rescan.
 - `project_diff` uses its own OpenAI/Anthropic-compatible configuration; architecture initialization uses the current DSH Session model.
 - Git multi-pack-index (MIDX) support is not yet complete.
-- Host bundle upgrades require a full DSH Desktop restart.
+- Host bundle upgrades require restarting the active DSH process; Desktop users should quit and reopen the application.
 
 ## Documentation
 

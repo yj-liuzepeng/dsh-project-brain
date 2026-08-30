@@ -2,10 +2,10 @@
 
 ## 公测试用安装
 
-当前 `0.7.0-beta.1` 已具备公开试用条件，代码与预构建发布包维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。将已发布标签安装到你正在使用的 DSH profile：
+当前 `0.7.0-beta.2` 已具备公开试用条件，代码与预构建发布包维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。将已发布标签安装到你正在使用的 DSH profile：
 
 ```bash
-dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.2
 ```
 
 `dsh web` 可使用 `--profile web`；Desktop 发行版如果运行 `desktop` profile，则使用 `--profile desktop`。安装命令会使用包内预构建 Host/Client bundle，普通用户不需要克隆源码或执行构建。安装或升级后需要重启当前 DSH 进程；使用 DSH Desktop 时请完全退出并重新打开。
@@ -50,6 +50,8 @@ npm run verify:install
 - Dashboard 标题默认显示“本地检索”；未配置向量模型也能正常查询和恢复记忆。
 
 架构语义分析默认直接使用当前 DSH Session 的模型，不需要单独配置 API，并发送有限关键源码摘要。若模型不可用会显示本地分析和错误码。设 `architectureLlmIncludeSource: false` 可只发送结构事实；设 `architectureLlmEnabled: false` 可完全本地。
+
+Session 结束时也会默认复用当前模型，从受长度限制的用户/助手文本中抽取最多 4 条稳定记忆；工具输出、System 消息和可识别凭据不会发送。可设置 `sessionSemanticMemoryEnabled: false` 关闭，或通过 `sessionSemanticMaxChars`、`sessionSemanticMaxItems`、`sessionSemanticTimeoutMs` 调整边界。模型不可用时自动保留纯 Git 摘要。
 
 完整公测验收项见 [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)。首次试用建议至少验证两个不同 workspace，确认切换项目后名称、架构、记忆和待办均随当前项目变化。
 

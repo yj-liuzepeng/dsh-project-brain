@@ -5,9 +5,7 @@
 // 数据收集（按成本由低到高，任一失败立刻降级）：
 //   1) git diff（v0.4.3 起用 v0.4.2 的 detector 纯 node git 客户端，不再依赖 DSH shell service）
 //      → 至少能写出本次改了哪些文件，进而生成一条 type=change 的 Memory
-//   2) （TODO）LLM 流式抽取：按 JSON Schema 输出 [{type, title, content, importance}]
-//      用 llm.stream + 30s timeout；现在留接口位，先打 try/catch 占位，避免在
-//      LLM 不可用/合约未确认时把整个 summarizer 拖垮
+//   2) LLM 流式抽取稳定的项目知识；严格校验、隐私清洗与去重，失败不阻塞 Git 摘要
 //
 // 写入：
 //   - .project-brain/memory.jsonl：append 一条 change/lesson/bug 等结构化记忆
@@ -21,6 +19,7 @@ import { makeMemoryEntry } from "./store/brain-logic.js";
 import { detectChanges } from "./diff/detector.js";
 import { scanAndWrite } from "../tools.js";
 import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
+import { extractSessionMemories } from "./memory/session-extractor.js";
 
 // 从 session 反推 cwd（不依赖 sandboxPolicy）
 function sessionCwd(session) {
@@ -47,7 +46,7 @@ function changeFingerprint(diff) {
   return "git-" + (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
+export async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, config = {}, logger }) {
   const log = (level, msg) => {
     try {
       const tag = "[dsh-project-brain] ";
@@ -86,6 +85,7 @@ export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
 
   const now = Date.now();
   const writes = [];
+  let semantic = { status: "not_requested", memories: [] };
 
   if (changedFiles.length > 0 && !duplicateChange) {
     // change 记忆：本次改了什么
@@ -100,10 +100,10 @@ export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
       relatedFiles: changedFiles.slice(0, 20),
       source: { kind: "session_summary", fingerprint, sessionId: sessionId || null },
     }, now);
-    writes.push(
-      appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry)
-        .then((ok) => log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`))
-    );
+    writes.push(async () => {
+      const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
+      log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`);
+    });
     log("info", `summarizer: detected ${changedFiles.length} changed files`);
   } else if (duplicateChange) {
     log("info", "summarizer: unchanged git window already recorded (" + fingerprint + ")");
@@ -111,32 +111,52 @@ export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
     log("info", "summarizer: no git diff (non-git repo or no changes)");
   }
 
-  // 2) timeline 事件：session_summary
+  // 2) 用当前 DSH Session 已选中的模型抽取稳定语义记忆。任何错误都降级，
+  //    避免模型服务或输出格式问题影响 Session 的正常关闭。
+  try {
+    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1 });
+    for (const entry of semantic.memories) {
+      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
+    }
+    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
+  } catch (e) {
+    semantic = { status: "failed", memories: [], error: String((e && e.message) || e) };
+    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
+  }
+
+  // 3) timeline 事件：session_summary
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
-    title: "Session 摘要完成" + (changedFiles.length > 0 ? "（" + changedFiles.length + " 文件变更）" : "（无变更）"),
+    title: "Session 摘要完成" + (changedFiles.length > 0
+      ? "（" + changedFiles.length + " 文件变更，" + semantic.memories.length + " 条语义记忆）"
+      : "（" + semantic.memories.length + " 条语义记忆）"),
     eventType: "session_summary",
     occurredAt: now,
-    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length,
+    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + semantic.memories.length + " semanticStatus=" + semantic.status,
     sessionId: sessionId || null,
     changeFingerprint: fingerprint,
     deduplicated: duplicateChange,
+    semanticStatus: semantic.status,
+    semanticMemories: semantic.memories.length,
   };
-  writes.push(
-    appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry)
-      .then((ok) => log(ok ? "info" : "warn", `summarizer: timeline event ${ok ? "appended" : "FAILED"} (${timelineEntry.id})`))
-  );
+  writes.push(async () => {
+    const ok = await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry);
+    log(ok ? "info" : "warn", `summarizer: timeline event ${ok ? "appended" : "FAILED"} (${timelineEntry.id})`);
+  });
 
-  await Promise.all(writes);
+  // DSH fs does not expose an atomic append primitive. Serialize writes so
+  // multiple semantic memories cannot read the same old JSONL and overwrite
+  // one another.
+  for (const write of writes) await write();
 
-  // 3) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
+  // 4) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
   try {
     if (typeof require !== "undefined") {
       // no-op; emit 在下面统一处理
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed
@@ -167,7 +187,12 @@ export function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
       }
       log("info", `summarizer: session/disposed cwd=${projectPath}`);
       // 用 ctx.effect 让 summarizer 生命周期受 fiber 控制（即使抛错也不会 leak）
-      const work = summarizeOne({ fs, projectPath, sessionId, logger })
+      const work = summarizeOne({
+        fs, projectPath, sessionId, session, logger,
+        llm: runtime.getLlm ? runtime.getLlm() : null,
+        route: resolveSessionRoute(session),
+        config: runtime.getMemoryConfig ? runtime.getMemoryConfig() : {},
+      })
         .then(async (r) => {
           // 仅源码/配置结构发生变化时重建架构；内容未变时 fingerprint 会复用旧图，
           // 避免重复调用 LLM。失败只记录日志，不影响 Session 关闭。

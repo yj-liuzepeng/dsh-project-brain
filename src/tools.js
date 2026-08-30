@@ -15,7 +15,7 @@
 
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { sanitizeProjectDescription, scanProject } from "./scanner.js";
-import { brainPath, readJson, writeJson, appendJsonl } from "./host/store/brain-files.js";
+import { assertSafeProjectPath, brainPath, readJson, writeJson, appendJsonl } from "./host/store/brain-files.js";
 import { makeId } from "./host/store/brain-logic.js";
 import { resolveProjectPath } from "./host/store/path-resolver.js";
 import { buildArchitecture, resolveSessionRoute } from "./host/architecture/analyzer.js";
@@ -34,8 +34,9 @@ function emitPreviewChanged(exec, projectPath) {
 // (插件 fiber 启动时 = dsh-project-brain 自身目录，不随 session 切换)。
 // 改用 mode 'danger-full-access' 完全跳过文件路径限制（参考 DSH sandbox 文档：
 // "danger-full-access bypasses confinement"）。
-// 安全权衡：tool 接收 LLM 传的 path 写入，但 LLM 只能通过工具执行，外部不可调用，
-// 工具内的 .project-brain/ 路径是固定的（base + "/.project-brain/"），没有 LLM 注入的任意路径。
+// 安全边界：Host 服务需要跨动态 workspace 写入，因此底层 policy 必须放宽；应用层
+// 始终让 live Session cwd 优先，并由 assertSafeProjectPath + brainPath 把目标限制到
+// 已解析项目的 .project-brain/，拒绝缺失路径、文件系统根目录和路径逃逸。
 function resolveWritePolicy(sandboxPolicy) {
   if (!sandboxPolicy) return null;
   try {
@@ -61,7 +62,15 @@ export async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime =
       },
     };
   }
-  const projectPath = explicit;
+  let projectPath;
+  try {
+    projectPath = assertSafeProjectPath(explicit);
+  } catch (error) {
+    return {
+      ok: false,
+      data: { error: { code: error.code || "E_UNSAFE_PROJECT_PATH", message: String(error.message || error) }, scanDurationMs: Date.now() - startMs },
+    };
+  }
   const dryRun = Boolean(args && args.dryRun);
 
   let scan;

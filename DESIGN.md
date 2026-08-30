@@ -4,7 +4,7 @@
 **状态：** Active
 **对应需求文档：** `REQUIREMENTS.md` / **SPEC.md**
 
-> 当前实现说明（优先于本文后续历史章节）：Client/Host 已通过 DSH `connection.rpc` 实时通信，Host 每次按 live Session header 解析 workspace；默认发布构建不嵌入本机项目数据。初始化/重扫会生成语义版 `architecture.json`：本地收集 README、manifest、入口、符号/import 和关键源码摘要，再复用当前 Session 的 DSH LLM 抽象项目定位、架构风格、概念层、职责组件、关系、运行流程和关键文件。目录只作为证据。Dashboard 渲染交互式分层架构认知报告；Session 结束检测到源码变化时自动刷新。下文 v0.3.x 内容保留为历史记录。
+> 当前实现说明（优先于本文后续历史章节）：Client/Host 已通过 DSH `connection.rpc` 实时通信，Host 每次按 live Session header 解析 workspace；默认发布构建不嵌入本机项目数据。初始化/重扫会生成语义版 `architecture.json`：本地收集 README、manifest、入口、符号/import 和关键源码摘要，再复用当前 Session 的 DSH LLM 抽象项目定位、架构风格、概念层、职责组件、关系、运行流程和关键文件。目录只作为证据。Dashboard 渲染交互式分层架构认知报告；Session 结束检测到源码变化时自动刷新，并从受限、清洗后的用户/助手文本中抽取少量稳定语义记忆。下文 v0.3.x 内容保留为历史记录。
 
 ---
 
@@ -34,7 +34,7 @@
 
 * **不是**代码静态分析 IDE（虽然内部用 tree-sitter）
 * **不是**通用 RAG / 文档检索系统（主路径是项目结构化记忆；语义向量仅作为可选召回增强）
-* **不是** Session 聊天记录归档（summarizer 只写"change memory"摘要，不存聊天原文）
+* **不是** Session 聊天记录归档（summarizer 只保存 Git 摘要和少量结构化长期事实，不保存聊天原文）
 * **不是**项目管理系统（Jira / Linear 替代品）
 
 ## 1.3 核心设计原则（不变）
@@ -107,7 +107,7 @@ dsh-project-brain 作为 **Cordis static 插件**（不是 dynamic），通过 D
 │  │   ├── brain-files.js（jsonl 读写 + sandboxPolicy 解析）     │
 │  │   ├── brain-logic.js（memory/todo 排序、活跃判断）           │
 │  │   └── path-resolver.js（session cwd 反推 + 跳过污染）       │
-│  ├── host/summarizer.js（git diff → change memory）              │
+│  ├── host/summarizer.js（git diff + DSH LLM → 去重长期记忆）     │
 │  ├── host/injector.js（Top-K 记忆 → system prompt 注入）        │
 │  └── host/rebuild.js（spawn build.js → clientModules.rebuilt）   │
 └──────────────────────┬──────────────────────────────────────────┘

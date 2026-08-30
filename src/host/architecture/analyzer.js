@@ -277,7 +277,7 @@ function repairArchitecturePrompt(value) {
   ].join("\n");
 }
 
-async function streamText(llm, route, prompt, sessionId, timeoutMs, options = {}) {
+export async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 60000);
   const chunks = new Map(); const completed = new Map();
@@ -399,13 +399,13 @@ export async function buildArchitecture({ fs, projectPath, scan, previous, confi
   }
   local.llm.provider = route.provider; local.llm.model = route.model;
   try {
-    const text = await streamText(llm, route, llmPrompt(local, evidence, includeSource), sessionId, config.architectureLlmTimeoutMs || 60000);
+    const text = await streamLlmText(llm, route, llmPrompt(local, evidence, includeSource), sessionId, config.architectureLlmTimeoutMs || 60000);
     let enriched; let repaired = false;
     try {
       enriched = parseLlmArchitecture(text, local, evidence.allFiles);
     } catch (firstError) {
       if (firstError.code !== "ARCHITECTURE_LLM_INVALID_JSON" && firstError.code !== "ARCHITECTURE_LLM_SCHEMA") throw firstError;
-      const repairedText = await streamText(
+      const repairedText = await streamLlmText(
         llm,
         route,
         repairArchitecturePrompt(text),

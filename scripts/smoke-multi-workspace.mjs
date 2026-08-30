@@ -90,6 +90,9 @@ check("Mac DSH Desktop 路径被过滤 → '.'", resolveProjectPath({}, noSessio
 // ─── 4) 写入隔离（todo.jsonl）───
 console.log("\n=== 4: 写入隔离（todo.jsonl A vs B）===");
 const { brainPath, appendJsonl, readJsonl } = await import("../src/host/store/brain-files.js");
+check("拒绝缺失 workspace 的写入路径", (() => { try { brainPath(".", "memory.jsonl"); return false; } catch (e) { return e.code === "E_UNSAFE_PROJECT_PATH"; } })());
+check("拒绝文件路径逃逸 .project-brain", (() => { try { brainPath(PROJ_A, "../outside.json"); return false; } catch (e) { return e.code === "E_UNSAFE_BRAIN_FILE"; } })());
+check("允许受控 embedding 缓存子目录", brainPath(PROJ_A, "cache/embeddings.jsonl").endsWith("/.project-brain/cache/embeddings.jsonl"));
 const { makeTodoEntry } = await import("../src/host/store/brain-logic.js");
 
 const now = Date.now();

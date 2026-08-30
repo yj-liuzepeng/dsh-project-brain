@@ -109,8 +109,10 @@ function isDshDesktopInstall(p) {
 // v0.3.9：过滤 DSH Desktop 安装路径（所有步骤都查一遍）
 function safeCwd(cwd) {
   if (typeof cwd !== "string" || !cwd.trim()) return null;
-  if (isDshDesktopInstall(cwd)) return null;
-  return cwd;
+  const value = cwd.trim();
+  if (value.includes("\u0000") || value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) return null;
+  if (isDshDesktopInstall(value)) return null;
+  return value;
 }
 
 export function resolveProjectPath(args, exec, sandboxPolicy) {

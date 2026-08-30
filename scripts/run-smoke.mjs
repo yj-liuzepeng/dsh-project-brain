@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 const tests = [
   "smoke-runtime-workspace.mjs",
   "smoke-project-memory.mjs",
+  "smoke-session-semantic.mjs",
   "smoke-memory-retrieval.mjs",
   "smoke-architecture.mjs",
   "smoke-test.mjs",

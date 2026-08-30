@@ -117,8 +117,20 @@ const sameSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, s
 assert.equal(sameSession.skipped, "session_already_summarized");
 const secondSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-2" });
 assert.equal(secondSession.deduplicated, true);
+const semanticJson = JSON.stringify({ memories: [
+  { type: "decision", title: "选择事务数据库", content: "项目决定使用支持事务的数据库，以保障订单写入一致性。", importance: 0.8, confidence: 0.9 },
+  { type: "requirement", title: "订单必须保持一致", content: "订单创建流程必须保证跨表写入的一致性和可恢复性。", importance: 0.85, confidence: 0.9 },
+] });
+const semanticSession = { deriveMessages() { return [{ role: "user", content: [{ type: "text", text: "我们经过方案评审，决定业务数据库必须支持事务能力，用于保证订单创建时跨表写入的一致性和故障恢复。请把这个长期约束记录下来。" }] }]; } };
+const semanticLlm = { async *stream() { yield { type: "text-delta", index: 0, text: semanticJson }; yield { type: "finish", reason: { kind: "stop" } }; } };
+const semanticResult = await summarizeOne({
+  fs: fsAdapter, projectPath: projectA, sessionId: "summary-3", session: semanticSession,
+  llm: semanticLlm, route: { provider: "test", model: "test-model" },
+});
+assert.equal(semanticResult.semanticMemories, 2);
 const memories = readFileSync(join(projectA, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
 assert.equal(memories.filter((item) => item.source && item.source.kind === "session_summary").length, 1);
+assert.equal(memories.filter((item) => item.source && item.source.kind === "session_semantic").length, 2);
 
 rmSync(root, { recursive: true, force: true });
-console.log("project memory isolation: 18 assertions PASS");
+console.log("project memory isolation: 20 assertions PASS");

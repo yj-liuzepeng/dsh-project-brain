@@ -275,9 +275,24 @@ async function scanProject(fs, projectPath) {
 }
 
 // src/host/store/brain-files.js
+function assertSafeProjectPath(projectPath) {
+  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!rawBase || rawBase === "." || rawBase.includes("\0") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase) || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
+    const error = new Error("Refusing Project Brain access without a concrete workspace root");
+    error.code = "E_UNSAFE_PROJECT_PATH";
+    throw error;
+  }
+  return rawBase.replace(/[\\/]+$/, "");
+}
 function brainPath(projectPath, file) {
-  const base = String(projectPath || ".").replace(/[\\/]+$/, "");
-  return base + "/.project-brain/" + file;
+  const base = assertSafeProjectPath(projectPath);
+  const relativeFile = String(file || "").replace(/\\/g, "/");
+  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
+    const error = new Error("Refusing Project Brain path outside .project-brain");
+    error.code = "E_UNSAFE_BRAIN_FILE";
+    throw error;
+  }
+  return base + "/.project-brain/" + relativeFile;
 }
 async function readText2(fs, path2) {
   try {
@@ -801,8 +816,10 @@ function isDshDesktopInstall(p) {
 }
 function safeCwd(cwd) {
   if (typeof cwd !== "string" || !cwd.trim()) return null;
-  if (isDshDesktopInstall(cwd)) return null;
-  return cwd;
+  const value = cwd.trim();
+  if (value.includes("\0") || value === "/" || /^[A-Za-z]:[\\/]?$/.test(value)) return null;
+  if (isDshDesktopInstall(value)) return null;
+  return value;
 }
 function resolveProjectPath(args, exec, sandboxPolicy) {
   try {
@@ -1006,15 +1023,15 @@ function buildLocalArchitecture(scan, evidence, previous, config) {
   const relationships = [];
   for (let i = 0; i < components.length - 1; i++) relationships.push({ id: "relation-local-" + (i + 1), from: components[i].id, to: components[i + 1].id, label: "\u8C03\u7528/\u534F\u4F5C", type: "uses", description: "\u4F9D\u636E\u5E38\u89C1\u5206\u5C42\u65B9\u5411\u63A8\u65AD\uFF0C\u9700\u7ED3\u5408\u4EE3\u7801\u9A8C\u8BC1", confidence: 0.42 });
   const keyFiles = evidence.sourceFacts.slice(0, 12).map((fact) => ({ path: fact.file, role: fact.symbols.length ? "\u5B9A\u4E49 " + fact.symbols.slice(0, 4).map((item) => item.name).join("\u3001") : "\u5173\u952E\u5B9E\u73B0\u6587\u4EF6", whyImportant: fact.imports.length ? "\u8FDE\u63A5 " + fact.imports.slice(0, 4).join("\u3001") : "\u4F4D\u4E8E\u9879\u76EE\u5165\u53E3\u6216\u6838\u5FC3\u5B9E\u73B0\u8DEF\u5F84", category: roleForFile(fact.file).kind }));
-  const fingerprint = hashText(JSON.stringify({ files: evidence.sourceFacts.map((fact) => [fact.file, fact.hash, fact.imports]), manifests: evidence.manifests.map((item) => [item.path, item.hash]), readme: hashText(evidence.readme && evidence.readme.content), techStack: scan.techStack }));
-  const changed = !previous || previous.schemaVersion !== 2 || previous.fingerprint !== fingerprint;
+  const fingerprint2 = hashText(JSON.stringify({ files: evidence.sourceFacts.map((fact) => [fact.file, fact.hash, fact.imports]), manifests: evidence.manifests.map((item) => [item.path, item.hash]), readme: hashText(evidence.readme && evidence.readme.content), techStack: scan.techStack }));
+  const changed = !previous || previous.schemaVersion !== 2 || previous.fingerprint !== fingerprint2;
   const overview = { purpose: localPurpose(scan), audience: "\u9879\u76EE\u5F00\u53D1\u4E0E\u7EF4\u62A4\u4EBA\u5458", category: Object.values(scan.techStack || {})[0] || "\u8F6F\u4EF6\u9879\u76EE", architectureStyle: layers.length >= 3 ? "\u5206\u5C42\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09" : "\u6A21\u5757\u5316\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09", value: "\u5E2E\u52A9\u5F00\u53D1\u8005\u7406\u89E3\u9879\u76EE\u5165\u53E3\u3001\u6838\u5FC3\u80FD\u529B\u548C\u534F\u4F5C\u8FB9\u754C\u3002" };
   const runtimeFlows = components.length >= 2 ? [{ id: "flow-main", name: "\u4E3B\u8981\u6267\u884C\u94FE\u8DEF\uFF08\u672C\u5730\u63A8\u65AD\uFF09", trigger: "\u7528\u6237\u6216\u5BBF\u4E3B\u89E6\u53D1\u9879\u76EE\u80FD\u529B", outcome: "\u6838\u5FC3\u80FD\u529B\u5B8C\u6210\u5E76\u8BFB\u5199\u9879\u76EE\u6570\u636E", steps: components.map((component, index) => ({ componentId: component.id, action: index === 0 ? "\u63A5\u6536\u8BF7\u6C42" : index === components.length - 1 ? "\u5B8C\u6210\u5904\u7406" : "\u5904\u7406\u5E76\u4F20\u9012" })) }] : [];
   return withAliases({
     schemaVersion: 2,
     version: previous && previous.version && changed ? previous.version + 1 : previous && previous.version || 1,
     generatedAt: Date.now(),
-    fingerprint,
+    fingerprint: fingerprint2,
     changed,
     source: "local",
     project: { name: scan.projectName || "Project", techStack: scan.techStack || {}, entrypoints: scan.entrypoints || [] },
@@ -1170,7 +1187,7 @@ function repairArchitecturePrompt(value) {
     cleanText(value, 24e3)
   ].join("\n");
 }
-async function streamText(llm, route, prompt, sessionId, timeoutMs, options = {}) {
+async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 6e4);
   const chunks = /* @__PURE__ */ new Map();
@@ -1289,14 +1306,14 @@ async function buildArchitecture({ fs, projectPath, scan, previous, config = {},
   local.llm.provider = route.provider;
   local.llm.model = route.model;
   try {
-    const text = await streamText(llm, route, llmPrompt(local, evidence, includeSource), sessionId, config.architectureLlmTimeoutMs || 6e4);
+    const text = await streamLlmText(llm, route, llmPrompt(local, evidence, includeSource), sessionId, config.architectureLlmTimeoutMs || 6e4);
     let enriched;
     let repaired = false;
     try {
       enriched = parseLlmArchitecture(text, local, evidence.allFiles);
     } catch (firstError) {
       if (firstError.code !== "ARCHITECTURE_LLM_INVALID_JSON" && firstError.code !== "ARCHITECTURE_LLM_SCHEMA") throw firstError;
-      const repairedText = await streamText(
+      const repairedText = await streamLlmText(
         llm,
         route,
         repairArchitecturePrompt(text),
@@ -1351,7 +1368,15 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
       }
     };
   }
-  const projectPath = explicit;
+  let projectPath;
+  try {
+    projectPath = assertSafeProjectPath(explicit);
+  } catch (error) {
+    return {
+      ok: false,
+      data: { error: { code: error.code || "E_UNSAFE_PROJECT_PATH", message: String(error.message || error) }, scanDurationMs: Date.now() - startMs }
+    };
+  }
   const dryRun = Boolean(args && args.dryRun);
   let scan;
   try {
@@ -2262,6 +2287,10 @@ var Config = z.object({
   importanceWeight: z.number().min(0).max(1).default(0.1),
   confidenceWeight: z.number().min(0).max(1).default(0.05),
   recencyWeight: z.number().min(0).max(1).default(0.05),
+  sessionSemanticMemoryEnabled: z.boolean().default(true),
+  sessionSemanticMaxChars: z.number().step(1).min(2e3).max(4e4).default(16e3),
+  sessionSemanticMaxItems: z.number().step(1).min(1).max(8).default(4),
+  sessionSemanticTimeoutMs: z.number().step(1).min(5e3).max(12e4).default(3e4),
   architectureEnabled: z.boolean().default(true),
   architectureLlmEnabled: z.boolean().default(true),
   architectureLlmIncludeSource: z.boolean().default(true),
@@ -2292,6 +2321,10 @@ function normalizeMemoryConfig(value) {
     importanceWeight: num("importanceWeight", 0.1, 0, 1),
     confidenceWeight: num("confidenceWeight", 0.05, 0, 1),
     recencyWeight: num("recencyWeight", 0.05, 0, 1),
+    sessionSemanticMemoryEnabled: input.sessionSemanticMemoryEnabled !== false,
+    sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16e3, 2e3, 4e4),
+    sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
+    sessionSemanticTimeoutMs: integer("sessionSemanticTimeoutMs", 3e4, 5e3, 12e4),
     architectureEnabled: input.architectureEnabled !== false,
     architectureLlmEnabled: input.architectureLlmEnabled !== false,
     architectureLlmIncludeSource: input.architectureLlmIncludeSource !== false,
@@ -2311,6 +2344,11 @@ function publicMemoryConfig(config) {
     vectorConfigured: configured,
     embeddingModel: c.embeddingModel || null,
     embeddingDimensions: c.embeddingDimensions,
+    sessionSemanticMemory: {
+      enabled: c.sessionSemanticMemoryEnabled,
+      maxChars: c.sessionSemanticMaxChars,
+      maxItems: c.sessionSemanticMaxItems
+    },
     architecture: {
       enabled: c.architectureEnabled,
       llmEnabled: c.architectureLlmEnabled,
@@ -4510,6 +4548,107 @@ function setupInjector(ctx, fs, sandboxPolicy) {
   }
 }
 
+// src/host/memory/session-extractor.js
+import { createHash as createHash2 } from "node:crypto";
+import { isAbsolute, normalize, sep } from "node:path";
+var ALLOWED_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "issue", "context"]);
+function clean(value, limit) {
+  return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
+}
+function redactSessionText(value) {
+  return clean(value, 2e5).replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED_PRIVATE_KEY]").replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]").replace(/\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|secret)\s*[:=]\s*["']?[^\s"']{6,}["']?/gi, "$1=[REDACTED]").replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g, "[REDACTED_TOKEN]");
+}
+function textFromContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((block) => block && block.type === "text").map((block) => block.text || "").join("\n");
+}
+function boundedSessionTranscript(session, maxChars = 16e3) {
+  let messages = [];
+  try {
+    messages = session && typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
+  } catch (e) {
+    return "";
+  }
+  const parts = (Array.isArray(messages) ? messages : []).map((message) => {
+    const role = message && message.role;
+    if (role !== "user" && role !== "assistant") return "";
+    const value = redactSessionText(textFromContent(message.content));
+    return value ? `${role.toUpperCase()}: ${value.slice(0, 6e3)}` : "";
+  }).filter(Boolean);
+  const selected = [];
+  let used = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    const remaining = maxChars - used;
+    if (remaining <= 0) break;
+    selected.unshift(part.slice(Math.max(0, part.length - remaining)));
+    used += Math.min(part.length, remaining) + 2;
+  }
+  return selected.join("\n\n");
+}
+function safeRelatedFile(value) {
+  const file = clean(value, 240).replace(/\\/g, "/");
+  if (!file || isAbsolute(file) || file.startsWith("../") || file === "..") return null;
+  const normalized = normalize(file).split(sep).join("/");
+  return normalized.startsWith("../") || normalized === ".." ? null : normalized;
+}
+function fingerprint(item) {
+  const normalized = `${item.type}
+${item.title}
+${item.content}`.toLowerCase().replace(/\s+/g, " ").trim();
+  return createHash2("sha256").update(normalized, "utf8").digest("hex").slice(0, 24);
+}
+function sessionMemoryPrompt(transcript, maxItems) {
+  return [
+    "\u4ECE\u4E0B\u9762\u7684\u8F6F\u4EF6\u5F00\u53D1 Session \u4E2D\u63D0\u53D6\u503C\u5F97\u8DE8\u4F1A\u8BDD\u957F\u671F\u4FDD\u5B58\u7684\u9879\u76EE\u77E5\u8BC6\u3002",
+    "\u53EA\u4FDD\u7559\u6709\u660E\u786E\u8BC1\u636E\u7684\u67B6\u6784\u51B3\u7B56\u3001\u7A33\u5B9A\u9700\u6C42\u3001Bug \u6839\u56E0\u4E0E\u4FEE\u590D\u3001\u53EF\u590D\u7528\u6559\u8BAD\u3001\u957F\u671F\u95EE\u9898\u6216\u91CD\u8981\u9879\u76EE\u80CC\u666F\u3002",
+    "\u5FFD\u7565\u5BD2\u6684\u3001\u4E34\u65F6\u6B65\u9AA4\u3001\u547D\u4EE4\u8F93\u51FA\u3001\u672A\u786E\u8BA4\u731C\u6D4B\u3001\u4E2A\u4EBA\u4FE1\u606F\u3001\u51ED\u636E\u548C\u4EC5\u6709\u6587\u4EF6\u53D8\u66F4\u7684\u6D41\u6C34\u8D26\uFF1B\u6CA1\u6709\u7A33\u5B9A\u77E5\u8BC6\u65F6\u8FD4\u56DE\u7A7A\u6570\u7EC4\u3002",
+    `\u6700\u591A ${maxItems} \u6761\u3002\u53EA\u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002`,
+    "\u683C\u5F0F\uFF1A" + JSON.stringify({ memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "\u7B80\u6D01\u6807\u9898", content: "\u81EA\u5305\u542B\u7684\u4E8B\u5B9E\u4E0E\u7406\u7531", importance: 0.8, confidence: 0.9, relatedFiles: ["\u76F8\u5BF9\u8DEF\u5F84"], tags: ["\u6807\u7B7E"] }] }),
+    "Session\uFF1A\n" + transcript
+  ].join("\n");
+}
+async function extractSessionMemories({ session, llm, route, sessionId, existingMemories = [], config = {}, now = Date.now() } = {}) {
+  if (config.sessionSemanticMemoryEnabled === false) return { status: "disabled", memories: [] };
+  if (!llm || typeof llm.stream !== "function") return { status: "llm_unavailable", memories: [] };
+  if (!route || !route.provider || !route.model) return { status: "route_unavailable", memories: [] };
+  const maxChars = Math.max(2e3, Math.min(4e4, Number(config.sessionSemanticMaxChars) || 16e3));
+  const maxItems = Math.max(1, Math.min(8, Number(config.sessionSemanticMaxItems) || 4));
+  const transcript = boundedSessionTranscript(session, maxChars);
+  if (transcript.length < 40) return { status: "empty_transcript", memories: [] };
+  const text = await streamLlmText(llm, route, sessionMemoryPrompt(transcript, maxItems), sessionId, Number(config.sessionSemanticTimeoutMs) || 3e4, {
+    system: "Extract durable, evidence-based software-project memory as strict JSON only. Never reproduce credentials or personal data.",
+    maxTokens: 2600,
+    purpose: "project-session-memory"
+  });
+  const parsed = parseArchitectureJson(text);
+  const raw = Array.isArray(parsed && parsed.memories) ? parsed.memories : [];
+  const known = new Set((existingMemories || []).filter(isActiveMemory).map(
+    (item) => item && item.source && item.source.fingerprint ? String(item.source.fingerprint) : fingerprint(item || {})
+  ));
+  const memories = [];
+  for (const item of raw.slice(0, maxItems)) {
+    const type = normalizeMemoryType(item && item.type);
+    const title = clean(item && item.title, 200);
+    const content = redactSessionText(clean(item && item.content, 4e3));
+    if (!ALLOWED_TYPES.has(type) || !title || content.length < 20) continue;
+    const candidate = { type, title, content };
+    const hash = fingerprint(candidate);
+    if (known.has(hash)) continue;
+    known.add(hash);
+    memories.push(makeMemoryEntry({
+      ...candidate,
+      importance: item.importance,
+      confidence: item.confidence,
+      relatedFiles: (Array.isArray(item.relatedFiles) ? item.relatedFiles : []).map(safeRelatedFile).filter(Boolean),
+      tags: (Array.isArray(item.tags) ? item.tags : []).map((tag) => clean(tag, 50)).filter(Boolean),
+      source: { kind: "session_semantic", fingerprint: hash, sessionId: sessionId || null, provider: route.provider, model: route.model }
+    }, now));
+  }
+  return { status: "completed", memories, transcriptChars: transcript.length };
+}
+
 // src/host/summarizer.js
 function sessionCwd(session) {
   if (!session) return null;
@@ -4533,7 +4672,7 @@ function changeFingerprint(diff) {
   }
   return "git-" + (hash >>> 0).toString(16).padStart(8, "0");
 }
-async function summarizeOne({ fs, projectPath, sessionId, logger }) {
+async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, config = {}, logger }) {
   const log = (level, msg) => {
     try {
       const tag = "[dsh-project-brain] ";
@@ -4561,12 +4700,13 @@ async function summarizeOne({ fs, projectPath, sessionId, logger }) {
     log("info", "summarizer: no git diff (" + diff.error + ")");
   }
   const changedFiles = (diff.files || []).filter(Boolean);
-  const fingerprint = changedFiles.length ? changeFingerprint(diff) : null;
-  const duplicateChange = Boolean(fingerprint && (brain.memories || []).some(
-    (m) => m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint
+  const fingerprint2 = changedFiles.length ? changeFingerprint(diff) : null;
+  const duplicateChange = Boolean(fingerprint2 && (brain.memories || []).some(
+    (m) => m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint2
   ));
   const now = Date.now();
   const writes = [];
+  let semantic = { status: "not_requested", memories: [] };
   if (changedFiles.length > 0 && !duplicateChange) {
     const title = `\u672C\u6B21 session \u6539\u52A8 ${changedFiles.length} \u4E2A\u6587\u4EF6`;
     const content = "\u6539\u52A8\u7684\u6587\u4EF6\uFF1A\n" + changedFiles.map((f) => "- " + f).join("\n") + (diff.stat ? "\n\ngit diff --stat:\n" + diff.stat : "");
@@ -4576,37 +4716,51 @@ async function summarizeOne({ fs, projectPath, sessionId, logger }) {
       content,
       importance: 0.55,
       relatedFiles: changedFiles.slice(0, 20),
-      source: { kind: "session_summary", fingerprint, sessionId: sessionId || null }
+      source: { kind: "session_summary", fingerprint: fingerprint2, sessionId: sessionId || null }
     }, now);
-    writes.push(
-      appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry).then((ok) => log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`))
-    );
+    writes.push(async () => {
+      const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
+      log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`);
+    });
     log("info", `summarizer: detected ${changedFiles.length} changed files`);
   } else if (duplicateChange) {
-    log("info", "summarizer: unchanged git window already recorded (" + fingerprint + ")");
+    log("info", "summarizer: unchanged git window already recorded (" + fingerprint2 + ")");
   } else {
     log("info", "summarizer: no git diff (non-git repo or no changes)");
   }
+  try {
+    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1 });
+    for (const entry of semantic.memories) {
+      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
+    }
+    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
+  } catch (e) {
+    semantic = { status: "failed", memories: [], error: String(e && e.message || e) };
+    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
+  }
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
-    title: "Session \u6458\u8981\u5B8C\u6210" + (changedFiles.length > 0 ? "\uFF08" + changedFiles.length + " \u6587\u4EF6\u53D8\u66F4\uFF09" : "\uFF08\u65E0\u53D8\u66F4\uFF09"),
+    title: "Session \u6458\u8981\u5B8C\u6210" + (changedFiles.length > 0 ? "\uFF08" + changedFiles.length + " \u6587\u4EF6\u53D8\u66F4\uFF0C" + semantic.memories.length + " \u6761\u8BED\u4E49\u8BB0\u5FC6\uFF09" : "\uFF08" + semantic.memories.length + " \u6761\u8BED\u4E49\u8BB0\u5FC6\uFF09"),
     eventType: "session_summary",
     occurredAt: now,
-    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length,
+    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + semantic.memories.length + " semanticStatus=" + semantic.status,
     sessionId: sessionId || null,
-    changeFingerprint: fingerprint,
-    deduplicated: duplicateChange
+    changeFingerprint: fingerprint2,
+    deduplicated: duplicateChange,
+    semanticStatus: semantic.status,
+    semanticMemories: semantic.memories.length
   };
-  writes.push(
-    appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry).then((ok) => log(ok ? "info" : "warn", `summarizer: timeline event ${ok ? "appended" : "FAILED"} (${timelineEntry.id})`))
-  );
-  await Promise.all(writes);
+  writes.push(async () => {
+    const ok = await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry);
+    log(ok ? "info" : "warn", `summarizer: timeline event ${ok ? "appended" : "FAILED"} (${timelineEntry.id})`);
+  });
+  for (const write of writes) await write();
   try {
     if (typeof __require !== "undefined") {
     }
   } catch (e) {
   }
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint: fingerprint2, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length };
 }
 function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
@@ -4633,7 +4787,16 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
         return;
       }
       log("info", `summarizer: session/disposed cwd=${projectPath}`);
-      const work = summarizeOne({ fs, projectPath, sessionId, logger }).then(async (r) => {
+      const work = summarizeOne({
+        fs,
+        projectPath,
+        sessionId,
+        session,
+        logger,
+        llm: runtime.getLlm ? runtime.getLlm() : null,
+        route: resolveSessionRoute(session),
+        config: runtime.getMemoryConfig ? runtime.getMemoryConfig() : {}
+      }).then(async (r) => {
         if (r && r.changedFiles > 0 && architectureRelevantFiles(r.files)) {
           const refreshed = await scanAndWrite(
             fs,

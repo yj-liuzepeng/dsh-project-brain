@@ -1,6 +1,6 @@
 # DSH 插件市场文案
 
-> 发布状态：`0.7.0-beta.1` 公测候选。允许 GitHub 用户安装试用；完成目标 DSH profiles、Web Client 与 Desktop 承载环境的真实安装矩阵后再提交稳定版。
+> 发布状态：`0.7.0-beta.2` 公测候选。允许 GitHub 用户安装试用；完成目标 DSH profiles、Web Client 与 Desktop 承载环境的真实安装矩阵后再提交稳定版。
 
 ## 名称
 
@@ -27,7 +27,7 @@ dsh-project-brain 为每个 DSH workspace 建立独立的本地“项目大脑�
 - 跨 Session 项目上下文注入
 - 默认本地检索 + 可选混合向量语义召回
 - Memory V2 状态、来源与可信度字段，归档内容不会污染上下文
-- Session 变更摘要与重复记录抑制
+- Session Git 变更摘要 + 当前 DSH LLM 语义记忆抽取，并带隐私过滤、数量限制、去重与失败降级
 - 多 workspace 强隔离
 - 中英文界面与 DSH 主题适配
 - 发布构建不携带开发者本机项目数据
@@ -46,7 +46,7 @@ dsh-project-brain 为每个 DSH workspace 建立独立的本地“项目大脑�
 
 ## 发布前检查
 
-- [x] `npm test`：12 组 smoke suite（含架构图、Memory V2 与混合检索）通过
+- [x] `npm test`：13 组 smoke suite（含架构、Session 语义记忆、Memory V2 与混合检索）通过
 - [x] 默认构建为 release-safe runtime RPC 模式
 - [x] npm 发布文件 allowlist
 - [x] 发布隐私自动检查：无本机路径、Session ID、凭据或 `.project-brain/` 数据

@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-brain",
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0-beta.2",
   "description": "Persistent project intelligence and memory plugin for DSH: architecture analysis, cross-session context, TODOs, and optional hybrid retrieval",
   "license": "MIT",
   "repository": {

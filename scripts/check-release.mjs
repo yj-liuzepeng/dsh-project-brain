@@ -19,10 +19,18 @@ console.log("=== dsh-project-brain release verification ===");
 
 check(pkg.name === "dsh-project-brain", "package name is stable");
 check(pkg.version === lock.version && pkg.version === lock.packages?.[""]?.version, "package and lock versions match");
+check(!/Desktop/i.test(pkg.description) && /plugin for DSH/i.test(pkg.description), "package describes a DSH plugin rather than a Desktop-only product");
 check(pkg.license === "MIT" && existsSync(join(root, "LICENSE")), "MIT license is present");
 check(existsSync(join(root, pkg.main)), "Host entry exists");
 check(existsSync(join(root, pkg.exports?.["./client"]?.default || "")), "Client entry exists");
 check(readFileSync(join(root, "cordis.patch.yml"), "utf8").includes("id: dsh-project-brain"), "DSH patch declares plugin id");
+const readme = readFileSync(join(root, "README.md"), "utf8");
+const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+check(readme.includes(pkg.version), "README names the package version");
+check(changelog.includes(`[v${pkg.version}]`), "changelog has an entry for the package version");
+if (process.env.GITHUB_REF_TYPE === "tag") {
+  check(process.env.GITHUB_REF_NAME === `v${pkg.version}`, "Git tag matches package version");
+}
 
 const packed = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], {
   cwd: root,

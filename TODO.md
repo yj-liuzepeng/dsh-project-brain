@@ -5,11 +5,13 @@
 
 ---
 
-## 总体进度：v0.7.0-beta.1（公开试用候选）
+## 总体进度：v0.7.0-beta.2（公开试用候选）
 
 ### 发布状态
 
-- [x] 12 组 smoke suite 全部通过
+- [x] 13 组 smoke suite 全部通过
+- [x] Session 结束时复用当前 DSH LLM 抽取稳定语义记忆，并提供隐私清洗、去重和失败降级
+- [x] 未解析 workspace 时拒绝写入，持久化路径强制限制在 `.project-brain/`
 - [x] release-safe Host/Client 构建通过
 - [x] npm 文件白名单、隐私泄漏和版本一致性自动检查
 - [x] npm audit：0 vulnerabilities
