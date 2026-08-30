@@ -13,6 +13,8 @@ Instead of making every new conversation rediscover the repository, dsh-project-
 
 > Current release: `0.7.0-beta.1`. The core workflows, release build, isolation checks, and privacy checks pass automatically. Broader real-world DSH Desktop testing is still in progress.
 
+[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+
 ## Preview
 
 ### Project dashboard and architecture report

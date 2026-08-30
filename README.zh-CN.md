@@ -13,6 +13,8 @@
 
 > 当前版本：`0.7.0-beta.1` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大真实 DSH Desktop 环境的试用范围。
 
+[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.1) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+
 ## 界面预览
 
 ### 项目总览与架构报告
