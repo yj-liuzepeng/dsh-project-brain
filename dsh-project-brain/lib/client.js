@@ -27,6 +27,24 @@
           "codegraph.edges": "\u4F9D\u8D56\u8FB9",
           "codegraph.langs": "\u8BED\u8A00",
           "codegraph.noLang": "\u6682\u65E0\u8BED\u8A00\u6570\u636E",
+          "arch.title": "\u9879\u76EE\u67B6\u6784\u56FE",
+          "arch.modules": "\u6A21\u5757",
+          "arch.edges": "\u4F9D\u8D56",
+          "arch.local": "\u672C\u5730\u5206\u6790",
+          "arch.hybrid": "DSH LLM \u589E\u5F3A",
+          "arch.select": "\u70B9\u51FB\u6A21\u5757\u67E5\u770B\u804C\u8D23\u4E0E\u6587\u4EF6",
+          "arch.flows": "\u5173\u952E\u6D41\u7A0B",
+          "arch.risks": "\u67B6\u6784\u63D0\u793A",
+          "arch.purpose": "\u9879\u76EE\u5B9A\u4F4D",
+          "arch.style": "\u67B6\u6784\u98CE\u683C",
+          "arch.layers": "\u67B6\u6784\u5206\u5C42",
+          "arch.components": "\u6838\u5FC3\u7EC4\u4EF6",
+          "arch.keyFiles": "\u5173\u952E\u6587\u4EF6\u5BFC\u89C8",
+          "arch.start": "\u5FEB\u901F\u719F\u6089\u8DEF\u5F84",
+          "arch.highlights": "\u8BBE\u8BA1\u8981\u70B9",
+          "arch.trigger": "\u89E6\u53D1",
+          "arch.outcome": "\u7ED3\u679C",
+          "arch.llmFallback": "DSH LLM \u672A\u5B8C\u6210\uFF0C\u5F53\u524D\u5C55\u793A\u672C\u5730\u63A8\u65AD",
           "actions.continue": "\u7EE7\u7EED\u4E0A\u6B21\u5F00\u53D1",
           "actions.openDashboard": "\u6253\u5F00 Dashboard",
           "actions.closeDashboard": "\u6536\u8D77 Dashboard",
@@ -65,6 +83,10 @@
           "dash.todo": "\u5F85\u529E\uFF08\u5168\u90E8\uFF09",
           "dash.timeline": "\u65F6\u95F4\u7EBF",
           "dash.memory": "\u9879\u76EE\u8BB0\u5FC6\uFF08\u5168\u90E8\uFF09",
+          "dash.tab.overview": "\u6982\u89C8",
+          "dash.tab.architecture": "\u67B6\u6784",
+          "dash.tab.work": "\u4EFB\u52A1\u52A8\u6001",
+          "dash.tab.knowledge": "\u9879\u76EE\u8BB0\u5FC6",
           "dash.snapshot": "\u6570\u636E\u5FEB\u7167 \xB7 {time}",
           "dash.none": "\uFF08\u7A7A\uFF09",
           "mem.type.decision": "\u51B3\u7B56",
@@ -97,6 +119,24 @@
           "codegraph.edges": "edges",
           "codegraph.langs": "langs",
           "codegraph.noLang": "No language data",
+          "arch.title": "Project architecture",
+          "arch.modules": "modules",
+          "arch.edges": "edges",
+          "arch.local": "Local analysis",
+          "arch.hybrid": "DSH LLM enriched",
+          "arch.select": "Select a module to inspect responsibilities and files",
+          "arch.flows": "Key flows",
+          "arch.risks": "Architecture notes",
+          "arch.purpose": "Project purpose",
+          "arch.style": "Architecture style",
+          "arch.layers": "Architecture layers",
+          "arch.components": "Core components",
+          "arch.keyFiles": "Key file guide",
+          "arch.start": "Getting started",
+          "arch.highlights": "Design highlights",
+          "arch.trigger": "Trigger",
+          "arch.outcome": "Outcome",
+          "arch.llmFallback": "DSH LLM was unavailable; showing local inference",
           "actions.continue": "Continue last session",
           "actions.openDashboard": "Open full Dashboard",
           "actions.closeDashboard": "Close Dashboard",
@@ -135,6 +175,10 @@
           "dash.todo": "TODO (all)",
           "dash.timeline": "Timeline",
           "dash.memory": "Memories (all)",
+          "dash.tab.overview": "Overview",
+          "dash.tab.architecture": "Architecture",
+          "dash.tab.work": "Work & activity",
+          "dash.tab.knowledge": "Knowledge",
           "dash.snapshot": "Data snapshot \xB7 {time}",
           "dash.none": "(empty)",
           "mem.type.decision": "Decision",
@@ -335,7 +379,7 @@
           ) : null
         );
       }
-      function StatusBannerBlock({ data, t }) {
+      function StatusBannerBlock({ data, t, compact }) {
         const s = data.stats || {};
         const todos = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
         const memories = data.memories || [];
@@ -353,7 +397,7 @@
         const insight = lastAct ? `\u6700\u8FD1 ${formatRelativeTime(lastAct.occurredAt, Date.now(), data._localeCode)}` : "\u6682\u65E0\u6D3B\u52A8";
         return React.createElement(
           "section",
-          { style: Object.assign({}, sectionStyle, { padding: "12px 14px" }), "data-block": "status-banner" },
+          { style: Object.assign({}, sectionStyle, { padding: "12px 14px", margin: compact ? 0 : sectionStyle.margin }), "data-block": "status-banner" },
           React.createElement(
             "div",
             { style: { display: "flex", gap: "6px" } },
@@ -369,12 +413,13 @@
           )
         );
       }
-      function PhaseBlock({ data, t }) {
+      function PhaseBlock({ data, t, compact }) {
+        const phaseSectionStyle = Object.assign({}, sectionStyle, { margin: compact ? 0 : sectionStyle.margin, height: compact ? "100%" : void 0, boxSizing: "border-box" });
         const phase = data.phase;
         if (!phase || !phase.progress) {
           return React.createElement(
             "section",
-            { style: sectionStyle, "data-block": "phase" },
+            { style: phaseSectionStyle, "data-block": "phase" },
             React.createElement("h3", { style: sectionTitleStyle }, "\u{1F3AF} " + t("phase.title")),
             React.createElement("p", { style: { margin: 0, opacity: 0.6, fontSize: "13px" } }, t("phase.empty"))
           );
@@ -383,7 +428,7 @@
         const percent = total > 0 ? Math.round(done / total * 100) : 0;
         return React.createElement(
           "section",
-          { style: sectionStyle, "data-block": "phase" },
+          { style: phaseSectionStyle, "data-block": "phase" },
           React.createElement("h3", { style: sectionTitleStyle }, "\u{1F3AF} " + t("phase.title")),
           React.createElement("p", { style: { margin: "0 0 8px", fontSize: "14px", fontWeight: "500" } }, phase.title),
           React.createElement(
@@ -638,7 +683,14 @@
         );
       }
       function CodeGraphBlock({ data, t }) {
-        const cg = data && data.codegraph;
+        const architecture = data && data.architecture;
+        const cg = data && data.codegraph ? data.codegraph : architecture ? {
+          stats: {
+            files: architecture.stats && architecture.stats.files || 0,
+            edges: architecture.stats && architecture.stats.edges || 0,
+            languages: data.project && data.project.languages || {}
+          }
+        } : null;
         if (!cg) return null;
         const stat = (icon, value, label) => React.createElement(
           "div",
@@ -672,6 +724,146 @@
             { style: { marginTop: "10px" } },
             langItems.length > 0 ? langItems : React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("codegraph.noLang"))
           )
+        );
+      }
+      function ArchitectureGraphBlock({ data, t, embedded }) {
+        const architecture = data && data.architecture;
+        const [selectedId, setSelectedId] = React.useState(null);
+        if (!architecture) return null;
+        const components = (architecture.components || architecture.nodes || []).slice(0, 24);
+        if (!components.length) return null;
+        const layers = (architecture.layers || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+        const relationships = (architecture.relationships || architecture.edges || []).slice(0, 40);
+        const flows = (architecture.runtimeFlows || architecture.flows || []).slice(0, 6);
+        const overview = architecture.overview || { purpose: architecture.summary || "", architectureStyle: "" };
+        const selected = components.find((item) => item.id === selectedId) || components[0];
+        const byId = new Map(components.map((item) => [item.id, item]));
+        const related = relationships.filter((item) => item.from === selected.id || item.to === selected.id);
+        const sourceLabel = architecture.source === "hybrid" ? t("arch.hybrid") : t("arch.local");
+        const typeIcons = { presentation: "\u{1F5A5}\uFE0F", ui: "\u{1F5A5}\uFE0F", interface: "\u{1F50C}", api: "\u{1F50C}", application: "\u{1F9ED}", service: "\u2699\uFE0F", domain: "\u{1F9E0}", core: "\u{1F9E0}", data: "\u{1F5C4}\uFE0F", integration: "\u{1F517}", support: "\u{1F6E0}\uFE0F" };
+        const layerRows = layers.length ? layers : [{ id: "all", name: t("arch.components"), responsibility: "", order: 0 }];
+        const componentsForLayer = (layer) => layers.length ? components.filter((item) => item.layerId === layer.id) : components;
+        const panelStyle = { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "9px", background: "var(--dsw-alias-bg-layer-2)", padding: "10px" };
+        const smallTitle = { fontSize: "11px", fontWeight: 700, marginBottom: "6px", color: "var(--dsw-alias-label-primary)" };
+        return React.createElement(
+          "section",
+          { style: embedded ? { color: "var(--dsw-alias-label-primary)" } : sectionStyle, "data-block": "architecture-graph", "data-architecture-schema": architecture.schemaVersion || 1 },
+          React.createElement(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" } },
+            React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { flex: "1 1 auto", margin: 0 }) }, "\u{1F3DB}\uFE0F " + t("arch.title")),
+            React.createElement("span", { style: { fontSize: "10px", padding: "3px 8px", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", color: architecture.source === "hybrid" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, sourceLabel)
+          ),
+          architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error ? React.createElement("div", { title: architecture.llm.error.message || architecture.llm.error.code, style: { fontSize: "10px", padding: "6px 8px", marginBottom: "8px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)" } }, "\u26A0\uFE0F " + t("arch.llmFallback") + " \xB7 " + (architecture.llm.error.code || "LLM_ERROR")) : null,
+          React.createElement(
+            "div",
+            { style: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)", gap: "8px", marginBottom: "10px" } },
+            React.createElement(
+              "div",
+              { style: panelStyle },
+              React.createElement("div", { style: smallTitle }, "\u{1F3AF} " + t("arch.purpose")),
+              React.createElement("div", { style: { fontSize: "13px", lineHeight: 1.65 } }, overview.purpose || architecture.summary || ""),
+              overview.value ? React.createElement("div", { style: { marginTop: "6px", fontSize: "11px", lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } }, overview.value) : null
+            ),
+            React.createElement(
+              "div",
+              { style: panelStyle },
+              React.createElement("div", { style: smallTitle }, "\u{1F3D7}\uFE0F " + t("arch.style")),
+              React.createElement("div", { style: { fontSize: "13px", fontWeight: 700 } }, overview.architectureStyle || "\u2014"),
+              React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, [overview.category, overview.audience].filter(Boolean).join(" \xB7 "))
+            )
+          ),
+          architecture.summary && architecture.summary !== overview.purpose ? React.createElement("div", { style: { fontSize: "12px", lineHeight: 1.65, color: "var(--dsw-alias-label-secondary)", margin: "0 2px 10px" } }, architecture.summary) : null,
+          React.createElement(
+            "div",
+            { style: Object.assign({}, panelStyle, { padding: "10px 10px 4px", background: "var(--dsw-alias-bg-layer-1)" }), "data-architecture-diagram": "semantic-layers" },
+            React.createElement("div", { style: Object.assign({}, smallTitle, { marginBottom: "9px" }) }, "\u{1F9F1} " + t("arch.layers")),
+            layerRows.map((layer, layerIndex) => {
+              const items = componentsForLayer(layer);
+              if (!items.length) return null;
+              return React.createElement(
+                "div",
+                { key: layer.id, style: { display: "grid", gridTemplateColumns: "150px minmax(0, 1fr)", gap: "10px", padding: "9px", marginBottom: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", background: layerIndex % 2 === 0 ? "var(--dsw-alias-bg-layer-2)" : "var(--dsw-alias-bg-layer-1)" } },
+                React.createElement(
+                  "div",
+                  { style: { borderRight: "1px solid var(--dsw-alias-border-l1)", paddingRight: "9px" } },
+                  React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, layer.name),
+                  React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, layer.responsibility || "")
+                ),
+                React.createElement(
+                  "div",
+                  { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "7px" } },
+                  items.map((component) => {
+                    const active = component.id === selected.id;
+                    return React.createElement(
+                      "button",
+                      { key: component.id, type: "button", onClick: () => setSelectedId(component.id), "data-architecture-component": component.id, style: { textAlign: "left", padding: "9px 10px", borderRadius: "8px", border: (active ? "2px solid " : "1px solid ") + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l2)"), background: "var(--dsw-alias-bg-layer-1)", color: "var(--dsw-alias-label-primary)", cursor: "pointer", fontFamily: "inherit", minHeight: "76px" } },
+                      React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, (typeIcons[component.type] || "\u25C6") + " " + (component.name || component.label)),
+                      React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, String(component.responsibility || component.description || "").slice(0, 150))
+                    );
+                  })
+                )
+              );
+            }),
+            relationships.length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px", padding: "2px 0 7px" } }, relationships.slice(0, 14).map((relation) => {
+              const from = byId.get(relation.from);
+              const to = byId.get(relation.to);
+              if (!from || !to) return null;
+              const active = relation.from === selected.id || relation.to === selected.id;
+              return React.createElement("span", { key: relation.id, title: relation.description || relation.label, style: { fontSize: "9px", padding: "3px 7px", borderRadius: "10px", border: "1px solid " + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l1)"), color: active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, (from.name || from.label) + " \u2192 " + (relation.label || "\u8C03\u7528") + " \u2192 " + (to.name || to.label));
+            })) : null
+          ),
+          React.createElement(
+            "div",
+            { style: { display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(260px, .8fr)", gap: "9px", marginTop: "9px" } },
+            React.createElement(
+              "div",
+              { style: panelStyle },
+              React.createElement("div", { style: { fontSize: "14px", fontWeight: 750, marginBottom: "5px" } }, (typeIcons[selected.type || selected.kind] || "\u25C6") + " " + (selected.name || selected.label)),
+              React.createElement("div", { style: { fontSize: "11px", lineHeight: 1.6 } }, selected.responsibility || selected.description || ""),
+              selected.details ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, marginTop: "5px" } }, selected.details) : null,
+              (selected.technologies || []).length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "7px" } }, selected.technologies.map((item) => React.createElement("span", { key: item, style: { fontSize: "9px", padding: "2px 6px", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" } }, item))) : null,
+              (selected.importantFiles || selected.files || []).length ? React.createElement(
+                "div",
+                { style: { marginTop: "8px" } },
+                React.createElement("div", { style: smallTitle }, "\u{1F4C4} " + t("arch.keyFiles")),
+                (selected.importantFiles || selected.files || []).slice(0, 8).map((file) => React.createElement("code", { key: file, style: { display: "block", fontSize: "9px", padding: "3px 6px", marginBottom: "3px", borderRadius: "4px", background: "var(--dsw-alias-bg-layer-1)", wordBreak: "break-all" } }, file))
+              ) : null,
+              related.length ? React.createElement("div", { style: { marginTop: "7px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, related.slice(0, 5).map((item) => item.description || item.label).filter(Boolean).join("\uFF1B")) : null
+            ),
+            React.createElement(
+              "div",
+              { style: panelStyle },
+              React.createElement("div", { style: smallTitle }, "\u27A1\uFE0F " + t("arch.flows")),
+              flows.length ? flows.map((flow) => React.createElement(
+                "div",
+                { key: flow.id, style: { padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" } },
+                React.createElement("div", { style: { fontSize: "11px", fontWeight: 700 } }, flow.name || flow.label),
+                React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.5, marginTop: "3px" } }, [flow.trigger ? t("arch.trigger") + "\uFF1A" + flow.trigger : "", flow.outcome ? t("arch.outcome") + "\uFF1A" + flow.outcome : ""].filter(Boolean).join(" \xB7 ")),
+                React.createElement("div", { style: { fontSize: "9px", lineHeight: 1.5, marginTop: "3px" } }, (flow.steps || []).map((step) => typeof step === "string" ? byId.get(step) && (byId.get(step).name || byId.get(step).label) : (byId.get(step.componentId) && (byId.get(step.componentId).name || byId.get(step.componentId).label)) + (step.action ? "\uFF1A" + step.action : "")).filter(Boolean).join(" \u2192 "))
+              )) : React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, t("dash.none"))
+            )
+          ),
+          (architecture.keyFiles || []).length ? React.createElement(
+            "div",
+            { style: Object.assign({}, panelStyle, { marginTop: "9px" }) },
+            React.createElement("div", { style: smallTitle }, "\u{1F5FA}\uFE0F " + t("arch.keyFiles")),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "6px" } }, architecture.keyFiles.slice(0, 12).map((file) => React.createElement(
+              "div",
+              { key: file.path, style: { padding: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "7px", background: "var(--dsw-alias-bg-layer-1)" } },
+              React.createElement("code", { style: { fontSize: "10px", fontWeight: 700, wordBreak: "break-all" } }, file.path),
+              React.createElement("div", { style: { fontSize: "10px", marginTop: "3px", lineHeight: 1.45 } }, file.role),
+              React.createElement("div", { style: { fontSize: "9px", marginTop: "2px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, file.whyImportant)
+            )))
+          ) : null,
+          React.createElement(
+            "div",
+            { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "9px" } },
+            (architecture.gettingStarted || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "\u{1F680} " + t("arch.start")), architecture.gettingStarted.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, index + 1 + ". " + item))) : null,
+            (architecture.designHighlights || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "\u2728 " + t("arch.highlights")), architecture.designHighlights.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "\u2022 " + item))) : null,
+            (architecture.risks || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "\u26A0\uFE0F " + t("arch.risks")), architecture.risks.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "\u2022 " + item))) : null
+          ),
+          React.createElement("div", { style: { marginTop: "7px", fontSize: "9px", color: "var(--dsw-alias-label-secondary)" } }, (architecture.stats.layers || layers.length) + " " + t("arch.layers") + " \xB7 " + (architecture.stats.components || architecture.stats.modules || components.length) + " " + t("arch.components") + " \xB7 " + t("arch.select"))
         );
       }
       function ActionsBlock({ t, localeCode }) {
@@ -730,9 +922,9 @@
       }
       const ONBOARDING_PHASES = [
         { key: "scanning", icon: "\u{1F50D}", label: "\u626B\u63CF\u9879\u76EE\u7ED3\u6784\u2026" },
-        { key: "writing", icon: "\u{1F4BE}", label: "\u5199\u5165\u9879\u76EE\u5927\u8111\u2026" },
-        { key: "analyzing", icon: "\u{1F9E0}", label: "\u5206\u6790\u6280\u672F\u6808\u4E0E\u4F9D\u8D56\u2026" },
-        { key: "done", icon: "\u2705", label: "\u5206\u6790\u5B8C\u6210" }
+        { key: "graph", icon: "\u{1F3DB}\uFE0F", label: "\u6784\u5EFA\u67B6\u6784\u5173\u7CFB\u2026" },
+        { key: "analyzing", icon: "\u{1F9E0}", label: "DSH LLM \u8BED\u4E49\u5206\u6790\u2026" },
+        { key: "done", icon: "\u2705", label: "\u67B6\u6784\u4E0E\u9879\u76EE\u8111\u5DF2\u751F\u6210" }
       ];
       function OnboardingBlock({ t, path, sessionId, onComplete, connection }) {
         const [phase, setPhase] = React.useState("idle");
@@ -877,7 +1069,7 @@
                   color: "var(--dsw-alias-label-secondary)"
                 }
               },
-              ONBOARDING_PHASES.slice(0, 3).map(
+              ONBOARDING_PHASES.map(
                 (p, i) => React.createElement(
                   "span",
                   {
@@ -1040,6 +1232,7 @@
         const memoriesAll = data.memoriesAll || [];
         const retrieval = data.retrieval || {};
         const [quickActionState, setQuickActionState] = React.useState({});
+        const [activeTab, setActiveTab] = React.useState("overview");
         const rpc = connection && connection.rpc;
         function resultMessage(action, value) {
           const result = value && value.result;
@@ -1153,12 +1346,56 @@
         );
         const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
         const typeChipStyle = { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)" };
+        const dashPanelStyle = { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", minWidth: 0 };
         const dashSection = (icon, titleKey, children) => React.createElement(
           "section",
-          { style: sectionStyle },
+          { style: dashPanelStyle },
           React.createElement("h3", { style: sectionTitleStyle }, icon + " " + t(titleKey)),
           children
         );
+        const tabDefs = [
+          { id: "overview", icon: "\u25EB", label: t("dash.tab.overview") },
+          { id: "architecture", icon: "\u2318", label: t("dash.tab.architecture") },
+          { id: "work", icon: "\u2713", label: t("dash.tab.work") },
+          { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") }
+        ];
+        const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
+        const todoNode = todos.length > 0 ? React.createElement(
+          "ul",
+          { style: { listStyle: "none", padding: 0, margin: 0 } },
+          todos.map((x) => React.createElement(
+            "li",
+            { key: x.id, style: { display: "flex", gap: "8px", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" } },
+            React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-1)", fontWeight: "600" } }, t("st." + (x.status || "pending"))),
+            React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, x.title),
+            React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, t("prio." + (x.priority || "medium")))
+          ))
+        ) : emptyNode;
+        const timelineNode = timelineAll.length > 0 ? React.createElement(
+          "ul",
+          { style: { listStyle: "none", padding: 0, margin: 0 } },
+          timelineAll.slice(0, 20).map((e) => React.createElement(
+            "li",
+            { key: e.id, style: { display: "grid", gridTemplateColumns: "86px minmax(0, 1fr)", gap: "10px", padding: "7px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px", alignItems: "start" } },
+            React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontVariantNumeric: "tabular-nums" } }, formatDate(e.occurredAt).slice(5)),
+            React.createElement("span", { style: { minWidth: 0, lineHeight: 1.45 } }, e.title)
+          ))
+        ) : emptyNode;
+        const memoryNode = memoriesAll.length > 0 ? React.createElement(
+          "div",
+          { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px" } },
+          memoriesAll.slice(0, 20).map((m) => React.createElement(
+            "article",
+            { key: m.id, style: { padding: "10px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", minWidth: 0 } },
+            React.createElement(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "center" } },
+              React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
+              React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, fontSize: "12px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title)
+            ),
+            m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "7px", lineHeight: "1.55", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" } }, String(m.content).slice(0, 360)) : null
+          ))
+        ) : emptyNode;
         return React.createElement(
           "div",
           { id: "dsh-brain-dashboard", style: { display: "block", background: "var(--dsw-alias-bg-layer-1)", borderRadius: "10px", margin: "8px 12px", border: "1px solid var(--dsw-alias-border-l2)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }, "data-block": "dashboard" },
@@ -1184,7 +1421,7 @@
             ];
             return React.createElement(
               "div",
-              { style: { padding: "12px 12px 4px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } },
+              { style: { padding: "12px 12px 4px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "8px" } },
               quickActions.map((qa) => {
                 const state = quickActionState[qa.id] || { status: "idle", message: "" };
                 const busy = state.status === "loading";
@@ -1236,47 +1473,31 @@
           ),
           React.createElement("style", null, "@keyframes dsh-brain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"),
           React.createElement(
+            "nav",
+            { style: { display: "flex", gap: "4px", padding: "8px 12px 0", borderTop: "1px solid var(--dsw-alias-border-l1)", overflowX: "auto" }, "aria-label": "Project dashboard sections" },
+            tabDefs.map((tab) => {
+              const active = activeTab === tab.id;
+              return React.createElement("button", { key: tab.id, type: "button", onClick: () => setActiveTab(tab.id), "data-dashboard-tab": tab.id, "aria-selected": active ? "true" : "false", style: { flex: "0 0 auto", padding: "8px 11px", border: "none", borderBottom: "2px solid " + (active ? "var(--dsw-alias-brand-primary)" : "transparent"), background: "transparent", color: active ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-label-secondary)", cursor: "pointer", fontFamily: "inherit", fontSize: "11px", fontWeight: active ? "700" : "500" } }, tab.icon + " " + tab.label);
+            })
+          ),
+          React.createElement(
             "div",
-            { style: { padding: "4px 0 8px" } },
-            dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, techChips, toolingChips) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-            dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, langChips) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-            dashSection("\u{1F6AA}", "dash.entry", (p.entrypoints || []).length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, entryItems) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-            dashSection("\u{1F4CB}", "dash.todo", todos.length > 0 ? React.createElement(
-              "ul",
-              { style: { listStyle: "none", padding: 0, margin: 0 } },
-              todos.map((x) => React.createElement(
-                "li",
-                { key: x.id, style: { display: "flex", gap: "8px", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" } },
-                React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", fontWeight: "600" } }, t("st." + (x.status || "pending"))),
-                React.createElement("span", { style: { flex: "1 1 auto" } }, x.title),
-                React.createElement("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "8px", background: x.priority === "urgent" ? "rgba(220,38,38,0.10)" : x.priority === "high" ? "rgba(234,179,8,0.12)" : "var(--dsw-alias-bg-layer-2)", fontWeight: "600" } }, t("prio." + (x.priority || "medium")))
-              ))
-            ) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-            dashSection("\u{1F4C5}", "dash.timeline", timelineAll.length > 0 ? React.createElement(
-              "ul",
-              { style: { listStyle: "none", padding: 0, margin: 0 } },
-              timelineAll.slice(0, 20).map((e) => React.createElement(
-                "li",
-                { key: e.id, style: { display: "flex", gap: "10px", padding: "5px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px", alignItems: "center" } },
-                React.createElement("span", { style: { flex: "0 0 auto", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", minWidth: "100px", fontVariantNumeric: "tabular-nums" } }, formatDate(e.occurredAt)),
-                React.createElement("span", { style: { flex: "1 1 auto" } }, e.title)
-              ))
-            ) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-            dashSection("\u{1F9E0}", "dash.memory", memoriesAll.length > 0 ? React.createElement(
-              "ul",
-              { style: { listStyle: "none", padding: 0, margin: 0 } },
-              memoriesAll.slice(0, 20).map((m) => React.createElement(
-                "li",
-                { key: m.id, style: { padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" } },
-                React.createElement(
-                  "div",
-                  { style: { display: "flex", gap: "8px", alignItems: "center" } },
-                  React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
-                  React.createElement("span", { style: { flex: "1 1 auto", fontSize: "13px", fontWeight: "500" } }, m.title)
-                ),
-                m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "4px", padding: "6px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "6px", lineHeight: "1.5", whiteSpace: "pre-wrap" } }, String(m.content).slice(0, 300)) : null
-              ))
-            ) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none")))
+            { style: { padding: "12px" }, "data-dashboard-panel": activeTab },
+            activeTab === "overview" ? React.createElement(
+              "div",
+              { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
+              dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, techChips, toolingChips) : emptyNode),
+              dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
+              dashSection("\u{1F6AA}", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode)
+            ) : null,
+            activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true }) : null,
+            activeTab === "work" ? React.createElement(
+              "div",
+              { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },
+              dashSection("\u{1F4CB}", "dash.todo", todoNode),
+              dashSection("\u{1F4C5}", "dash.timeline", timelineNode)
+            ) : null,
+            activeTab === "knowledge" ? dashSection("\u{1F9E0}", "dash.memory", memoryNode) : null
           ),
           React.createElement(
             "div",
@@ -1372,7 +1593,7 @@
           });
         }, [r.workspaceId, r.workspacePath, r.sessionId]);
         const containerStyle = {
-          padding: "16px 0 32px",
+          padding: "10px 0 28px",
           background: "var(--dsw-alias-bg-base)",
           color: "var(--dsw-alias-label-primary)",
           minHeight: "100%",
@@ -1432,16 +1653,21 @@
         return React.createElement(
           "div",
           containerProps,
+          React.createElement("style", null, [
+            ".dsh-project-brain-preview *{box-sizing:border-box}",
+            ".dsh-brain-summary-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:10px;margin:8px 12px}",
+            "@media(max-width:760px){.dsh-brain-summary-grid{grid-template-columns:1fr}.dsh-project-brain-preview [data-architecture-diagram=semantic-layers]>div{grid-template-columns:1fr!important}}",
+            ".dsh-project-brain-preview button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}",
+            ".dsh-project-brain-preview button:not(:disabled):active{transform:translateY(1px)}"
+          ].join("\n")),
           headerWithBadge,
           React.createElement(HeaderBlock, { data: dataWithLocale, t }),
-          React.createElement(StatusBannerBlock, { data: dataWithLocale, t }),
-          React.createElement(PhaseBlock, { data: dataWithLocale, t }),
-          React.createElement(TodoBlock, { data: dataWithLocale, t }),
-          React.createElement(CodeGraphBlock, { data: dataWithLocale, t }),
-          React.createElement(ActivityBlock, { data: dataWithLocale, t }),
-          React.createElement(MemoriesBlock, { data: dataWithLocale, t }),
-          React.createElement(StatsBlock, { data: dataWithLocale, t }),
-          React.createElement(ActionsBlock, { t, localeCode }),
+          React.createElement(
+            "div",
+            { className: "dsh-brain-summary-grid", "data-block": "summary-grid" },
+            React.createElement(StatusBannerBlock, { data: dataWithLocale, t, compact: true }),
+            React.createElement(PhaseBlock, { data: dataWithLocale, t, compact: true })
+          ),
           React.createElement(DashboardSection, {
             data: dataWithLocale,
             t,

@@ -30,7 +30,7 @@ const PLUGIN_DIR = existsSync(join(CANDIDATE_PLUGIN_DIR, "build.js"))
   ? CANDIDATE_PLUGIN_DIR
   : join(CANDIDATE_PLUGIN_DIR, "..");
 
-const WATCH_FILES = ["project.json", "memory.jsonl", "todo.jsonl", "timeline.jsonl"];
+const WATCH_FILES = ["project.json", "architecture.json", "memory.jsonl", "todo.jsonl", "timeline.jsonl"];
 const POLL_INTERVAL_MS = 2000;
 const REBUILD_DEBOUNCE_MS = 1000;
 const LOG_FILE = join(PLUGIN_DIR, ".project-brain", ".dsh-project-brain-watcher.log");

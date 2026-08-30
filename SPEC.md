@@ -437,34 +437,65 @@ CREATE INDEX idx_codegraph_snapshot_project ON codegraph_snapshot(project_id, ve
 
 ```json
 {
-  "system": {
-    "nodes": [
-      { "id": "user", "label": "User", "type": "external" },
-      { "id": "api", "label": "API", "type": "service" },
-      { "id": "service", "label": "Service", "type": "service" },
-      { "id": "db", "label": "PostgreSQL", "type": "datastore" }
-    ],
-    "edges": [
-      { "from": "user", "to": "api" },
-      { "from": "api", "to": "service" },
-      { "from": "service", "to": "db" }
-    ]
+  "schemaVersion": 2,
+  "version": 2,
+  "generatedAt": 1723500000000,
+  "fingerprint": "9b1f3c20",
+  "changed": true,
+  "source": "hybrid",
+  "project": { "name": "my-saas", "techStack": {}, "entrypoints": [] },
+  "overview": {
+    "purpose": "让 DSH 跨对话持续理解和维护当前项目",
+    "audience": "长期维护软件项目的开发者",
+    "category": "DSH 开发者工具插件",
+    "architectureStyle": "Host/Client 双端的分层插件架构",
+    "value": "把项目理解、记忆和待办沉淀在 workspace"
   },
-  "modules": [
-    { "name": "api", "depends_on": ["service"], "lines_of_code": 1200 }
+  "summary": "系统由界面、运行时桥接、项目分析、记忆检索和本地存储等职责组件协作完成。",
+  "layers": [
+    { "id": "layer-experience", "name": "体验层", "responsibility": "展示项目认知与交互入口", "order": 0 },
+    { "id": "layer-application", "name": "应用层", "responsibility": "编排扫描、记忆和待办能力", "order": 1 }
   ],
-  "dataFlow": [
-    { "step": 1, "from": "HTTP request", "to": "api/chat.py", "via": "router" },
-    { "step": 2, "from": "api/chat.py", "to": "service/chat.py", "via": "method call" }
-  ],
-  "callChains": [
+  "components": [
     {
-      "name": "POST /chat",
-      "steps": ["ChatController", "ChatService", "AgentExecutor", "RAGService", "LLM"]
+      "id": "component-project-analysis",
+      "name": "项目分析引擎",
+      "layerId": "layer-application",
+      "type": "service",
+      "responsibility": "收集工作区证据并生成项目认知",
+      "details": "本地事实作为基线，当前 DSH 模型生成语义架构",
+      "technologies": ["JavaScript"],
+      "importantFiles": ["src/host/architecture/analyzer.js"],
+      "evidencePaths": ["src/scanner.js", "src/host/architecture/analyzer.js"],
+      "confidence": 0.9
     }
-  ]
+  ],
+  "relationships": [
+    { "id": "relation-1", "from": "component-runtime-bridge", "to": "component-project-analysis", "label": "触发", "type": "request", "description": "当前 Session 发起初始化或重扫", "confidence": 0.9 }
+  ],
+  "runtimeFlows": [
+    { "id": "flow-1", "name": "项目初始化", "trigger": "用户点击启动", "outcome": "生成项目认知报告", "steps": [{ "componentId": "component-runtime-bridge", "action": "解析 workspace" }, { "componentId": "component-project-analysis", "action": "分析证据" }] }
+  ],
+  "keyFiles": [
+    { "path": "src/index.js", "role": "Host 入口", "whyImportant": "可了解插件注册和生命周期", "category": "entry" }
+  ],
+  "gettingStarted": ["先读 README", "再读 Host 入口和架构分析器"],
+  "designHighlights": ["项目数据按 workspace 隔离"],
+  "risks": [],
+  "evidence": { "readmeUsed": true, "manifestFiles": ["package.json"], "sourceFilesAnalyzed": 40, "sourceSnippetsShared": true },
+  "stats": { "files": 48, "analyzedFiles": 40, "layers": 5, "components": 8, "edges": 12, "keyFiles": 10 },
+  "llm": { "requested": true, "used": true, "provider": "current-session-provider", "model": "current-session-model", "error": null }
 }
 ```
+
+约束：
+
+- 本地分析是硬基线；LLM 不可用时 `source="local"`，初始化仍成功。
+- LLM 可以重新抽象概念层与职责组件，但目录名不得直接充当组件名；文件路径只能作为证据。
+- 默认请求包含 README、manifest、符号/import 和有限关键源码摘要，不包含绝对路径；可关闭源码摘要。
+- 所有 `importantFiles/evidencePaths/keyFiles` 必须命中本地真实相对路径，所有关系和流程必须引用已校验组件。
+- `fingerprint` 包含关键源码内容哈希、manifest、README 和技术栈；未变化时复用已有 LLM 结果。
+- Dashboard 使用受控 React 组件渲染该 JSON，不执行数据中的脚本或 markup。
 
 ### 4.3.3 config.json
 
@@ -480,6 +511,15 @@ CREATE INDEX idx_codegraph_snapshot_project ON codegraph_snapshot(project_id, ve
   "llm": {
     "modelPreference": null,
     "maxTokensPerCall": 4000
+  },
+  "architecture": {
+    "enabled": true,
+    "llmEnabled": true,
+    "llmIncludeSource": true,
+    "maxFiles": 240,
+    "maxNodes": 24,
+    "llmTimeoutMs": 60000,
+    "route": "current DSH Session provider/model"
   },
   "memory": {
     "maxMemories": 5000,

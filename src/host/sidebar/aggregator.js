@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { todoStats, recentTimeline, techStackToType, activeTodos, isActiveMemory } from "../store/brain-logic.js";
+import { sanitizeProjectDescription } from "../../scanner.js";
 
 const CACHE_TTL_MS = 5000;
 const cache = new Map(); // projectPath -> { ts, data }
@@ -77,6 +78,7 @@ export function buildSidebarPreview(projectPath) {
 
   const brainDir = path.join(projectPath, ".project-brain");
   const p = readJsonSync(path.join(brainDir, "project.json"));
+  const architecture = readJsonSync(path.join(brainDir, "architecture.json"));
   const timeline = readJsonlSync(path.join(brainDir, "timeline.jsonl"));
   const memories = readJsonlSync(path.join(brainDir, "memory.jsonl"));
   const visibleMemories = memories.filter(isActiveMemory);
@@ -113,6 +115,7 @@ export function buildSidebarPreview(projectPath) {
         .sort((a, b) => (b.importance || 0) - (a.importance || 0))
         .slice(0, 3),
       todos: todos,
+      architecture: architecture && !architecture.__error ? architecture : null,
       stats: {
         pendingTodos: stats.pendingTodos,
         completedTodos: stats.completedTodos,
@@ -160,12 +163,13 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
     return out;
   }
 
-  const [p, timelineAll, memoriesAll, todosAll, codegraph] = await Promise.all([
+  const [p, timelineAll, memoriesAll, todosAll, codegraph, architecture] = await Promise.all([
     readJson(".project-brain/project.json"),
     readJsonl(".project-brain/timeline.jsonl"),
     readJsonl(".project-brain/memory.jsonl"),
     readJsonl(".project-brain/todo.jsonl"),
     readJson(".project-brain/codegraph.json"),
+    readJson(".project-brain/architecture.json"),
   ]);
 
   if (!p) {
@@ -180,6 +184,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       memoriesAll: [],
       todos: [],
       timelineAll: [],
+      architecture: null,
       stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
     };
   }
@@ -212,7 +217,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       id: p.id,
       name: p.name || "(unnamed)",
       type: techStackToType(p.techStack),
-      description: p.description || "",
+      description: sanitizeProjectDescription(p.description) || "",
       techStack: p.techStack || {},
       tooling: p.tooling || [],
       languages: p.languages || {},
@@ -231,6 +236,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
     todos: todos,
     timelineAll: timeline.slice(0, 50),
     codegraph: codegraph,
+    architecture: architecture,
     stats: {
       pendingTodos: stats.pendingTodos,
       completedTodos: stats.completedTodos,

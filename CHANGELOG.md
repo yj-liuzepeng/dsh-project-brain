@@ -7,8 +7,19 @@
 
 ## [Unreleased]
 
+暂无。
+
+## [v0.7.0-beta.1] - 2026-08-30
+
+> 首个面向外部用户的公测候选。自动化、构建和发布隐私检查通过；稳定版仍需完成多版本 DSH Desktop 真实安装验收。
+
 ### Added（新增）
 
+- 初始化/重扫新增语义版 `.project-brain/architecture.json`：项目定位、架构风格、概念分层、职责组件、关系、运行流程、关键文件和阅读顺序。
+- 默认复用当前 DSH Session 的 provider/model，结合 README、manifest、符号/import 与有限关键源码摘要生成架构；超时、无路由或非法输出时自动降级。
+- Dashboard 新增可交互分层架构认知报告；目录不再作为架构节点，点击职责组件可查看边界、协作和证据文件。
+- 扫描排除 `node_modules.backup-*`、备份目录、vendor 和生成物，避免噪声污染项目架构。
+- Session 结束检测到源码或关键配置变化时自动刷新架构；指纹未变化时复用已有 LLM 结果。
 - Dashboard 四个 Quick Action 改为通过 Connection RPC 在当前 Session 工作区后台执行，不再复制指令到对话框。
 - Quick Action 增加独立的执行中转圈、成功摘要、错误重试状态；执行成功后立即刷新运行时 Preview。
 - “整理记忆”采用两阶段安全交互：首次点击仅计算合并/归档候选，存在改动时再次确认才写入。
@@ -22,10 +33,28 @@
 - `project_continue`、Context Injector、Dashboard、状态统计和记忆列表默认排除 archived/superseded/deleted 记录。
 - Dashboard Quick Action 改为后台 RPC 执行并展示转圈、确认、成功和错误状态。
 
+### Fixed（修复）
+
+- 架构分析将 DSH `llm` 声明为正式 Host 依赖，修复动态注入未就绪时始终降级为“本地分析”的问题。
+- 修复 LLM runtime 生命周期错误：旧代码把“卸载时清理”误写为立即执行的 Cordis effect，导致刚注入的 LLM 服务在启动时被清空。
+- 当前 Session 模型路由除 `request/context` 外，也会从 `request/header.config` 和事件日志恢复；扫描期间会在真正调用前重新解析一次。
+- 将原先含义模糊的 `ARCHITECTURE_LLM_ROUTE_UNAVAILABLE` 拆分为 LLM 服务不可用和 Session 路由不可用两类诊断。
+- 架构 JSON 解析支持模型说明文字、Markdown 围栏、多文本块和尾逗号；首次输出仍不可解析时，自动用当前 DSH 模型执行一次紧凑 JSON 修复重试。
+- 项目简介提取跳过 README 顶部 Logo、徽章、居中容器、语言导航和纯链接，清理 HTML/Markdown 后选择首段有意义的自然语言；运行时 Preview 同时清理历史脏数据。
+- Dashboard 重构为单一工作台：顶部只保留项目信息、状态和阶段，详细内容按“概览 / 架构 / 任务动态 / 项目记忆”标签切换，移除待办、统计、代码、活动和记忆的重复展示。
+- Quick Action 与内容卡片改为自适应网格，增加键盘焦点、按压反馈、横向标签滚动和窄窗口单列布局。
+
 ### Security（安全）
 
+- 架构 LLM 不发送绝对路径；关键源码摘要受文件数、单文件长度和总量限制，可通过 `architectureLlmIncludeSource=false` 关闭。模型输出不接受 HTML，并校验所有证据文件路径与组件关系。
 - Quick Action RPC 只接受 `rescan/todos/dream/dreamCommit/overview` 白名单动作，项目路径始终由 Host 从 live Session 解析，拒绝浏览器指定路径或任意工具名。
 - 向量能力默认关闭；仅用户显式配置后联网，API 密钥通过 DSH Credentials 或环境变量解析，不写入项目缓存和 RPC 响应。
+
+### Tests（测试）
+
+- 12 组 smoke suite 全部通过，覆盖运行时 workspace、跨项目隔离、跨 Session 记忆、架构本地/LLM 双路径、BM25/向量检索、Dashboard 交互、主题和 Git diff。
+- 新增 `npm run verify:release`，检查 npm 文件白名单、入口文件、版本一致性，以及本机路径、Session ID、凭据和项目脑数据泄漏。
+- `npm audit`（含开发依赖）为 0 vulnerabilities。
 
 ### 计划中
 - 更精确的未提交变更快照与 Session 语义摘要

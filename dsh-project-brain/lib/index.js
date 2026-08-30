@@ -29,6 +29,9 @@ var IGNORE_DIRS = /* @__PURE__ */ new Set([
   ".project-brain"
   // 自身的项目脑数据目录，不应被扫
 ]);
+function shouldIgnoreDir(name2) {
+  return IGNORE_DIRS.has(name2) || /^node_modules(?:[._-].*)?$/i.test(name2) || /(?:^|[._-])backup(?:[._-]|$)/i.test(name2) || /\.bak(?:[._-]|$)/i.test(name2);
+}
 var EXT_LANG = {
   ".ts": "typescript",
   ".tsx": "typescript",
@@ -59,28 +62,56 @@ var EXT_LANG = {
   ".vue": "vue",
   ".svelte": "svelte"
 };
+function decodeReadmeEntities(value) {
+  const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  return String(value || "").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (all, entity) => {
+    if (entity[0] === "#") {
+      const hex = entity[1].toLowerCase() === "x";
+      const code = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+      return Number.isFinite(code) && code > 0 && code <= 1114111 ? String.fromCodePoint(code) : all;
+    }
+    return named[entity.toLowerCase()] || all;
+  });
+}
+function sanitizeProjectDescription(value) {
+  if (!value) return null;
+  const cleaned = decodeReadmeEntities(String(value).replace(/<!--([\s\S]*?)-->/g, " ").replace(/<(script|style|svg|picture)\b[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<img\b[^>]*>/gi, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/<https?:\/\/[^>]+>/gi, " ").replace(/<[^>]+>/g, " ").replace(/https?:\/\/\S+/gi, " ").replace(/^\s{0,3}(?:#{1,6}|>|[-*+]\s+)\s*/gm, "").replace(/[*_~`|]+/g, " ")).replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, 500) : null;
+}
+function isMeaningfulDescription(value) {
+  const text = String(value || "").trim();
+  if (text.length < 12) return false;
+  if (/^(?:english|中文|简体中文|繁體中文|docs?|documentation|homepage)(?:\s*[|·/]\s*(?:english|中文|简体中文|繁體中文|docs?|documentation|homepage))*$/i.test(text)) return false;
+  const chinese = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  const words = (text.match(/[A-Za-z0-9][A-Za-z0-9'_-]*/g) || []).length;
+  return chinese >= 6 || words >= 3;
+}
 function firstReadmeParagraph(text) {
   if (!text) return null;
-  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const source = String(text).replace(/^\uFEFF/, "").replace(/<!--([\s\S]*?)-->/g, "");
+  const lines = source.split(/\r?\n/);
   const parts = [];
   let started = false;
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || /^```/.test(line) || /^<!--/.test(line)) {
+    if (!line || /^```/.test(line)) {
       if (started && parts.length) break;
       continue;
     }
-    if (/^#{1,6}\s+/.test(line) && !started) continue;
-    if (/^(\[!|!\[|<img|<picture|<div|[-*]\s|\d+\.\s)/i.test(line)) {
+    if (/^#{1,6}\s+/.test(line) || /^<h[1-6]\b/i.test(line)) {
       if (started && parts.length) break;
+      continue;
+    }
+    const visible = sanitizeProjectDescription(line);
+    if (!visible || !isMeaningfulDescription(visible)) {
+      if (started && parts.length && /^(?:[-*]\s|\d+\.\s|#{1,6}\s+)/.test(line)) break;
       continue;
     }
     started = true;
-    parts.push(line);
+    parts.push(visible);
     if (parts.join(" ").length >= 360) break;
   }
-  const value = parts.join(" ").replace(/\s+/g, " ").trim();
-  return value ? value.slice(0, 500) : null;
+  return sanitizeProjectDescription(parts.join(" "));
 }
 function processPathOf(fs, target) {
   return typeof fs.processPath === "function" ? fs.processPath(target) : String(target);
@@ -123,7 +154,8 @@ async function scanProject(fs, projectPath) {
     tooling: [],
     fileCount: 0,
     topLevel: [],
-    entrypoints: []
+    entrypoints: [],
+    files: []
   };
   let entries;
   try {
@@ -131,7 +163,7 @@ async function scanProject(fs, projectPath) {
   } catch (e) {
     return result;
   }
-  result.topLevel = entries.map((e) => e && e.name).filter((n) => n && !IGNORE_DIRS.has(n)).slice().sort();
+  result.topLevel = entries.map((e) => e && e.name).filter((n) => n && !shouldIgnoreDir(n)).slice().sort();
   const names = result.topLevel;
   if (names.includes("package.json")) {
     const txt = await readText(fs, rootPath, "package.json");
@@ -139,7 +171,7 @@ async function scanProject(fs, projectPath) {
       try {
         const pkg = JSON.parse(txt);
         result.projectName = typeof pkg.name === "string" ? pkg.name : null;
-        result.description = typeof pkg.description === "string" ? pkg.description : null;
+        result.description = typeof pkg.description === "string" ? sanitizeProjectDescription(pkg.description) : null;
         const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
         if (deps.next) result.techStack.fullstack = "Next.js";
         else if (deps.nuxt) result.techStack.fullstack = "Nuxt";
@@ -210,7 +242,7 @@ async function scanProject(fs, projectPath) {
     }
     for (const e of sub) {
       if (!e || !e.name) continue;
-      if (IGNORE_DIRS.has(e.name)) continue;
+      if (shouldIgnoreDir(e.name)) continue;
       const kind = entryKind(e);
       if (kind === "file") {
         result.fileCount += 1;
@@ -238,6 +270,7 @@ async function scanProject(fs, projectPath) {
     }
   }
   result.tooling = Array.from(new Set(result.tooling)).sort();
+  result.files = Array.from(relativeFiles).sort();
   return result;
 }
 
@@ -806,6 +839,486 @@ function resolveProjectPath(args, exec, sandboxPolicy) {
   return ".";
 }
 
+// src/host/architecture/analyzer.js
+var SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|java|kt|kts|rs|cs|php|rb|swift|dart|scala|vue|svelte)$/i;
+var MANIFEST_NAMES = /^(?:package\.json|pyproject\.toml|requirements\.txt|go\.mod|pom\.xml|build\.gradle(?:\.kts)?|cargo\.toml|docker-compose\.ya?ml|compose\.ya?ml|dockerfile|makefile|pnpm-workspace\.yaml|turbo\.json|nx\.json)$/i;
+var README_NAMES = /^readme(?:\.[a-z0-9]+)?$/i;
+var ROLES = [
+  { id: "presentation", name: "\u4EA4\u4E92\u4E0E\u5C55\u793A\u5C42", kind: "presentation", order: 0, match: /(?:^|\/)(?:client|frontend|web|ui|views?|pages?|components?|screens?)(?:\/|\.|$)/i },
+  { id: "interface", name: "\u63A5\u53E3\u4E0E\u63A5\u5165\u5C42", kind: "interface", order: 1, match: /(?:^|\/)(?:api|routes?|controllers?|handlers?|rpc|commands?|cli|gateway)(?:\/|\.|$)/i },
+  { id: "application", name: "\u5E94\u7528\u7F16\u6392\u5C42", kind: "application", order: 2, match: /(?:^|\/)(?:services?|use-?cases?|application|agents?|tools?|workflows?|orchestrators?)(?:\/|\.|$)/i },
+  { id: "domain", name: "\u6838\u5FC3\u9886\u57DF\u5C42", kind: "domain", order: 3, match: /(?:^|\/)(?:core|domain|engine|business|analysis|scanner|parser|compiler)(?:\/|\.|$)/i },
+  { id: "data", name: "\u6570\u636E\u4E0E\u8BB0\u5FC6\u5C42", kind: "data", order: 4, match: /(?:^|\/)(?:data|db|database|models?|schemas?|repositories?|stores?|storage|memory|cache|migrations?)(?:\/|\.|$)/i },
+  { id: "integration", name: "\u5E73\u53F0\u4E0E\u5916\u90E8\u96C6\u6210\u5C42", kind: "integration", order: 5, match: /(?:^|\/)(?:host|integrations?|adapters?|providers?|connectors?|plugins?|infra|runtime)(?:\/|\.|$)/i },
+  { id: "support", name: "\u5DE5\u7A0B\u652F\u6491", kind: "support", order: 6, match: /(?:^|\/)(?:tests?|specs?|fixtures?|scripts?|build|config|deploy)(?:\/|\.|$)/i }
+];
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function hashText(text) {
+  let hash = 2166136261;
+  const value = String(text || "");
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+function safeId(value) {
+  return String(value || "item").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 72) || "item";
+}
+function cleanText(value, limit = 600) {
+  return String(value || "").replace(/\0/g, "").replace(/\r/g, "").trim().slice(0, limit);
+}
+function isGeneratedOrVendor(file) {
+  const path2 = String(file || "").replaceAll("\\", "/");
+  return /(?:^|\/)(?:node_modules(?:[._-][^/]*)?|vendor|dist|build|coverage|\.next|target|out|__pycache__|\.venv|venv)(?:\/|$)/i.test(path2) || /(?:^|\/)[^/]*(?:backup|\.bak)(?:[-_.][^/]*)?(?:\/|$)/i.test(path2) || /(?:^|\/)dsh-project-brain\/lib(?:\/|$)/i.test(path2);
+}
+function languageOf(path2) {
+  const lower = String(path2 || "").toLowerCase();
+  if (/\.tsx?$/.test(lower)) return "typescript";
+  if (/\.[cm]?jsx?$/.test(lower)) return "javascript";
+  if (/\.py$/.test(lower)) return "python";
+  if (/\.go$/.test(lower)) return "go";
+  if (/\.java$/.test(lower)) return "java";
+  if (/\.rs$/.test(lower)) return "rust";
+  if (/\.vue$/.test(lower)) return "vue";
+  if (/\.svelte$/.test(lower)) return "svelte";
+  return "other";
+}
+async function readProjectFile(fs, projectPath, relativePath) {
+  try {
+    const root = await fs.resolve(projectPath);
+    const target = await fs.resolve(relativePath, { cwd: root });
+    return String(await fs.readText(target));
+  } catch (e) {
+    return "";
+  }
+}
+function extractImports(text, language) {
+  const out = [];
+  const add = (value) => {
+    const item = String(value || "").trim();
+    if (item && !out.includes(item)) out.push(item);
+  };
+  let match;
+  if (["javascript", "typescript", "vue", "svelte"].includes(language)) {
+    const re = /(?:from\s*|import\s*\(|require\s*\()\s*["']([^"']+)["']/g;
+    while (match = re.exec(text)) add(match[1]);
+  } else if (language === "python") {
+    const re = /^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm;
+    while (match = re.exec(text)) add(match[1] || match[2]);
+  } else if (language === "go") {
+    const block = (text.match(/import\s*(?:\([\s\S]*?\)|["`][^"`]+["`])/) || [""])[0];
+    const re = /["`]([^"`\s]+)["`]/g;
+    while (match = re.exec(block)) add(match[1]);
+  } else if (language === "java") {
+    const re = /^\s*import\s+([\w.]+);/gm;
+    while (match = re.exec(text)) add(match[1]);
+  }
+  return out.slice(0, 60);
+}
+function extractSymbols(text, language) {
+  const out = [];
+  const add = (kind, name2) => {
+    if (name2 && !out.some((item) => item.name === name2)) out.push({ kind, name: String(name2).slice(0, 100) });
+  };
+  let match;
+  if (["javascript", "typescript", "vue", "svelte"].includes(language)) {
+    const re = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(class|function|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+    while (match = re.exec(text)) add(match[1], match[2]);
+  } else if (language === "python") {
+    const re = /^\s*(class|def|async\s+def)\s+([A-Za-z_]\w*)/gm;
+    while (match = re.exec(text)) add(match[1], match[2]);
+  } else if (language === "go") {
+    const re = /^\s*(type|func)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/gm;
+    while (match = re.exec(text)) add(match[1], match[2]);
+  } else if (language === "java") {
+    const re = /\b(class|interface|enum|record)\s+([A-Za-z_]\w*)/g;
+    while (match = re.exec(text)) add(match[1], match[2]);
+  }
+  return out.slice(0, 24);
+}
+function sourceExcerpt(text) {
+  return cleanText(String(text || "").split("\n").filter((line) => !/^\s*(?:\/\/|#)\s*(?:eslint|prettier|type:|noqa)/i.test(line)).slice(0, 60).join("\n"), 1400);
+}
+function evidencePriority(file, scan) {
+  let score = 0;
+  if ((scan.entrypoints || []).some((entry) => entry.path === file)) score += 100;
+  if (/(?:^|\/)(?:main|index|app|server|client|plugin|bootstrap)\.[^.]+$/i.test(file)) score += 45;
+  if (/(?:scanner|analyzer|service|controller|router|store|memory|rpc|injector|engine|workflow)/i.test(file)) score += 28;
+  if (String(file).split("/").length <= 3) score += 12;
+  if (/(?:test|spec|fixture|mock|\.d\.ts$)/i.test(file)) score -= 35;
+  return score;
+}
+function roleForFile(file) {
+  return ROLES.find((role) => role.match.test(file)) || ROLES[3];
+}
+function friendlyComponentName(role, files) {
+  const hints = files.join(" ").toLowerCase();
+  if (role.id === "presentation") return /client|web|page|component/.test(hints) ? "\u7528\u6237\u754C\u9762\u4E0E\u53EF\u89C6\u5316" : "\u4EA4\u4E92\u5C55\u793A";
+  if (role.id === "interface") return /rpc/.test(hints) ? "\u8FD0\u884C\u65F6 RPC \u63A5\u53E3" : /cli|command/.test(hints) ? "\u547D\u4EE4\u4E0E\u63A5\u5165\u63A5\u53E3" : "\u63A5\u53E3\u9002\u914D";
+  if (role.id === "application") return /tool/.test(hints) ? "\u9879\u76EE\u80FD\u529B\u5DE5\u5177\u96C6" : /agent/.test(hints) ? "Agent \u7F16\u6392" : "\u5E94\u7528\u670D\u52A1\u7F16\u6392";
+  if (role.id === "domain") return /scan|analy|parser/.test(hints) ? "\u9879\u76EE\u5206\u6790\u5F15\u64CE" : "\u6838\u5FC3\u4E1A\u52A1\u5F15\u64CE";
+  if (role.id === "data") return /memory/.test(hints) ? "\u9879\u76EE\u8BB0\u5FC6\u4E0E\u68C0\u7D22" : "\u9879\u76EE\u6570\u636E\u5B58\u50A8";
+  if (role.id === "integration") return /host|plugin/.test(hints) ? "DSH Host \u96C6\u6210" : "\u5E73\u53F0\u4E0E\u5916\u90E8\u670D\u52A1\u96C6\u6210";
+  return "\u6784\u5EFA\u3001\u6D4B\u8BD5\u4E0E\u53D1\u5E03";
+}
+function localPurpose(scan) {
+  if (scan.description) return cleanText(scan.description, 800);
+  const stacks = Object.values(scan.techStack || {}).filter(Boolean);
+  return (scan.projectName || "\u8BE5\u9879\u76EE") + (stacks.length ? " \u662F\u4E00\u4E2A\u57FA\u4E8E " + stacks.join("\u3001") + " \u7684\u8F6F\u4EF6\u9879\u76EE\u3002" : " \u662F\u4E00\u4E2A\u8F6F\u4EF6\u9879\u76EE\uFF0C\u53EF\u4ECE\u5165\u53E3\u4E0E\u6838\u5FC3\u7EC4\u4EF6\u7EE7\u7EED\u4E86\u89E3\u5176\u804C\u8D23\u3002");
+}
+function withAliases(architecture) {
+  return {
+    ...architecture,
+    nodes: (architecture.components || []).map((item) => ({ id: item.id, label: item.name, kind: item.type, layerId: item.layerId, description: item.responsibility, details: item.details, files: item.importantFiles || [], evidencePaths: item.evidencePaths || [], technologies: item.technologies || [], confidence: item.confidence })),
+    edges: (architecture.relationships || []).map((item) => ({ ...item })),
+    flows: (architecture.runtimeFlows || []).map((flow) => ({ ...flow, label: flow.name, steps: (flow.steps || []).map((step) => step.componentId) }))
+  };
+}
+function buildLocalArchitecture(scan, evidence, previous, config) {
+  const grouped = /* @__PURE__ */ new Map();
+  for (const fact of evidence.sourceFacts) {
+    const role = roleForFile(fact.file);
+    if (!grouped.has(role.id)) grouped.set(role.id, { role, facts: [] });
+    grouped.get(role.id).facts.push(fact);
+  }
+  const components = [...grouped.values()].sort((a, b) => a.role.order - b.role.order).slice(0, clamp(Number(config.architectureMaxNodes) || 24, 6, 60)).map(({ role, facts }) => {
+    const files = facts.map((fact) => fact.file);
+    return {
+      id: "component-" + role.id,
+      name: friendlyComponentName(role, files),
+      layerId: "layer-" + role.id,
+      type: role.kind,
+      responsibility: role.name + "\uFF1A" + (facts.flatMap((fact) => fact.symbols).slice(0, 5).map((item) => item.name).join("\u3001") || "\u627F\u8F7D\u76F8\u5173\u9879\u76EE\u80FD\u529B"),
+      details: "\u7531 " + files.length + " \u4E2A\u5173\u952E\u6E90\u7801\u6587\u4EF6\u5F52\u7EB3\uFF1B\u76EE\u5F55\u53EA\u4F5C\u4E3A\u5206\u6790\u8BC1\u636E\u3002",
+      technologies: [...new Set(facts.map((fact) => fact.language))].filter((item) => item !== "other"),
+      importantFiles: files.slice(0, 6),
+      evidencePaths: files.slice(0, 12),
+      confidence: 0.62
+    };
+  });
+  if (!components.length) components.push({ id: "component-project", name: "\u9879\u76EE\u4E3B\u4F53", layerId: "layer-domain", type: "domain", responsibility: "\u9879\u76EE\u6838\u5FC3\u80FD\u529B", details: "\u672A\u68C0\u6D4B\u5230\u53EF\u5206\u6790\u6E90\u7801\u3002", technologies: [], importantFiles: [], evidencePaths: [], confidence: 0.35 });
+  const componentIds = new Set(components.map((item) => item.id));
+  const layers = ROLES.filter((role) => componentIds.has("component-" + role.id)).map((role) => ({ id: "layer-" + role.id, name: role.name, responsibility: role.name, order: role.order }));
+  if (!layers.length) layers.push({ id: "layer-domain", name: "\u6838\u5FC3\u9886\u57DF\u5C42", responsibility: "\u9879\u76EE\u6838\u5FC3\u80FD\u529B", order: 0 });
+  const relationships = [];
+  for (let i = 0; i < components.length - 1; i++) relationships.push({ id: "relation-local-" + (i + 1), from: components[i].id, to: components[i + 1].id, label: "\u8C03\u7528/\u534F\u4F5C", type: "uses", description: "\u4F9D\u636E\u5E38\u89C1\u5206\u5C42\u65B9\u5411\u63A8\u65AD\uFF0C\u9700\u7ED3\u5408\u4EE3\u7801\u9A8C\u8BC1", confidence: 0.42 });
+  const keyFiles = evidence.sourceFacts.slice(0, 12).map((fact) => ({ path: fact.file, role: fact.symbols.length ? "\u5B9A\u4E49 " + fact.symbols.slice(0, 4).map((item) => item.name).join("\u3001") : "\u5173\u952E\u5B9E\u73B0\u6587\u4EF6", whyImportant: fact.imports.length ? "\u8FDE\u63A5 " + fact.imports.slice(0, 4).join("\u3001") : "\u4F4D\u4E8E\u9879\u76EE\u5165\u53E3\u6216\u6838\u5FC3\u5B9E\u73B0\u8DEF\u5F84", category: roleForFile(fact.file).kind }));
+  const fingerprint = hashText(JSON.stringify({ files: evidence.sourceFacts.map((fact) => [fact.file, fact.hash, fact.imports]), manifests: evidence.manifests.map((item) => [item.path, item.hash]), readme: hashText(evidence.readme && evidence.readme.content), techStack: scan.techStack }));
+  const changed = !previous || previous.schemaVersion !== 2 || previous.fingerprint !== fingerprint;
+  const overview = { purpose: localPurpose(scan), audience: "\u9879\u76EE\u5F00\u53D1\u4E0E\u7EF4\u62A4\u4EBA\u5458", category: Object.values(scan.techStack || {})[0] || "\u8F6F\u4EF6\u9879\u76EE", architectureStyle: layers.length >= 3 ? "\u5206\u5C42\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09" : "\u6A21\u5757\u5316\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09", value: "\u5E2E\u52A9\u5F00\u53D1\u8005\u7406\u89E3\u9879\u76EE\u5165\u53E3\u3001\u6838\u5FC3\u80FD\u529B\u548C\u534F\u4F5C\u8FB9\u754C\u3002" };
+  const runtimeFlows = components.length >= 2 ? [{ id: "flow-main", name: "\u4E3B\u8981\u6267\u884C\u94FE\u8DEF\uFF08\u672C\u5730\u63A8\u65AD\uFF09", trigger: "\u7528\u6237\u6216\u5BBF\u4E3B\u89E6\u53D1\u9879\u76EE\u80FD\u529B", outcome: "\u6838\u5FC3\u80FD\u529B\u5B8C\u6210\u5E76\u8BFB\u5199\u9879\u76EE\u6570\u636E", steps: components.map((component, index) => ({ componentId: component.id, action: index === 0 ? "\u63A5\u6536\u8BF7\u6C42" : index === components.length - 1 ? "\u5B8C\u6210\u5904\u7406" : "\u5904\u7406\u5E76\u4F20\u9012" })) }] : [];
+  return withAliases({
+    schemaVersion: 2,
+    version: previous && previous.version && changed ? previous.version + 1 : previous && previous.version || 1,
+    generatedAt: Date.now(),
+    fingerprint,
+    changed,
+    source: "local",
+    project: { name: scan.projectName || "Project", techStack: scan.techStack || {}, entrypoints: scan.entrypoints || [] },
+    overview,
+    summary: overview.purpose,
+    layers,
+    components,
+    relationships,
+    runtimeFlows,
+    keyFiles,
+    gettingStarted: ["\u5148\u9605\u8BFB README \u4E0E\u9879\u76EE\u6E05\u5355", "\u4ECE\u5165\u53E3\u6587\u4EF6\u8DDF\u8E2A\u4E3B\u8981\u8FD0\u884C\u94FE\u8DEF", "\u7ED3\u5408\u5173\u952E\u6587\u4EF6\u7406\u89E3\u6570\u636E\u4E0E\u5E73\u53F0\u8FB9\u754C"],
+    designHighlights: [],
+    risks: [],
+    evidence: { readmeUsed: Boolean(evidence.readme && evidence.readme.content), manifestFiles: evidence.manifests.map((item) => item.path), sourceFilesAnalyzed: evidence.sourceFacts.length, sourceSnippetsShared: false },
+    stats: { files: evidence.allFiles.length, analyzedFiles: evidence.sourceFacts.length, layers: layers.length, modules: components.length, components: components.length, edges: relationships.length, keyFiles: keyFiles.length },
+    llm: { requested: false, used: false, provider: null, model: null, error: null }
+  });
+}
+function stripCodeFence(value) {
+  return String(value || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+}
+function withoutTrailingCommas(value) {
+  const text = String(value || "");
+  let out = "";
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quoted) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      out += char;
+      continue;
+    }
+    if (char === ",") {
+      let next = index + 1;
+      while (next < text.length && /\s/.test(text[next])) next += 1;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+    out += char;
+  }
+  return out;
+}
+function balancedJsonObjects(value) {
+  const text = String(value || "");
+  const out = [];
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{") continue;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        continue;
+      }
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          out.push(text.slice(start, index + 1));
+          start = index;
+          break;
+        }
+        if (depth < 0) break;
+      }
+    }
+  }
+  return out;
+}
+function parseArchitectureJson(value) {
+  const text = String(value || "").trim();
+  const candidates = [stripCodeFence(text)];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let match;
+  while (match = fenced.exec(text)) candidates.push(match[1].trim());
+  candidates.push(...balancedJsonObjects(text));
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    try {
+      return JSON.parse(candidate);
+    } catch (e) {
+    }
+    try {
+      return JSON.parse(withoutTrailingCommas(candidate));
+    } catch (e) {
+    }
+  }
+  throw Object.assign(new Error("LLM returned invalid architecture JSON"), {
+    code: "ARCHITECTURE_LLM_INVALID_JSON",
+    details: { receivedChars: text.length, balancedObjectFound: balancedJsonObjects(text).length > 0 }
+  });
+}
+function strings(value, max, limit) {
+  return (Array.isArray(value) ? value : []).map((item) => cleanText(item, limit)).filter(Boolean).slice(0, max);
+}
+function parseLlmArchitecture(text, base, knownFiles) {
+  const parsed = parseArchitectureJson(text);
+  const rawLayers = Array.isArray(parsed.layers) ? parsed.layers : [];
+  const layers = rawLayers.slice(0, 10).map((item, index) => ({ id: "layer-" + safeId(item.id || item.name || index + 1), name: cleanText(item.name, 80) || "\u67B6\u6784\u5C42 " + (index + 1), responsibility: cleanText(item.responsibility, 500), order: index }));
+  if (!layers.length) throw Object.assign(new Error("LLM architecture has no layers"), { code: "ARCHITECTURE_LLM_SCHEMA" });
+  const layerByRaw = /* @__PURE__ */ new Map();
+  rawLayers.slice(0, 10).forEach((item, index) => [item && item.id, item && item.name, layers[index].id].filter(Boolean).forEach((key) => layerByRaw.set(String(key), layers[index].id)));
+  const known = new Set(knownFiles);
+  const rawComponents = Array.isArray(parsed.components) ? parsed.components : [];
+  const components = rawComponents.slice(0, 18).map((item, index) => {
+    const evidencePaths = strings(item.evidencePaths, 12, 240).filter((path2) => known.has(path2));
+    const importantFiles = strings(item.importantFiles, 8, 240).filter((path2) => known.has(path2));
+    return { id: "component-" + safeId(item.id || item.name || index + 1), name: cleanText(item.name, 100) || "\u6838\u5FC3\u7EC4\u4EF6 " + (index + 1), layerId: layerByRaw.get(String(item.layerId || item.layer || "")) || layers[Math.min(index, layers.length - 1)].id, type: cleanText(item.type, 40) || "component", responsibility: cleanText(item.responsibility, 700), details: cleanText(item.details, 1200), technologies: strings(item.technologies, 10, 80), importantFiles: importantFiles.length ? importantFiles : evidencePaths.slice(0, 5), evidencePaths, confidence: clamp(Number(item.confidence) || 0.78, 0.2, 1) };
+  }).filter((item) => item.name && item.responsibility);
+  if (components.length < 2) throw Object.assign(new Error("LLM architecture has too few components"), { code: "ARCHITECTURE_LLM_SCHEMA" });
+  const componentIds = new Set(components.map((item) => item.id));
+  const rawToId = /* @__PURE__ */ new Map();
+  rawComponents.slice(0, 18).forEach((item, index) => {
+    if (components[index]) [item && item.id, item && item.name, components[index].id].filter(Boolean).forEach((key) => rawToId.set(String(key), components[index].id));
+  });
+  const relationships = (Array.isArray(parsed.relationships) ? parsed.relationships : []).slice(0, 36).map((item, index) => ({ id: "relation-" + (index + 1), from: rawToId.get(String(item.from || "")), to: rawToId.get(String(item.to || "")), label: cleanText(item.label, 80) || "\u8C03\u7528", type: cleanText(item.type, 40) || "uses", description: cleanText(item.description, 500), confidence: clamp(Number(item.confidence) || 0.75, 0.2, 1) })).filter((item) => componentIds.has(item.from) && componentIds.has(item.to) && item.from !== item.to);
+  const runtimeFlows = (Array.isArray(parsed.runtimeFlows) ? parsed.runtimeFlows : []).slice(0, 8).map((flow, index) => ({ id: "flow-" + (index + 1), name: cleanText(flow.name, 100) || "\u8FD0\u884C\u6D41\u7A0B " + (index + 1), trigger: cleanText(flow.trigger, 400), outcome: cleanText(flow.outcome, 400), steps: (Array.isArray(flow.steps) ? flow.steps : []).slice(0, 12).map((step) => ({ componentId: rawToId.get(String(step.componentId || step.component || "")), action: cleanText(step.action, 400), file: known.has(step.file) ? step.file : null })).filter((step) => componentIds.has(step.componentId)) })).filter((flow) => flow.steps.length >= 2);
+  const keyFiles = (Array.isArray(parsed.keyFiles) ? parsed.keyFiles : []).slice(0, 16).map((item) => ({ path: cleanText(item.path, 240), role: cleanText(item.role, 300), whyImportant: cleanText(item.whyImportant, 600), category: cleanText(item.category, 50) })).filter((item) => known.has(item.path));
+  const overviewInput = parsed.overview || {};
+  const result = { ...base, source: "hybrid", overview: { purpose: cleanText(overviewInput.purpose, 1200) || base.overview.purpose, audience: cleanText(overviewInput.audience, 500) || base.overview.audience, category: cleanText(overviewInput.category, 160) || base.overview.category, architectureStyle: cleanText(overviewInput.architectureStyle, 300) || base.overview.architectureStyle, value: cleanText(overviewInput.value, 800) || base.overview.value }, summary: cleanText(parsed.summary, 1600) || cleanText(overviewInput.purpose, 1200) || base.summary, layers, components, relationships, runtimeFlows, keyFiles: keyFiles.length ? keyFiles : base.keyFiles, gettingStarted: strings(parsed.gettingStarted, 8, 600), designHighlights: strings(parsed.designHighlights, 10, 600), risks: strings(parsed.risks, 10, 600) };
+  result.stats = { ...base.stats, layers: layers.length, modules: components.length, components: components.length, edges: relationships.length, keyFiles: result.keyFiles.length };
+  return withAliases(result);
+}
+function llmPrompt(base, evidence, includeSource) {
+  const payload = { project: base.project, localOverview: base.overview, readme: evidence.readme ? { path: evidence.readme.path, content: evidence.readme.content } : null, manifests: evidence.manifests.slice(0, 8).map((item) => ({ path: item.path, content: item.content })), sourceFacts: evidence.sourceFacts.slice(0, 24).map((fact) => ({ path: fact.file, language: fact.language, imports: fact.imports, symbols: fact.symbols, ...includeSource ? { excerpt: fact.excerpt } : {} })), entrypoints: base.project.entrypoints, techStack: base.project.techStack };
+  return [
+    "\u4F60\u662F\u4E00\u540D\u8D44\u6DF1\u8F6F\u4EF6\u67B6\u6784\u5E08\u3002\u76EE\u6807\u662F\u8BA9\u7B2C\u4E00\u6B21\u63A5\u89E6\u4ED3\u5E93\u7684\u5F00\u53D1\u8005\u5728\u51E0\u5206\u949F\u5185\u7406\u89E3\u7CFB\u7EDF\u8BBE\u8BA1\uFF0C\u800C\u4E0D\u662F\u590D\u8FF0\u76EE\u5F55\u6811\u3002",
+    "\u56DE\u7B54\u9879\u76EE\u505A\u4EC0\u4E48\u3001\u670D\u52A1\u8C01\u3001\u91C7\u7528\u4EC0\u4E48\u67B6\u6784\u98CE\u683C\u3001\u6709\u54EA\u4E9B\u6982\u5FF5\u5C42\u548C\u6838\u5FC3\u7EC4\u4EF6\u3001\u7EC4\u4EF6\u5982\u4F55\u534F\u4F5C\u3001\u4E3B\u8981\u8FD0\u884C\u6D41\u7A0B\u3001\u5173\u952E\u6587\u4EF6\u3001\u8BBE\u8BA1\u4EAE\u70B9\u4E0E\u98CE\u9669\u3002",
+    "\u89C4\u5219\uFF1A\u7EC4\u4EF6\u5FC5\u987B\u662F\u6709\u804C\u8D23\u7684\u6982\u5FF5\u7EC4\u4EF6\uFF0C\u7981\u6B62\u628A src\u3001packages/foo\u3001scripts \u7B49\u76EE\u5F55\u540D\u76F4\u63A5\u5F53\u7EC4\u4EF6\u540D\uFF1B\u8DEF\u5F84\u53EA\u80FD\u4F5C\u4E3A evidencePaths/importantFiles/keyFiles \u8BC1\u636E\u3002\u5FFD\u7565 vendor\u3001\u5907\u4EFD\u3001\u751F\u6210\u7269\u548C\u6D4B\u8BD5\u5939\u5177\u5E72\u6270\u3002\u53EA\u9648\u8FF0\u8BC1\u636E\u652F\u6301\u7684\u5185\u5BB9\u3002\u8F93\u51FA\u4E2D\u6587\u4E25\u683C JSON\uFF0C\u4E0D\u8981 Markdown/HTML/Mermaid\u3002",
+    "JSON \u683C\u5F0F\uFF1A" + JSON.stringify({ overview: { purpose: "\u9879\u76EE\u89E3\u51B3\u4EC0\u4E48\u95EE\u9898", audience: "\u4F7F\u7528\u8005", category: "\u9879\u76EE\u7C7B\u578B", architectureStyle: "\u67B6\u6784\u98CE\u683C", value: "\u6838\u5FC3\u4EF7\u503C" }, summary: "\u6574\u4F53\u67B6\u6784\u8BF4\u660E", layers: [{ id: "interface", name: "\u63A5\u53E3\u5C42", responsibility: "\u5C42\u804C\u8D23" }], components: [{ id: "runtime-bridge", name: "\u8FD0\u884C\u65F6\u6865\u63A5", layerId: "interface", type: "service", responsibility: "\u804C\u8D23", details: "\u8FB9\u754C\u4E0E\u534F\u4F5C", technologies: ["\u6280\u672F"], importantFiles: ["\u771F\u5B9E\u76F8\u5BF9\u8DEF\u5F84"], evidencePaths: ["\u771F\u5B9E\u76F8\u5BF9\u8DEF\u5F84"], confidence: 0.85 }], relationships: [{ from: "runtime-bridge", to: "memory-store", label: "\u8BFB\u5199", type: "data-flow", description: "\u5173\u7CFB", confidence: 0.8 }], runtimeFlows: [{ name: "\u521D\u59CB\u5316\u6D41\u7A0B", trigger: "\u89E6\u53D1\u6761\u4EF6", outcome: "\u7ED3\u679C", steps: [{ componentId: "runtime-bridge", action: "\u52A8\u4F5C", file: "\u53EF\u9009\u771F\u5B9E\u8DEF\u5F84" }] }], keyFiles: [{ path: "\u771F\u5B9E\u76F8\u5BF9\u8DEF\u5F84", role: "\u6587\u4EF6\u89D2\u8272", whyImportant: "\u4E3A\u4EC0\u4E48\u5148\u8BFB", category: "entry|core|data|integration|config" }], gettingStarted: ["\u9605\u8BFB/\u8C03\u8BD5\u987A\u5E8F"], designHighlights: ["\u8BBE\u8BA1\u4EAE\u70B9"], risks: ["\u98CE\u9669\u6216\u4E0D\u786E\u5B9A\u9879"] }),
+    "\u9879\u76EE\u8BC1\u636E\uFF1A" + JSON.stringify(payload)
+  ].join("\n");
+}
+function repairArchitecturePrompt(value) {
+  return [
+    "\u4E0B\u9762\u662F\u4E00\u6B21\u8F6F\u4EF6\u67B6\u6784\u5206\u6790\u7684\u6A21\u578B\u8F93\u51FA\uFF0C\u4F46\u5B83\u4E0D\u662F\u53EF\u89E3\u6790\u7684\u4E25\u683C JSON\u3002",
+    "\u8BF7\u53EA\u4FEE\u590D JSON \u8BED\u6CD5\u548C\u7F3A\u5931\u7684\u95ED\u5408\u7ED3\u6784\uFF0C\u4FDD\u7559\u5DF2\u6709\u4E8B\u5B9E\u4E0E\u76F8\u5BF9\u6587\u4EF6\u8DEF\u5F84\uFF1B\u4E0D\u8981\u6DFB\u52A0\u89E3\u91CA\u3001Markdown \u6216\u4EE3\u7801\u56F4\u680F\u3002",
+    "\u6700\u7EC8\u53EA\u80FD\u8F93\u51FA\u4E00\u4E2A JSON \u5BF9\u8C61\uFF0C\u5E76\u786E\u4FDD\u81F3\u5C11\u5305\u542B\u975E\u7A7A layers \u548C\u81F3\u5C11\u4E24\u4E2A components\u3002",
+    "\u5F85\u4FEE\u590D\u8F93\u51FA\uFF1A",
+    cleanText(value, 24e3)
+  ].join("\n");
+}
+async function streamText(llm, route, prompt, sessionId, timeoutMs, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 6e4);
+  const chunks = /* @__PURE__ */ new Map();
+  const completed = /* @__PURE__ */ new Map();
+  try {
+    const request = { provider: route.provider, model: route.model, system: options.system || "Produce an evidence-based conceptual software architecture as strict JSON only.", messages: [{ role: "user", content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-project-brain" } }], maxTokens: options.maxTokens || 6200, purpose: options.purpose || "project-architecture", ...sessionId ? { sessionId } : {}, signal: controller.signal };
+    for await (const chunk of llm.stream(request)) {
+      if (!chunk) continue;
+      if (chunk.type === "text-delta") chunks.set(chunk.index, (chunks.get(chunk.index) || "") + String(chunk.text || ""));
+      else if (chunk.type === "block-end" && chunk.block && chunk.block.type === "text") completed.set(chunk.index, String(chunk.block.text || ""));
+      else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind && chunk.reason.kind !== "stop") throw Object.assign(new Error("architecture LLM finished with " + chunk.reason.kind), { code: "ARCHITECTURE_LLM_FINISH" });
+    }
+    const indexes = [.../* @__PURE__ */ new Set([...chunks.keys(), ...completed.keys()])].sort((a, b) => a - b);
+    const text = indexes.map((index) => chunks.get(index) || completed.get(index) || "").join("").trim();
+    if (!text) throw Object.assign(new Error("architecture LLM returned no text"), { code: "ARCHITECTURE_LLM_EMPTY" });
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function collectEvidence(fs, projectPath, scan, config) {
+  const allFiles = (scan.files || []).filter((file) => !isGeneratedOrVendor(file));
+  const readmePath = allFiles.find((file) => README_NAMES.test(file.split("/").pop()));
+  const readme = readmePath ? { path: readmePath, content: cleanText(await readProjectFile(fs, projectPath, readmePath), 9e3) } : null;
+  const manifests = [];
+  for (const path2 of allFiles.filter((file) => MANIFEST_NAMES.test(file.split("/").pop())).slice(0, 12)) {
+    const content = cleanText(await readProjectFile(fs, projectPath, path2), 6e3);
+    manifests.push({ path: path2, content, hash: hashText(content) });
+  }
+  const sourceFiles = allFiles.filter((file) => SOURCE_EXTENSIONS.test(file)).sort((a, b) => evidencePriority(b, scan) - evidencePriority(a, scan) || a.localeCompare(b)).slice(0, clamp(Number(config.architectureMaxFiles) || 240, 20, 1e3));
+  const sourceFacts = [];
+  let totalBytes = 0;
+  for (const file of sourceFiles) {
+    if (totalBytes >= 12e5) break;
+    const text = (await readProjectFile(fs, projectPath, file)).slice(0, 1e5);
+    totalBytes += text.length;
+    const language = languageOf(file);
+    sourceFacts.push({ file, language, imports: extractImports(text, language), symbols: extractSymbols(text, language), excerpt: sourceExcerpt(text), hash: hashText(text) });
+  }
+  return { allFiles, readme, manifests, sourceFacts };
+}
+function resolveSessionRoute(session) {
+  try {
+    const context = session && typeof session.requestContext === "function" ? session.requestContext() : null;
+    if (context && context.provider && context.model) return { provider: context.provider, model: context.model };
+  } catch (e) {
+  }
+  try {
+    const header = session && typeof session.requestHeader === "function" ? session.requestHeader() : null;
+    const config = header && header.config;
+    if (config && config.provider && config.model) return { provider: config.provider, model: config.model };
+  } catch (e) {
+  }
+  try {
+    const events = session && Array.isArray(session.events) ? session.events : [];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index] || {};
+      if (event.type === "request/context") {
+        const data = event.data || {};
+        if (data.provider && data.model) return { provider: data.provider, model: data.model };
+      }
+      if (event.type === "request/header") {
+        const data = event.data || {};
+        const eventConfig = data.header && data.header.config || data.config;
+        if (eventConfig && eventConfig.provider && eventConfig.model) {
+          return { provider: eventConfig.provider, model: eventConfig.model };
+        }
+      }
+    }
+  } catch (e) {
+  }
+  return null;
+}
+function createLlmRuntime(ctx, initialService = null) {
+  let service = initialService && typeof initialService.stream === "function" ? initialService : null;
+  if (!service && ctx) {
+    try {
+      const current = ctx.get ? ctx.get("llm") : ctx.llm;
+      if (current && typeof current.stream === "function") service = current;
+    } catch (e) {
+    }
+  }
+  return { get: () => service };
+}
+async function buildArchitecture({ fs, projectPath, scan, previous, config = {}, llm, route, getRoute, sessionId } = {}) {
+  const evidence = await collectEvidence(fs, projectPath, scan, config);
+  const local = buildLocalArchitecture(scan, evidence, previous, config);
+  const requested = config.architectureLlmEnabled !== false;
+  const includeSource = config.architectureLlmIncludeSource !== false;
+  local.llm.requested = requested;
+  if (!requested) return local;
+  if (!local.changed && previous && previous.schemaVersion === 2 && previous.llm && previous.llm.used) return { ...previous, generatedAt: Date.now(), changed: false };
+  if (!llm || typeof llm.stream !== "function") {
+    local.llm.error = {
+      code: "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE",
+      message: "DSH \u672A\u5411\u63D2\u4EF6\u63D0\u4F9B LLM \u670D\u52A1\uFF0C\u5DF2\u751F\u6210\u672C\u5730\u6982\u5FF5\u67B6\u6784",
+      details: { serviceAvailable: false, routeAvailable: Boolean(route) }
+    };
+    return local;
+  }
+  if (!route && typeof getRoute === "function") {
+    try {
+      route = getRoute();
+    } catch (e) {
+      route = null;
+    }
+  }
+  if (!route) {
+    local.llm.error = {
+      code: "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE",
+      message: "\u5F53\u524D Session \u5C1A\u672A\u4EA7\u751F\u53EF\u590D\u7528\u7684\u6A21\u578B\u8DEF\u7531\uFF0C\u8BF7\u5148\u5B8C\u6210\u4E00\u6B21\u5BF9\u8BDD\u540E\u91CD\u8BD5",
+      details: { serviceAvailable: true, routeAvailable: false, sessionId: sessionId || null }
+    };
+    return local;
+  }
+  local.llm.provider = route.provider;
+  local.llm.model = route.model;
+  try {
+    const text = await streamText(llm, route, llmPrompt(local, evidence, includeSource), sessionId, config.architectureLlmTimeoutMs || 6e4);
+    let enriched;
+    let repaired = false;
+    try {
+      enriched = parseLlmArchitecture(text, local, evidence.allFiles);
+    } catch (firstError) {
+      if (firstError.code !== "ARCHITECTURE_LLM_INVALID_JSON" && firstError.code !== "ARCHITECTURE_LLM_SCHEMA") throw firstError;
+      const repairedText = await streamText(
+        llm,
+        route,
+        repairArchitecturePrompt(text),
+        sessionId,
+        Math.min(config.architectureLlmTimeoutMs || 6e4, 45e3),
+        { purpose: "project-architecture-json-repair", maxTokens: 6200, system: "Repair the supplied architecture output into one strict JSON object. Output JSON only." }
+      );
+      enriched = parseLlmArchitecture(repairedText, local, evidence.allFiles);
+      repaired = true;
+    }
+    enriched.llm = { requested: true, used: true, provider: route.provider, model: route.model, attempts: repaired ? 2 : 1, repaired, error: null };
+    enriched.evidence = { ...local.evidence, sourceSnippetsShared: includeSource };
+    return enriched;
+  } catch (error) {
+    local.llm.error = { code: error.code || "ARCHITECTURE_LLM_FAILED", message: String(error.message || error) };
+    return local;
+  }
+}
+function architectureRelevantFiles(files) {
+  return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));
+}
+
 // src/tools.js
 function emitPreviewChanged(exec, projectPath) {
   try {
@@ -826,7 +1339,7 @@ function resolveWritePolicy2(sandboxPolicy) {
   }
   return sandboxPolicy;
 }
-async function scanAndWrite(fs, sandboxPolicy, args, toolLabel) {
+async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
   const startMs = Date.now();
   const explicit = args && typeof args.path === "string" && args.path.trim() ? args.path.trim() : null;
   if (!explicit) {
@@ -859,13 +1372,39 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel) {
     existing = null;
   }
   const isRescan = Boolean(existing && existing.id);
+  let previousArchitecture = null;
+  try {
+    previousArchitecture = await readJson(fs, brainPath(projectPath, "architecture.json"));
+  } catch (e) {
+  }
+  const architectureConfig = runtime.getMemoryConfig ? runtime.getMemoryConfig() : {};
+  let architecture = null;
+  if (architectureConfig.architectureEnabled !== false) {
+    try {
+      architecture = await buildArchitecture({
+        fs,
+        projectPath,
+        scan,
+        previous: previousArchitecture && !previousArchitecture.__error ? previousArchitecture : null,
+        config: architectureConfig,
+        llm: runtime.getLlm ? runtime.getLlm() : null,
+        route: runtime.llmRoute || null,
+        getRoute: runtime.getLlmRoute || null,
+        sessionId: runtime.sessionId || null
+      });
+    } catch (e) {
+      architecture = { error: { code: e.code || "ARCHITECTURE_FAILED", message: String(e && e.message || e) } };
+    }
+  }
   const now = Date.now();
   const projectName = scan.projectName || projectPath.split(/[\\/]/).filter(Boolean).pop() || "untitled";
+  const existingDescription = sanitizeProjectDescription(existing && existing.description);
+  const scannedDescription = sanitizeProjectDescription(scan.description);
   const projectData = {
     id: isRescan ? existing.id : makeId("brain", now),
     name: projectName,
     rootPath: projectPath,
-    description: existing && existing.description && existing.description !== "Auto-generated by dsh-project-brain" ? existing.description : scan.description || "Auto-generated by dsh-project-brain",
+    description: existingDescription && existingDescription !== "Auto-generated by dsh-project-brain" ? existingDescription : scannedDescription || "Auto-generated by dsh-project-brain",
     techStack: scan.techStack,
     languages: scan.languages,
     tooling: scan.tooling || [],
@@ -889,13 +1428,19 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel) {
         }
       };
     }
+    if (architecture && !architecture.error) {
+      const wroteArchitecture = await writeJson(fs, brainPath(projectPath, "architecture.json"), architecture, writePolicy);
+      if (!wroteArchitecture) {
+        architecture = { error: { code: "ARCHITECTURE_WRITE_FAILED", message: "\u67B6\u6784\u6570\u636E\u5199\u5165\u5931\u8D25\uFF0C\u9879\u76EE\u57FA\u7840\u626B\u63CF\u4ECD\u5DF2\u5B8C\u6210" } };
+      }
+    }
     try {
       await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
         id: makeId("evt", now),
         title: isRescan ? "\u5B8C\u6210\u91CD\u626B\uFF08" + toolLabel + "\uFF09" : "\u5B8C\u6210 project_init \u626B\u63CF",
         eventType: isRescan ? "rescan" : "init",
         occurredAt: now,
-        detail: "languages=" + (Object.keys(scan.languages).join("/") || "none") + " files=" + scan.fileCount
+        detail: "languages=" + (Object.keys(scan.languages).join("/") || "none") + " files=" + scan.fileCount + (architecture && !architecture.error ? " modules=" + architecture.stats.modules + " edges=" + architecture.stats.edges + " architecture=" + architecture.source : "")
       }, writePolicy);
     } catch (e) {
     }
@@ -916,7 +1461,19 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel) {
         entrypoints: scan.entrypoints,
         topLevel: scan.topLevel
       },
-      partial: false,
+      partial: Boolean(architecture && architecture.error),
+      architecture: architecture && !architecture.error ? {
+        generated: true,
+        changed: architecture.changed,
+        version: architecture.version,
+        source: architecture.source,
+        modules: architecture.stats.modules,
+        edges: architecture.stats.edges,
+        llm: architecture.llm
+      } : {
+        generated: false,
+        error: architecture && architecture.error ? architecture.error : null
+      },
       dryRun
     }
   };
@@ -933,7 +1490,14 @@ var baseOutputSchema = {
 };
 var pathParam = { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u53EF\u9009\uFF1B\u9ED8\u8BA4\u4ECE\u5F53\u524D DSH Session \u7684 workspace \u81EA\u52A8\u89E3\u6790\uFF09" };
 var dryRunParam = { type: "boolean", description: "\u4EC5\u9884\u89C8\uFF0C\u4E0D\u5199\u6587\u4EF6\uFF08\u9ED8\u8BA4 false\uFF09" };
-function buildInitTool({ fs, sandboxPolicy }) {
+function executionRoute(exec) {
+  if (!exec) return null;
+  return resolveSessionRoute(exec.session) || resolveSessionRoute(exec.currentSession) || resolveSessionRoute(exec.agent && exec.agent.session) || resolveSessionRoute(exec.agent) || resolveSessionRoute(exec.ctx && exec.ctx.session);
+}
+function executionSessionId(exec) {
+  return exec && (exec.sessionId || exec.session && exec.session.id || exec.agent && exec.agent.sessionId || exec.agent && exec.agent.session && exec.agent.session.id) || null;
+}
+function buildInitTool({ fs, sandboxPolicy, getMemoryConfig, getLlm }) {
   return defineTool({
     name: "project_init",
     description: "dsh-project-brain: \u626B\u63CF\u76EE\u6807\u9879\u76EE\u3001\u8BC6\u522B\u6280\u672F\u6808\u3001\u751F\u6210 .project-brain/project.json\uFF08\u542B timeline init \u4E8B\u4EF6\uFF09\u3002\u9996\u6B21\u8BBF\u95EE\u65B0\u9879\u76EE\u65F6\u8C03\u7528\u4E00\u6B21\uFF1B\u91CD\u590D\u8C03\u7528\u5B89\u5168\uFF08\u4FDD\u7559 projectId/createdAt\uFF09\uFF1B\u589E\u91CF\u66F4\u65B0\u7528 project_rescan\u3002\u9ED8\u8BA4\u81EA\u52A8\u4F7F\u7528\u5F53\u524D DSH Session \u7684 workspace\uFF1B\u4EC5 CLI/\u65E7\u5BBF\u4E3B\u9700\u8981\u663E\u5F0F\u4F20 path\u3002",
@@ -949,7 +1513,13 @@ function buildInitTool({ fs, sandboxPolicy }) {
           return { ok: false, data: { error: { code: "E_NO_PATH", message: "\u65E0\u6CD5\u4ECE\u5F53\u524D Session \u89E3\u6790 workspace \u8DEF\u5F84" } } };
         }
         const resolvedArgs = Object.assign({}, args || {}, { path: projectPath });
-        const result = await scanAndWrite(fs, sandboxPolicy, resolvedArgs, "project_init");
+        const result = await scanAndWrite(fs, sandboxPolicy, resolvedArgs, "project_init", {
+          getMemoryConfig,
+          getLlm,
+          llmRoute: executionRoute(exec),
+          getLlmRoute: () => executionRoute(exec),
+          sessionId: executionSessionId(exec)
+        });
         if (result.ok && !(args && args.dryRun)) {
           emitPreviewChanged(exec, projectPath);
         }
@@ -963,7 +1533,7 @@ function buildInitTool({ fs, sandboxPolicy }) {
     }
   });
 }
-function buildRescanTool({ fs, sandboxPolicy }) {
+function buildRescanTool({ fs, sandboxPolicy, getMemoryConfig, getLlm }) {
   return defineTool({
     name: "project_rescan",
     description: "dsh-project-brain: \u91CD\u626B\u5DF2\u6709 .project-brain \u7684\u9879\u76EE\u5E76\u589E\u91CF\u5237\u65B0 project.json\uFF08\u4FDD\u7559 projectId/createdAt/\u8BB0\u5FC6/\u5F85\u529E\uFF0C\u53EA\u66F4\u65B0\u6280\u672F\u6808/\u5165\u53E3/\u8BED\u8A00\u7EDF\u8BA1\uFF09\uFF0C\u8FFD\u52A0 timeline rescan \u4E8B\u4EF6\u3002\u9879\u76EE\u7ED3\u6784\u53D8\u5316\u540E\u8C03\u7528\uFF1B\u9ED8\u8BA4\u81EA\u52A8\u4F7F\u7528\u5F53\u524D DSH Session \u7684 workspace\u3002",
@@ -976,7 +1546,13 @@ function buildRescanTool({ fs, sandboxPolicy }) {
           return { ok: false, data: { error: { code: "E_NO_PATH", message: "\u65E0\u6CD5\u4ECE\u5F53\u524D Session \u89E3\u6790 workspace \u8DEF\u5F84" } } };
         }
         const resolvedArgs = Object.assign({}, args || {}, { path: projectPath });
-        const result = await scanAndWrite(fs, sandboxPolicy, resolvedArgs, "project_rescan");
+        const result = await scanAndWrite(fs, sandboxPolicy, resolvedArgs, "project_rescan", {
+          getMemoryConfig,
+          getLlm,
+          llmRoute: executionRoute(exec),
+          getLlmRoute: () => executionRoute(exec),
+          sessionId: executionSessionId(exec)
+        });
         if (result.ok && !(args && args.dryRun)) {
           emitPreviewChanged(exec, projectPath);
         }
@@ -1006,6 +1582,7 @@ function renderProjectTool(value, toolLabel) {
       { type: "text", text: `  isRescan: ${d.isRescan}\uFF08id/createdAt \u5DF2\u4FDD\u7559\uFF09` },
       { type: "text", text: `  scanDurationMs: ${d.scanDurationMs}` },
       { type: "text", text: `  stats: ${JSON.stringify(d.stats)}` },
+      { type: "text", text: `  architecture: ${JSON.stringify(d.architecture || {})}` },
       ...d.dryRun ? [{ type: "text", text: "  (dry run)" }] : []
     ];
   }
@@ -1684,7 +2261,13 @@ var Config = z.object({
   vectorWeight: z.number().min(0).max(1).default(0.35),
   importanceWeight: z.number().min(0).max(1).default(0.1),
   confidenceWeight: z.number().min(0).max(1).default(0.05),
-  recencyWeight: z.number().min(0).max(1).default(0.05)
+  recencyWeight: z.number().min(0).max(1).default(0.05),
+  architectureEnabled: z.boolean().default(true),
+  architectureLlmEnabled: z.boolean().default(true),
+  architectureLlmIncludeSource: z.boolean().default(true),
+  architectureMaxFiles: z.number().step(1).min(20).max(1e3).default(240),
+  architectureMaxNodes: z.number().step(1).min(6).max(60).default(24),
+  architectureLlmTimeoutMs: z.number().step(1).min(5e3).max(12e4).default(6e4)
 });
 function normalizeMemoryConfig(value) {
   const input = value && typeof value === "object" ? value : {};
@@ -1708,7 +2291,13 @@ function normalizeMemoryConfig(value) {
     vectorWeight: num("vectorWeight", 0.35, 0, 1),
     importanceWeight: num("importanceWeight", 0.1, 0, 1),
     confidenceWeight: num("confidenceWeight", 0.05, 0, 1),
-    recencyWeight: num("recencyWeight", 0.05, 0, 1)
+    recencyWeight: num("recencyWeight", 0.05, 0, 1),
+    architectureEnabled: input.architectureEnabled !== false,
+    architectureLlmEnabled: input.architectureLlmEnabled !== false,
+    architectureLlmIncludeSource: input.architectureLlmIncludeSource !== false,
+    architectureMaxFiles: integer("architectureMaxFiles", 240, 20, 1e3),
+    architectureMaxNodes: integer("architectureMaxNodes", 24, 6, 60),
+    architectureLlmTimeoutMs: integer("architectureLlmTimeoutMs", 6e4, 5e3, 12e4)
   });
 }
 function publicMemoryConfig(config) {
@@ -1721,7 +2310,14 @@ function publicMemoryConfig(config) {
     vectorEnabled: c.vectorEnabled,
     vectorConfigured: configured,
     embeddingModel: c.embeddingModel || null,
-    embeddingDimensions: c.embeddingDimensions
+    embeddingDimensions: c.embeddingDimensions,
+    architecture: {
+      enabled: c.architectureEnabled,
+      llmEnabled: c.architectureLlmEnabled,
+      llmIncludeSource: c.architectureLlmIncludeSource,
+      maxFiles: c.architectureMaxFiles,
+      maxNodes: c.architectureMaxNodes
+    }
   };
 }
 function createMemoryConfigRuntime(ctx, entryConfig) {
@@ -3254,6 +3850,7 @@ function buildSidebarPreview(projectPath) {
   }
   const brainDir = path.join(projectPath, ".project-brain");
   const p = readJsonSync(path.join(brainDir, "project.json"));
+  const architecture = readJsonSync(path.join(brainDir, "architecture.json"));
   const timeline = readJsonlSync(path.join(brainDir, "timeline.jsonl"));
   const memories = readJsonlSync(path.join(brainDir, "memory.jsonl"));
   const visibleMemories = memories.filter(isActiveMemory);
@@ -3289,6 +3886,7 @@ function buildSidebarPreview(projectPath) {
       }] : [],
       memories: visibleMemories.slice().sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 3),
       todos,
+      architecture: architecture && !architecture.__error ? architecture : null,
       stats: {
         pendingTodos: stats.pendingTodos,
         completedTodos: stats.completedTodos,
@@ -3330,12 +3928,13 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
     }
     return out;
   }
-  const [p, timelineAll, memoriesAll, todosAll, codegraph] = await Promise.all([
+  const [p, timelineAll, memoriesAll, todosAll, codegraph, architecture] = await Promise.all([
     readJson2(".project-brain/project.json"),
     readJsonl2(".project-brain/timeline.jsonl"),
     readJsonl2(".project-brain/memory.jsonl"),
     readJsonl2(".project-brain/todo.jsonl"),
-    readJson2(".project-brain/codegraph.json")
+    readJson2(".project-brain/codegraph.json"),
+    readJson2(".project-brain/architecture.json")
   ]);
   if (!p) {
     return {
@@ -3349,6 +3948,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       memoriesAll: [],
       todos: [],
       timelineAll: [],
+      architecture: null,
       stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 }
     };
   }
@@ -3377,7 +3977,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       id: p.id,
       name: p.name || "(unnamed)",
       type: techStackToType(p.techStack),
-      description: p.description || "",
+      description: sanitizeProjectDescription(p.description) || "",
       techStack: p.techStack || {},
       tooling: p.tooling || [],
       languages: p.languages || {},
@@ -3396,6 +3996,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
     todos,
     timelineAll: timeline.slice(0, 50),
     codegraph,
+    architecture,
     stats: {
       pendingTodos: stats.pendingTodos,
       completedTodos: stats.completedTodos,
@@ -3424,6 +4025,20 @@ function getCwdBySession(ctx, sessionId) {
     return null;
   }
 }
+function getSession(ctx, sessionId) {
+  if (!sessionId) return null;
+  let sessions;
+  try {
+    sessions = ctx.get ? ctx.get("sessions") : ctx.sessions;
+  } catch (e) {
+    sessions = null;
+  }
+  try {
+    return sessions && typeof sessions.get === "function" ? sessions.get(sessionId) : null;
+  } catch (e) {
+    return null;
+  }
+}
 function rpcOk(value) {
   return { ok: true, value };
 }
@@ -3440,7 +4055,7 @@ function rpcError(code, message, details) {
 function resolveRpcProjectPath(ctx, payload) {
   return getCwdBySession(ctx, payload && payload.sessionId);
 }
-function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig }) {
+function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, getLlm }) {
   if (!connection || !connection.rpc || typeof connection.rpc.handle !== "function") {
     if (logger && typeof logger.warn === "function") {
       logger.warn("[dsh-project-brain] connection.rpc unavailable; runtime preview disabled");
@@ -3451,6 +4066,14 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
     PROJECT_BRAIN_RPC_CHANNEL,
     async (endpoint, payload) => {
       const projectPath = resolveRpcProjectPath(ctx, payload || {});
+      const session = getSession(ctx, payload && payload.sessionId);
+      const architectureRuntime = {
+        getMemoryConfig,
+        getLlm,
+        llmRoute: resolveSessionRoute(session),
+        getLlmRoute: () => resolveSessionRoute(getSession(ctx, payload && payload.sessionId)),
+        sessionId: payload && payload.sessionId
+      };
       if (!projectPath) {
         return rpcError(
           "WORKSPACE_NOT_FOUND",
@@ -3471,7 +4094,8 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
           fs,
           sandboxPolicy,
           { path: projectPath, dryRun: false },
-          "project_init"
+          "project_init",
+          architectureRuntime
         );
         if (!result || !result.ok) {
           const error = result && result.data && result.data.error;
@@ -3503,7 +4127,8 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
             fs,
             sandboxPolicy,
             { path: projectPath, dryRun: false },
-            "project_rescan"
+            "project_rescan",
+            architectureRuntime
           );
           if (!result2 || !result2.ok) {
             const error = result2 && result2.data && result2.data.error;
@@ -3920,11 +4545,11 @@ async function summarizeOne({ fs, projectPath, sessionId, logger }) {
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     log("info", "summarizer: project not initialized, skip");
-    return { skipped: "not_initialized", changedFiles: 0 };
+    return { skipped: "not_initialized", changedFiles: 0, files: [] };
   }
   if (sessionId && (brain.timeline || []).some((e) => e && e.eventType === "session_summary" && e.sessionId === sessionId)) {
     log("info", "summarizer: session already summarized, skip " + sessionId);
-    return { skipped: "session_already_summarized", changedFiles: 0 };
+    return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
   }
   let diff;
   try {
@@ -3981,9 +4606,9 @@ async function summarizeOne({ fs, projectPath, sessionId, logger }) {
     }
   } catch (e) {
   }
-  return { changedFiles: changedFiles.length, fingerprint, deduplicated: duplicateChange };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange };
 }
-function setupSummarizer(ctx, fs, sandboxPolicy) {
+function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
   let logger = null;
   try {
@@ -4008,7 +4633,22 @@ function setupSummarizer(ctx, fs, sandboxPolicy) {
         return;
       }
       log("info", `summarizer: session/disposed cwd=${projectPath}`);
-      const work = summarizeOne({ fs, projectPath, sessionId, logger }).then((r) => {
+      const work = summarizeOne({ fs, projectPath, sessionId, logger }).then(async (r) => {
+        if (r && r.changedFiles > 0 && architectureRelevantFiles(r.files)) {
+          const refreshed = await scanAndWrite(
+            fs,
+            sandboxPolicy,
+            { path: projectPath, dryRun: false },
+            "auto_architecture_refresh",
+            {
+              getMemoryConfig: runtime.getMemoryConfig,
+              getLlm: runtime.getLlm,
+              llmRoute: resolveSessionRoute(session),
+              sessionId
+            }
+          );
+          if (!refreshed || !refreshed.ok) log("warn", "summarizer: architecture auto-refresh failed");
+        }
         try {
           if (ctx && typeof ctx.emit === "function") {
             ctx.emit("project_brain/preview.changed", { projectPath });
@@ -4031,7 +4671,7 @@ function setupSummarizer(ctx, fs, sandboxPolicy) {
 
 // src/index.js
 var name = "dsh-project-brain";
-var inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions"];
+var inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions", "llm"];
 var apply = (ctx, config) => {
   try {
     return applyImpl(ctx, config);
@@ -4056,7 +4696,9 @@ function applyImpl(ctx, config) {
   const tools = safeGet("tools");
   const sandboxPolicy = safeGet("sandboxPolicy");
   const connection = safeGet("connection");
+  const llm = safeGet("llm");
   const memoryRuntime = createMemoryConfigRuntime(ctx, config);
+  const llmRuntime = createLlmRuntime(ctx, llm);
   const getDefaultProjectPath = () => {
     try {
       const root = sandboxPolicy && sandboxPolicy.workspaceRoot;
@@ -4095,7 +4737,8 @@ function applyImpl(ctx, config) {
         fs,
         sandboxPolicy,
         getMemoryConfig: memoryRuntime.get,
-        resolveEmbeddingCredential: memoryRuntime.resolveCredential
+        resolveEmbeddingCredential: memoryRuntime.resolveCredential,
+        getLlm: llmRuntime.get
       });
       const disposer = tools.register(tool);
       registered += 1;
@@ -4157,7 +4800,8 @@ function applyImpl(ctx, config) {
       sandboxPolicy,
       tools,
       logger: ctx.logger,
-      getMemoryConfig: memoryRuntime.get
+      getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get
     });
   } catch (e) {
     if (ctx.logger) try {
@@ -4193,7 +4837,10 @@ function applyImpl(ctx, config) {
     }
   }
   try {
-    setupSummarizer(ctx, fs, sandboxPolicy);
+    setupSummarizer(ctx, fs, sandboxPolicy, {
+      getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get
+    });
   } catch (e) {
     if (ctx.logger) try {
       ctx.logger.warn("[dsh-project-brain] setupSummarizer failed:", String(e && e.message || e));

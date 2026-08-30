@@ -91,6 +91,33 @@ const dreamConfirmation = bundle.includes('action === "dreamCommit"')
   && bundle.includes('previous.status === "confirm"');
 checks.push({ name: "memory organization requires preview then confirmation", ok: dreamConfirmation });
 
+// 14) Dashboard 架构图使用语义分层，并可点击概念组件查看详情。
+const architectureSvg = bundle.includes("function ArchitectureGraphBlock")
+  && bundle.includes('"data-block": "architecture-graph"')
+  && bundle.includes('"data-architecture-diagram": "semantic-layers"')
+  && bundle.includes('"data-architecture-component"')
+  && bundle.includes("setSelectedId(component.id)")
+  && bundle.includes("architecture.keyFiles");
+checks.push({ name: "interactive semantic-layer architecture report is bundled", ok: architectureSvg });
+
+// 15) 架构图明确区分本地分析与当前 DSH LLM 增强结果。
+checks.push({ name: "architecture source badges are bundled", ok: bundle.includes('"arch.hybrid"') && bundle.includes('"arch.local"') });
+
+// 16) Dashboard 使用单一页签工作台，避免架构、任务、记忆在首页重复堆叠。
+const dashboardTabs = bundle.includes('"data-dashboard-tab"')
+  && bundle.includes('"dash.tab.overview"')
+  && bundle.includes('"dash.tab.architecture"')
+  && bundle.includes('"dash.tab.work"')
+  && bundle.includes('"dash.tab.knowledge"')
+  && bundle.includes('aria-selected');
+checks.push({ name: "Dashboard single-workbench tabs and accessible selection state are bundled", ok: dashboardTabs });
+
+// 17) 顶部摘要采用独立响应式容器，窄窗口下可自动单列。
+const responsiveSummary = bundle.includes('"data-block": "summary-grid"')
+  && bundle.includes(".dsh-brain-summary-grid")
+  && bundle.includes("@media(max-width:760px)");
+checks.push({ name: "responsive summary grid is bundled", ok: responsiveSummary });
+
 let pass = 0;
 let fail = 0;
 console.log("=== dsh-project-brain TodoStrip smoke test ===");

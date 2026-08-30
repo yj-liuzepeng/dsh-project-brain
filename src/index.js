@@ -17,12 +17,16 @@ import { setupInjector } from "./host/injector.js";
 // P0.5: Session 摘要（监听 session/disposed → 自动写 change memory + timeline 事件）
 import { setupSummarizer } from "./host/summarizer.js";
 import { Config, createMemoryConfigRuntime } from "./host/memory/config.js";
+import { createLlmRuntime } from "./host/architecture/analyzer.js";
 
 export { Config };
 
 export const name = "dsh-project-brain";
 
-export const inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions"];
+// `llm` is a first-class dependency: architecture analysis is expected to
+// reuse the model already selected by the current DSH Session. Declaring it
+// here gives this plugin fiber lawful access to ctx.llm/ctx.get("llm").
+export const inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions", "llm"];
 
 // Arrow（不能是 function declaration，否则 cordis 4 会当 class 构造）
 export const apply = (ctx, config) => {
@@ -48,7 +52,9 @@ function applyImpl(ctx, config) {
   const tools = safeGet("tools");
   const sandboxPolicy = safeGet("sandboxPolicy");
   const connection = safeGet("connection");
+  const llm = safeGet("llm");
   const memoryRuntime = createMemoryConfigRuntime(ctx, config);
+  const llmRuntime = createLlmRuntime(ctx, llm);
   // Desktop 2.x does not expose the old helper as a global.  Keep the
   // sidebar fallback local to the current sandbox instead of passing an
   // undefined identifier into registerSidebarRpc.
@@ -97,6 +103,7 @@ function applyImpl(ctx, config) {
         sandboxPolicy,
         getMemoryConfig: memoryRuntime.get,
         resolveEmbeddingCredential: memoryRuntime.resolveCredential,
+        getLlm: llmRuntime.get,
       });
       const disposer = tools.register(tool);
       registered += 1;
@@ -147,6 +154,7 @@ function applyImpl(ctx, config) {
       tools,
       logger: ctx.logger,
       getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get,
     });
   } catch (e) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] connection RPC registration failed:", String((e && e.message) || e)); } catch {}
@@ -179,7 +187,10 @@ function applyImpl(ctx, config) {
 
   // 4) P0.5 Session 摘要：监听 session/disposed → git diff → 写 change memory + timeline 事件
   try {
-    setupSummarizer(ctx, fs, sandboxPolicy);
+    setupSummarizer(ctx, fs, sandboxPolicy, {
+      getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get,
+    });
   } catch (e) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupSummarizer failed:", String((e && e.message) || e)); } catch {}
   }

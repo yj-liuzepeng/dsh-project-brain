@@ -4,6 +4,7 @@ const tests = [
   "smoke-runtime-workspace.mjs",
   "smoke-project-memory.mjs",
   "smoke-memory-retrieval.mjs",
+  "smoke-architecture.mjs",
   "smoke-test.mjs",
   "smoke-todostrip.mjs",
   "smoke-multi-workspace.mjs",

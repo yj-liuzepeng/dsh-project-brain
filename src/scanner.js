@@ -15,6 +15,13 @@ const IGNORE_DIRS = new Set([
   ".project-brain", // 自身的项目脑数据目录，不应被扫
 ]);
 
+function shouldIgnoreDir(name) {
+  return IGNORE_DIRS.has(name)
+    || /^node_modules(?:[._-].*)?$/i.test(name)
+    || /(?:^|[._-])backup(?:[._-]|$)/i.test(name)
+    || /\.bak(?:[._-]|$)/i.test(name);
+}
+
 const EXT_LANG = {
   ".ts": "typescript", ".tsx": "typescript",
   ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
@@ -30,28 +37,72 @@ const EXT_LANG = {
   ".sql": "sql", ".vue": "vue", ".svelte": "svelte",
 };
 
-function firstReadmeParagraph(text) {
+function decodeReadmeEntities(value) {
+  const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+  return String(value || "").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (all, entity) => {
+    if (entity[0] === "#") {
+      const hex = entity[1].toLowerCase() === "x";
+      const code = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : all;
+    }
+    return named[entity.toLowerCase()] || all;
+  });
+}
+
+export function sanitizeProjectDescription(value) {
+  if (!value) return null;
+  const cleaned = decodeReadmeEntities(String(value)
+    .replace(/<!--([\s\S]*?)-->/g, " ")
+    .replace(/<(script|style|svg|picture)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<img\b[^>]*>/gi, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/<https?:\/\/[^>]+>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]\s+)\s*/gm, "")
+    .replace(/[*_~`|]+/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned ? cleaned.slice(0, 500) : null;
+}
+
+function isMeaningfulDescription(value) {
+  const text = String(value || "").trim();
+  if (text.length < 12) return false;
+  if (/^(?:english|中文|简体中文|繁體中文|docs?|documentation|homepage)(?:\s*[|·/]\s*(?:english|中文|简体中文|繁體中文|docs?|documentation|homepage))*$/i.test(text)) return false;
+  const chinese = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  const words = (text.match(/[A-Za-z0-9][A-Za-z0-9'_-]*/g) || []).length;
+  return chinese >= 6 || words >= 3;
+}
+
+export function firstReadmeParagraph(text) {
   if (!text) return null;
-  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const source = String(text).replace(/^\uFEFF/, "").replace(/<!--([\s\S]*?)-->/g, "");
+  const lines = source.split(/\r?\n/);
   const parts = [];
   let started = false;
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || /^```/.test(line) || /^<!--/.test(line)) {
+    if (!line || /^```/.test(line)) {
       if (started && parts.length) break;
       continue;
     }
-    if (/^#{1,6}\s+/.test(line) && !started) continue;
-    if (/^(\[!|!\[|<img|<picture|<div|[-*]\s|\d+\.\s)/i.test(line)) {
+    if (/^#{1,6}\s+/.test(line) || /^<h[1-6]\b/i.test(line)) {
       if (started && parts.length) break;
+      continue;
+    }
+    const visible = sanitizeProjectDescription(line);
+    if (!visible || !isMeaningfulDescription(visible)) {
+      if (started && parts.length && /^(?:[-*]\s|\d+\.\s|#{1,6}\s+)/.test(line)) break;
       continue;
     }
     started = true;
-    parts.push(line);
+    parts.push(visible);
     if (parts.join(" ").length >= 360) break;
   }
-  const value = parts.join(" ").replace(/\s+/g, " ").trim();
-  return value ? value.slice(0, 500) : null;
+  return sanitizeProjectDescription(parts.join(" "));
 }
 
 function processPathOf(fs, target) {
@@ -106,6 +157,7 @@ export async function scanProject(fs, projectPath) {
     fileCount: 0,
     topLevel: [],
     entrypoints: [],
+    files: [],
   };
 
   let entries;
@@ -118,7 +170,7 @@ export async function scanProject(fs, projectPath) {
   // topLevel：保留所有非忽略项（包括目录），方便后续 Phase 区块展示
   result.topLevel = entries
     .map((e) => e && e.name)
-    .filter((n) => n && !IGNORE_DIRS.has(n))
+    .filter((n) => n && !shouldIgnoreDir(n))
     .slice()
     .sort();
 
@@ -131,7 +183,7 @@ export async function scanProject(fs, projectPath) {
       try {
         const pkg = JSON.parse(txt);
         result.projectName = typeof pkg.name === "string" ? pkg.name : null;
-        result.description = typeof pkg.description === "string" ? pkg.description : null;
+        result.description = typeof pkg.description === "string" ? sanitizeProjectDescription(pkg.description) : null;
         const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
         if (deps.next) result.techStack.fullstack = "Next.js";
         else if (deps.nuxt) result.techStack.fullstack = "Nuxt";
@@ -201,7 +253,7 @@ export async function scanProject(fs, projectPath) {
     try { sub = await fs.listDir(target); } catch (e) { return; }
     for (const e of sub) {
       if (!e || !e.name) continue;
-      if (IGNORE_DIRS.has(e.name)) continue;
+      if (shouldIgnoreDir(e.name)) continue;
       const kind = entryKind(e);
       if (kind === "file") {
         result.fileCount += 1;
@@ -231,6 +283,8 @@ export async function scanProject(fs, projectPath) {
     }
   }
   result.tooling = Array.from(new Set(result.tooling)).sort();
+  // 架构分析只消费相对路径，不在 project.json 中暴露机器绝对路径。
+  result.files = Array.from(relativeFiles).sort();
 
   return result;
 }

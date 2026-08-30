@@ -19,6 +19,8 @@
 import { brainPath, appendJsonl, readBrain } from "./store/brain-files.js";
 import { makeMemoryEntry } from "./store/brain-logic.js";
 import { detectChanges } from "./diff/detector.js";
+import { scanAndWrite } from "../tools.js";
+import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
 
 // 从 session 反推 cwd（不依赖 sandboxPolicy）
 function sessionCwd(session) {
@@ -59,11 +61,11 @@ export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     log("info", "summarizer: project not initialized, skip");
-    return { skipped: "not_initialized", changedFiles: 0 };
+    return { skipped: "not_initialized", changedFiles: 0, files: [] };
   }
   if (sessionId && (brain.timeline || []).some((e) => e && e.eventType === "session_summary" && e.sessionId === sessionId)) {
     log("info", "summarizer: session already summarized, skip " + sessionId);
-    return { skipped: "session_already_summarized", changedFiles: 0 };
+    return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
   }
 
   // 1) git diff（v0.4.3：纯 node git 客户端，不依赖 DSH shell service）
@@ -134,11 +136,11 @@ export async function summarizeOne({ fs, projectPath, sessionId, logger }) {
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, fingerprint, deduplicated: duplicateChange };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed
-export function setupSummarizer(ctx, fs, sandboxPolicy) {
+export function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
 
   let logger = null;
@@ -166,7 +168,24 @@ export function setupSummarizer(ctx, fs, sandboxPolicy) {
       log("info", `summarizer: session/disposed cwd=${projectPath}`);
       // 用 ctx.effect 让 summarizer 生命周期受 fiber 控制（即使抛错也不会 leak）
       const work = summarizeOne({ fs, projectPath, sessionId, logger })
-        .then((r) => {
+        .then(async (r) => {
+          // 仅源码/配置结构发生变化时重建架构；内容未变时 fingerprint 会复用旧图，
+          // 避免重复调用 LLM。失败只记录日志，不影响 Session 关闭。
+          if (r && r.changedFiles > 0 && architectureRelevantFiles(r.files)) {
+            const refreshed = await scanAndWrite(
+              fs,
+              sandboxPolicy,
+              { path: projectPath, dryRun: false },
+              "auto_architecture_refresh",
+              {
+                getMemoryConfig: runtime.getMemoryConfig,
+                getLlm: runtime.getLlm,
+                llmRoute: resolveSessionRoute(session),
+                sessionId,
+              },
+            );
+            if (!refreshed || !refreshed.ok) log("warn", "summarizer: architecture auto-refresh failed");
+          }
           // emit preview.changed 触发 rebuild
           try {
             if (ctx && typeof ctx.emit === "function") {

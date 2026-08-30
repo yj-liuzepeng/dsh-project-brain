@@ -17,6 +17,12 @@ export const Config = z.object({
   importanceWeight: z.number().min(0).max(1).default(0.1),
   confidenceWeight: z.number().min(0).max(1).default(0.05),
   recencyWeight: z.number().min(0).max(1).default(0.05),
+  architectureEnabled: z.boolean().default(true),
+  architectureLlmEnabled: z.boolean().default(true),
+  architectureLlmIncludeSource: z.boolean().default(true),
+  architectureMaxFiles: z.number().step(1).min(20).max(1000).default(240),
+  architectureMaxNodes: z.number().step(1).min(6).max(60).default(24),
+  architectureLlmTimeoutMs: z.number().step(1).min(5000).max(120000).default(60000),
 });
 
 export function normalizeMemoryConfig(value) {
@@ -42,6 +48,12 @@ export function normalizeMemoryConfig(value) {
     importanceWeight: num("importanceWeight", 0.1, 0, 1),
     confidenceWeight: num("confidenceWeight", 0.05, 0, 1),
     recencyWeight: num("recencyWeight", 0.05, 0, 1),
+    architectureEnabled: input.architectureEnabled !== false,
+    architectureLlmEnabled: input.architectureLlmEnabled !== false,
+    architectureLlmIncludeSource: input.architectureLlmIncludeSource !== false,
+    architectureMaxFiles: integer("architectureMaxFiles", 240, 20, 1000),
+    architectureMaxNodes: integer("architectureMaxNodes", 24, 6, 60),
+    architectureLlmTimeoutMs: integer("architectureLlmTimeoutMs", 60000, 5000, 120000),
   });
 }
 
@@ -56,6 +68,13 @@ export function publicMemoryConfig(config) {
     vectorConfigured: configured,
     embeddingModel: c.embeddingModel || null,
     embeddingDimensions: c.embeddingDimensions,
+    architecture: {
+      enabled: c.architectureEnabled,
+      llmEnabled: c.architectureLlmEnabled,
+      llmIncludeSource: c.architectureLlmIncludeSource,
+      maxFiles: c.architectureMaxFiles,
+      maxNodes: c.architectureMaxNodes,
+    },
   };
 }
 

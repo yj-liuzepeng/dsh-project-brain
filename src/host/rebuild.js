@@ -26,7 +26,7 @@ const PLUGIN_DIR = existsSync(join(CANDIDATE_PLUGIN_DIR, "build.js"))
 
 // v0.3.14：监听文件列表（每个 workspace 的 .project-brain/ 四个核心文件）
 //   多 workspace 场景：监听 sandboxPolicy.workspaceRoot 下的 .project-brain/ + 轮询期间发现的其它 workspace
-const WATCH_FILES = ["project.json", "memory.jsonl", "todo.jsonl", "timeline.jsonl"];
+const WATCH_FILES = ["project.json", "architecture.json", "memory.jsonl", "todo.jsonl", "timeline.jsonl"];
 
 let rebuilding = false;
 let pending = false;

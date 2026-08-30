@@ -1,19 +1,20 @@
 # 安装 dsh-project-brain
 
-## 用户安装
+## 公测试用安装
 
-插件发布到 DSH 插件市场后，在 DSH Desktop 中搜索 `dsh-project-brain` 并安装，然后完整重启一次 DSH Desktop。
+当前 `0.7.0-beta.1` 已具备公开试用条件，代码维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。在进入 DSH 插件市场前，请从 GitHub 克隆并按“本地开发安装”接入；商店发布后可直接搜索 `dsh-project-brain` 安装。Host bundle 安装或升级后都需要完整重启一次 DSH Desktop。
 
 打开任意项目后进入“项目”页，点击“启动项目大脑”。插件会从当前 Session 自动解析 workspace，不需要填写路径或执行构建命令。
 
 ## 本地开发安装
 
 ```bash
-git clone <repository-url> dsh-project-brain
+git clone https://github.com/yj-liuzepeng/dsh-project-brain.git
 cd dsh-project-brain
 npm install
 npm test
 npm run build
+npm run verify:release
 ```
 
 把仓库加入 DSH profile 的 `pnpm-workspace.yaml`，并确保：
@@ -31,8 +32,13 @@ npm run build
 - 顶部“项目”页面和输入框上方 TodoStrip。
 - 13 个 `project_*` 工具。
 - 新项目点击启动后立即出现项目概览。
+- 初始化后 Dashboard 出现项目定位、架构分层、职责组件、运行流程和关键文件导览；右上角标明“本地分析”或“DSH LLM 增强”。
 - 切换到另一个项目后显示另一个 workspace 的数据，不需要重新 build。
 - Dashboard 标题默认显示“本地检索”；未配置向量模型也能正常查询和恢复记忆。
+
+架构语义分析默认直接使用当前 DSH Session 的模型，不需要单独配置 API，并发送有限关键源码摘要。若模型不可用会显示本地分析和错误码。设 `architectureLlmIncludeSource: false` 可只发送结构事实；设 `architectureLlmEnabled: false` 可完全本地。
+
+完整公测验收项见 [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)。首次试用建议至少验证两个不同 workspace，确认切换项目后名称、架构、记忆和待办均随当前项目变化。
 
 ## 可选：向量增强
 

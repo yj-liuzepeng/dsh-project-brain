@@ -36,6 +36,24 @@ window.__ModuleLoader__.load({
         "codegraph.edges": "依赖边",
         "codegraph.langs": "语言",
         "codegraph.noLang": "暂无语言数据",
+        "arch.title": "项目架构图",
+        "arch.modules": "模块",
+        "arch.edges": "依赖",
+        "arch.local": "本地分析",
+        "arch.hybrid": "DSH LLM 增强",
+        "arch.select": "点击模块查看职责与文件",
+        "arch.flows": "关键流程",
+        "arch.risks": "架构提示",
+        "arch.purpose": "项目定位",
+        "arch.style": "架构风格",
+        "arch.layers": "架构分层",
+        "arch.components": "核心组件",
+        "arch.keyFiles": "关键文件导览",
+        "arch.start": "快速熟悉路径",
+        "arch.highlights": "设计要点",
+        "arch.trigger": "触发",
+        "arch.outcome": "结果",
+        "arch.llmFallback": "DSH LLM 未完成，当前展示本地推断",
         "actions.continue": "继续上次开发",
         "actions.openDashboard": "打开 Dashboard",
         "actions.closeDashboard": "收起 Dashboard",
@@ -74,6 +92,10 @@ window.__ModuleLoader__.load({
         "dash.todo": "待办（全部）",
         "dash.timeline": "时间线",
         "dash.memory": "项目记忆（全部）",
+        "dash.tab.overview": "概览",
+        "dash.tab.architecture": "架构",
+        "dash.tab.work": "任务动态",
+        "dash.tab.knowledge": "项目记忆",
         "dash.snapshot": "数据快照 · {time}",
         "dash.none": "（空）",
         "mem.type.decision": "决策",
@@ -106,6 +128,24 @@ window.__ModuleLoader__.load({
         "codegraph.edges": "edges",
         "codegraph.langs": "langs",
         "codegraph.noLang": "No language data",
+        "arch.title": "Project architecture",
+        "arch.modules": "modules",
+        "arch.edges": "edges",
+        "arch.local": "Local analysis",
+        "arch.hybrid": "DSH LLM enriched",
+        "arch.select": "Select a module to inspect responsibilities and files",
+        "arch.flows": "Key flows",
+        "arch.risks": "Architecture notes",
+        "arch.purpose": "Project purpose",
+        "arch.style": "Architecture style",
+        "arch.layers": "Architecture layers",
+        "arch.components": "Core components",
+        "arch.keyFiles": "Key file guide",
+        "arch.start": "Getting started",
+        "arch.highlights": "Design highlights",
+        "arch.trigger": "Trigger",
+        "arch.outcome": "Outcome",
+        "arch.llmFallback": "DSH LLM was unavailable; showing local inference",
         "actions.continue": "Continue last session",
         "actions.openDashboard": "Open full Dashboard",
         "actions.closeDashboard": "Close Dashboard",
@@ -144,6 +184,10 @@ window.__ModuleLoader__.load({
         "dash.todo": "TODO (all)",
         "dash.timeline": "Timeline",
         "dash.memory": "Memories (all)",
+        "dash.tab.overview": "Overview",
+        "dash.tab.architecture": "Architecture",
+        "dash.tab.work": "Work & activity",
+        "dash.tab.knowledge": "Knowledge",
         "dash.snapshot": "Data snapshot · {time}",
         "dash.none": "(empty)",
         "mem.type.decision": "Decision",
@@ -363,7 +407,7 @@ window.__ModuleLoader__.load({
     }
 
     // 项目状态总览（新增 v0.4.8）：3 大数字 + 一行解读
-    function StatusBannerBlock({ data, t }) {
+    function StatusBannerBlock({ data, t, compact }) {
       const s = data.stats || {};
       const todos = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
       const memories = data.memories || [];
@@ -381,7 +425,7 @@ window.__ModuleLoader__.load({
       const insight = lastAct ? `最近 ${formatRelativeTime(lastAct.occurredAt, Date.now(), data._localeCode)}` : "暂无活动";
       return React.createElement(
         "section",
-        { style: Object.assign({}, sectionStyle, { padding: "12px 14px" }), "data-block": "status-banner" },
+        { style: Object.assign({}, sectionStyle, { padding: "12px 14px", margin: compact ? 0 : sectionStyle.margin }), "data-block": "status-banner" },
         React.createElement("div", { style: { display: "flex", gap: "6px" } },
           statBox("📋", todos.length, t("stats.pending"), todos.length > 0 ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-label-secondary)"),
           statBox("🧠", memories.length, t("memories.title"), memories.length > 0 ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)"),
@@ -394,17 +438,18 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function PhaseBlock({ data, t }) {
+    function PhaseBlock({ data, t, compact }) {
+      const phaseSectionStyle = Object.assign({}, sectionStyle, { margin: compact ? 0 : sectionStyle.margin, height: compact ? "100%" : undefined, boxSizing: "border-box" });
       const phase = data.phase;
       if (!phase || !phase.progress) {
-        return React.createElement("section", { style: sectionStyle, "data-block": "phase" },
+        return React.createElement("section", { style: phaseSectionStyle, "data-block": "phase" },
           React.createElement("h3", { style: sectionTitleStyle }, "🎯 " + t("phase.title")),
           React.createElement("p", { style: { margin: 0, opacity: 0.6, fontSize: "13px" } }, t("phase.empty")),
         );
       }
       const { done, total } = phase.progress;
       const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-      return React.createElement("section", { style: sectionStyle, "data-block": "phase" },
+      return React.createElement("section", { style: phaseSectionStyle, "data-block": "phase" },
         React.createElement("h3", { style: sectionTitleStyle }, "🎯 " + t("phase.title")),
         React.createElement("p", { style: { margin: "0 0 8px", fontSize: "14px", fontWeight: "500" } }, phase.title),
         React.createElement("div", { style: { height: "8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "4px", overflow: "hidden", position: "relative" } },
@@ -620,7 +665,14 @@ window.__ModuleLoader__.load({
     }
 
     function CodeGraphBlock({ data, t }) {
-      const cg = data && data.codegraph;
+      const architecture = data && data.architecture;
+      const cg = data && data.codegraph ? data.codegraph : architecture ? {
+        stats: {
+          files: architecture.stats && architecture.stats.files || 0,
+          edges: architecture.stats && architecture.stats.edges || 0,
+          languages: (data.project && data.project.languages) || {},
+        },
+      } : null;
       if (!cg) return null;
       const stat = (icon, value, label) =>
         React.createElement("div", { style: { textAlign: "center", padding: "8px 4px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px" } },
@@ -645,6 +697,116 @@ window.__ModuleLoader__.load({
         React.createElement("div", { style: { marginTop: "10px" } },
           langItems.length > 0 ? langItems : React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("codegraph.noLang")),
         ),
+      );
+    }
+
+    function ArchitectureGraphBlock({ data, t, embedded }) {
+      const architecture = data && data.architecture;
+      const [selectedId, setSelectedId] = React.useState(null);
+      if (!architecture) return null;
+      const components = (architecture.components || architecture.nodes || []).slice(0, 24);
+      if (!components.length) return null;
+      const layers = (architecture.layers || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      const relationships = (architecture.relationships || architecture.edges || []).slice(0, 40);
+      const flows = (architecture.runtimeFlows || architecture.flows || []).slice(0, 6);
+      const overview = architecture.overview || { purpose: architecture.summary || "", architectureStyle: "" };
+      const selected = components.find((item) => item.id === selectedId) || components[0];
+      const byId = new Map(components.map((item) => [item.id, item]));
+      const related = relationships.filter((item) => item.from === selected.id || item.to === selected.id);
+      const sourceLabel = architecture.source === "hybrid" ? t("arch.hybrid") : t("arch.local");
+      const typeIcons = { presentation: "🖥️", ui: "🖥️", interface: "🔌", api: "🔌", application: "🧭", service: "⚙️", domain: "🧠", core: "🧠", data: "🗄️", integration: "🔗", support: "🛠️" };
+      const layerRows = layers.length ? layers : [{ id: "all", name: t("arch.components"), responsibility: "", order: 0 }];
+      const componentsForLayer = (layer) => layers.length ? components.filter((item) => item.layerId === layer.id) : components;
+      const panelStyle = { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "9px", background: "var(--dsw-alias-bg-layer-2)", padding: "10px" };
+      const smallTitle = { fontSize: "11px", fontWeight: 700, marginBottom: "6px", color: "var(--dsw-alias-label-primary)" };
+
+      return React.createElement("section", { style: embedded ? { color: "var(--dsw-alias-label-primary)" } : sectionStyle, "data-block": "architecture-graph", "data-architecture-schema": architecture.schemaVersion || 1 },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" } },
+          React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { flex: "1 1 auto", margin: 0 }) }, "🏛️ " + t("arch.title")),
+          React.createElement("span", { style: { fontSize: "10px", padding: "3px 8px", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", color: architecture.source === "hybrid" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, sourceLabel),
+        ),
+        architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error
+          ? React.createElement("div", { title: architecture.llm.error.message || architecture.llm.error.code, style: { fontSize: "10px", padding: "6px 8px", marginBottom: "8px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)" } }, "⚠️ " + t("arch.llmFallback") + " · " + (architecture.llm.error.code || "LLM_ERROR"))
+          : null,
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)", gap: "8px", marginBottom: "10px" } },
+          React.createElement("div", { style: panelStyle },
+            React.createElement("div", { style: smallTitle }, "🎯 " + t("arch.purpose")),
+            React.createElement("div", { style: { fontSize: "13px", lineHeight: 1.65 } }, overview.purpose || architecture.summary || ""),
+            overview.value ? React.createElement("div", { style: { marginTop: "6px", fontSize: "11px", lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } }, overview.value) : null,
+          ),
+          React.createElement("div", { style: panelStyle },
+            React.createElement("div", { style: smallTitle }, "🏗️ " + t("arch.style")),
+            React.createElement("div", { style: { fontSize: "13px", fontWeight: 700 } }, overview.architectureStyle || "—"),
+            React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, [overview.category, overview.audience].filter(Boolean).join(" · ")),
+          ),
+        ),
+        architecture.summary && architecture.summary !== overview.purpose ? React.createElement("div", { style: { fontSize: "12px", lineHeight: 1.65, color: "var(--dsw-alias-label-secondary)", margin: "0 2px 10px" } }, architecture.summary) : null,
+
+        React.createElement("div", { style: Object.assign({}, panelStyle, { padding: "10px 10px 4px", background: "var(--dsw-alias-bg-layer-1)" }), "data-architecture-diagram": "semantic-layers" },
+          React.createElement("div", { style: Object.assign({}, smallTitle, { marginBottom: "9px" }) }, "🧱 " + t("arch.layers")),
+          layerRows.map((layer, layerIndex) => {
+            const items = componentsForLayer(layer);
+            if (!items.length) return null;
+            return React.createElement("div", { key: layer.id, style: { display: "grid", gridTemplateColumns: "150px minmax(0, 1fr)", gap: "10px", padding: "9px", marginBottom: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", background: layerIndex % 2 === 0 ? "var(--dsw-alias-bg-layer-2)" : "var(--dsw-alias-bg-layer-1)" } },
+              React.createElement("div", { style: { borderRight: "1px solid var(--dsw-alias-border-l1)", paddingRight: "9px" } },
+                React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, layer.name),
+                React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, layer.responsibility || ""),
+              ),
+              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "7px" } },
+                items.map((component) => {
+                  const active = component.id === selected.id;
+                  return React.createElement("button", { key: component.id, type: "button", onClick: () => setSelectedId(component.id), "data-architecture-component": component.id, style: { textAlign: "left", padding: "9px 10px", borderRadius: "8px", border: (active ? "2px solid " : "1px solid ") + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l2)"), background: "var(--dsw-alias-bg-layer-1)", color: "var(--dsw-alias-label-primary)", cursor: "pointer", fontFamily: "inherit", minHeight: "76px" } },
+                    React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, (typeIcons[component.type] || "◆") + " " + (component.name || component.label)),
+                    React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, String(component.responsibility || component.description || "").slice(0, 150)),
+                  );
+                }),
+              ),
+            );
+          }),
+          relationships.length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px", padding: "2px 0 7px" } }, relationships.slice(0, 14).map((relation) => {
+            const from = byId.get(relation.from); const to = byId.get(relation.to);
+            if (!from || !to) return null;
+            const active = relation.from === selected.id || relation.to === selected.id;
+            return React.createElement("span", { key: relation.id, title: relation.description || relation.label, style: { fontSize: "9px", padding: "3px 7px", borderRadius: "10px", border: "1px solid " + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l1)"), color: active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, (from.name || from.label) + " → " + (relation.label || "调用") + " → " + (to.name || to.label));
+          })) : null,
+        ),
+
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(260px, .8fr)", gap: "9px", marginTop: "9px" } },
+          React.createElement("div", { style: panelStyle },
+            React.createElement("div", { style: { fontSize: "14px", fontWeight: 750, marginBottom: "5px" } }, (typeIcons[selected.type || selected.kind] || "◆") + " " + (selected.name || selected.label)),
+            React.createElement("div", { style: { fontSize: "11px", lineHeight: 1.6 } }, selected.responsibility || selected.description || ""),
+            selected.details ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, marginTop: "5px" } }, selected.details) : null,
+            (selected.technologies || []).length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "7px" } }, selected.technologies.map((item) => React.createElement("span", { key: item, style: { fontSize: "9px", padding: "2px 6px", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" } }, item))) : null,
+            (selected.importantFiles || selected.files || []).length ? React.createElement("div", { style: { marginTop: "8px" } },
+              React.createElement("div", { style: smallTitle }, "📄 " + t("arch.keyFiles")),
+              (selected.importantFiles || selected.files || []).slice(0, 8).map((file) => React.createElement("code", { key: file, style: { display: "block", fontSize: "9px", padding: "3px 6px", marginBottom: "3px", borderRadius: "4px", background: "var(--dsw-alias-bg-layer-1)", wordBreak: "break-all" } }, file)),
+            ) : null,
+            related.length ? React.createElement("div", { style: { marginTop: "7px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, related.slice(0, 5).map((item) => item.description || item.label).filter(Boolean).join("；")) : null,
+          ),
+          React.createElement("div", { style: panelStyle },
+            React.createElement("div", { style: smallTitle }, "➡️ " + t("arch.flows")),
+            flows.length ? flows.map((flow) => React.createElement("div", { key: flow.id, style: { padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" } },
+              React.createElement("div", { style: { fontSize: "11px", fontWeight: 700 } }, flow.name || flow.label),
+              React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.5, marginTop: "3px" } }, [flow.trigger ? t("arch.trigger") + "：" + flow.trigger : "", flow.outcome ? t("arch.outcome") + "：" + flow.outcome : ""].filter(Boolean).join(" · ")),
+              React.createElement("div", { style: { fontSize: "9px", lineHeight: 1.5, marginTop: "3px" } }, (flow.steps || []).map((step) => typeof step === "string" ? (byId.get(step) && (byId.get(step).name || byId.get(step).label)) : ((byId.get(step.componentId) && (byId.get(step.componentId).name || byId.get(step.componentId).label)) + (step.action ? "：" + step.action : ""))).filter(Boolean).join(" → ")),
+            )) : React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, t("dash.none")),
+          ),
+        ),
+
+        (architecture.keyFiles || []).length ? React.createElement("div", { style: Object.assign({}, panelStyle, { marginTop: "9px" }) },
+          React.createElement("div", { style: smallTitle }, "🗺️ " + t("arch.keyFiles")),
+          React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "6px" } }, architecture.keyFiles.slice(0, 12).map((file) => React.createElement("div", { key: file.path, style: { padding: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "7px", background: "var(--dsw-alias-bg-layer-1)" } },
+            React.createElement("code", { style: { fontSize: "10px", fontWeight: 700, wordBreak: "break-all" } }, file.path),
+            React.createElement("div", { style: { fontSize: "10px", marginTop: "3px", lineHeight: 1.45 } }, file.role),
+            React.createElement("div", { style: { fontSize: "9px", marginTop: "2px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, file.whyImportant),
+          )))
+        ) : null,
+        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "9px" } },
+          (architecture.gettingStarted || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "🚀 " + t("arch.start")), architecture.gettingStarted.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, (index + 1) + ". " + item))) : null,
+          (architecture.designHighlights || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "✨ " + t("arch.highlights")), architecture.designHighlights.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "• " + item))) : null,
+          (architecture.risks || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "⚠️ " + t("arch.risks")), architecture.risks.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "• " + item))) : null,
+        ),
+        React.createElement("div", { style: { marginTop: "7px", fontSize: "9px", color: "var(--dsw-alias-label-secondary)" } }, (architecture.stats.layers || layers.length) + " " + t("arch.layers") + " · " + (architecture.stats.components || architecture.stats.modules || components.length) + " " + t("arch.components") + " · " + t("arch.select")),
       );
     }
 
@@ -705,9 +867,9 @@ window.__ModuleLoader__.load({
     //   onComplete：完成后调一下让父组件重新解析数据
     const ONBOARDING_PHASES = [
       { key: "scanning", icon: "🔍", label: "扫描项目结构…" },
-      { key: "writing",  icon: "💾", label: "写入项目大脑…" },
-      { key: "analyzing", icon: "🧠", label: "分析技术栈与依赖…" },
-      { key: "done",     icon: "✅", label: "分析完成" },
+      { key: "graph", icon: "🏛️", label: "构建架构关系…" },
+      { key: "analyzing", icon: "🧠", label: "DSH LLM 语义分析…" },
+      { key: "done", icon: "✅", label: "架构与项目脑已生成" },
     ];
 
     function OnboardingBlock({ t, path, sessionId, onComplete, connection }) {
@@ -865,7 +1027,7 @@ window.__ModuleLoader__.load({
                 color: "var(--dsw-alias-label-secondary)",
               },
             },
-            ONBOARDING_PHASES.slice(0, 3).map((p, i) =>
+            ONBOARDING_PHASES.map((p, i) =>
               React.createElement(
                 "span",
                 {
@@ -1035,6 +1197,7 @@ window.__ModuleLoader__.load({
       const memoriesAll = data.memoriesAll || [];
       const retrieval = data.retrieval || {};
       const [quickActionState, setQuickActionState] = React.useState({});
+      const [activeTab, setActiveTab] = React.useState("overview");
       const rpc = connection && connection.rpc;
 
       function resultMessage(action, value) {
@@ -1142,11 +1305,44 @@ window.__ModuleLoader__.load({
       );
       const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
       const typeChipStyle = { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)" };
+      const dashPanelStyle = { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", minWidth: 0 };
       const dashSection = (icon, titleKey, children) =>
-        React.createElement("section", { style: sectionStyle },
+        React.createElement("section", { style: dashPanelStyle },
           React.createElement("h3", { style: sectionTitleStyle }, icon + " " + t(titleKey)),
           children,
         );
+      const tabDefs = [
+        { id: "overview", icon: "◫", label: t("dash.tab.overview") },
+        { id: "architecture", icon: "⌘", label: t("dash.tab.architecture") },
+        { id: "work", icon: "✓", label: t("dash.tab.work") },
+        { id: "knowledge", icon: "◇", label: t("dash.tab.knowledge") },
+      ];
+      const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
+      const todoNode = todos.length > 0
+        ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
+            todos.map((x) => React.createElement("li", { key: x.id, style: { display: "flex", gap: "8px", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" } },
+              React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-1)", fontWeight: "600" } }, t("st." + (x.status || "pending"))),
+              React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, x.title),
+              React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, t("prio." + (x.priority || "medium"))),
+            )))
+          : emptyNode;
+      const timelineNode = timelineAll.length > 0
+        ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
+            timelineAll.slice(0, 20).map((e) => React.createElement("li", { key: e.id, style: { display: "grid", gridTemplateColumns: "86px minmax(0, 1fr)", gap: "10px", padding: "7px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px", alignItems: "start" } },
+              React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontVariantNumeric: "tabular-nums" } }, formatDate(e.occurredAt).slice(5)),
+              React.createElement("span", { style: { minWidth: 0, lineHeight: 1.45 } }, e.title),
+            )))
+          : emptyNode;
+      const memoryNode = memoriesAll.length > 0
+        ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px" } },
+            memoriesAll.slice(0, 20).map((m) => React.createElement("article", { key: m.id, style: { padding: "10px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", minWidth: 0 } },
+              React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+                React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
+                React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, fontSize: "12px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title),
+              ),
+              m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "7px", lineHeight: "1.55", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" } }, String(m.content).slice(0, 360)) : null,
+            )))
+          : emptyNode;
       return React.createElement("div", { id: "dsh-brain-dashboard", style: { display: "block", background: "var(--dsw-alias-bg-layer-1)", borderRadius: "10px", margin: "8px 12px", border: "1px solid var(--dsw-alias-border-l2)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }, "data-block": "dashboard" },
         React.createElement("div", { style: { padding: "12px 16px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "8px", fontWeight: "700", fontSize: "15px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
           React.createElement("span", { style: { fontSize: "18px" } }, "🎯"),
@@ -1166,7 +1362,7 @@ window.__ModuleLoader__.load({
             { id: "qa-memory", action: "dream", icon: "🧠", title: isEn ? "Organize memories" : "整理记忆", desc: isEn ? "Deduplicate and archive stale items" : "去重 + 归档过期" },
             { id: "qa-summary", action: "overview", icon: "🎯", title: isEn ? "Project overview" : "项目全景", desc: isEn ? "Summarize current status" : "总览当前状态" },
           ];
-          return React.createElement("div", { style: { padding: "12px 12px 4px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } },
+          return React.createElement("div", { style: { padding: "12px 12px 4px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "8px" } },
             quickActions.map((qa) => {
               const state = quickActionState[qa.id] || { status: "idle", message: "" };
               const busy = state.status === "loading";
@@ -1216,40 +1412,24 @@ window.__ModuleLoader__.load({
           React.createElement("span", null, "操作将在当前工作区后台执行；整理记忆会先预览再确认"),
         ),
         React.createElement("style", null, "@keyframes dsh-brain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"),
-        React.createElement("div", { style: { padding: "4px 0 8px" } },
-          dashSection("🛠️", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, techChips, toolingChips) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-          dashSection("🗂️", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, langChips) : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-          dashSection("🚪", "dash.entry", (p.entrypoints || []).length > 0
-            ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap" } }, entryItems)
-            : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-          dashSection("📋", "dash.todo", todos.length > 0
-            ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
-                todos.map((x) => React.createElement("li", { key: x.id, style: { display: "flex", gap: "8px", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" } },
-                  React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", fontWeight: "600" } }, t("st." + (x.status || "pending"))),
-                  React.createElement("span", { style: { flex: "1 1 auto" } }, x.title),
-                  React.createElement("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "8px", background: x.priority === "urgent" ? "rgba(220,38,38,0.10)" : x.priority === "high" ? "rgba(234,179,8,0.12)" : "var(--dsw-alias-bg-layer-2)", fontWeight: "600" } }, t("prio." + (x.priority || "medium"))),
-                )),
-              )
-            : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-          dashSection("📅", "dash.timeline", timelineAll.length > 0
-            ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
-                timelineAll.slice(0, 20).map((e) => React.createElement("li", { key: e.id, style: { display: "flex", gap: "10px", padding: "5px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px", alignItems: "center" } },
-                  React.createElement("span", { style: { flex: "0 0 auto", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", minWidth: "100px", fontVariantNumeric: "tabular-nums" } }, formatDate(e.occurredAt)),
-                  React.createElement("span", { style: { flex: "1 1 auto" } }, e.title),
-                )),
-              )
-            : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
-          dashSection("🧠", "dash.memory", memoriesAll.length > 0
-            ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
-                memoriesAll.slice(0, 20).map((m) => React.createElement("li", { key: m.id, style: { padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" } },
-                  React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
-                    React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
-                    React.createElement("span", { style: { flex: "1 1 auto", fontSize: "13px", fontWeight: "500" } }, m.title),
-                  ),
-                  m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "4px", padding: "6px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "6px", lineHeight: "1.5", whiteSpace: "pre-wrap" } }, String(m.content).slice(0, 300)) : null,
-                )),
-              )
-            : React.createElement("span", { style: { opacity: 0.6, fontSize: "13px" } }, t("dash.none"))),
+        React.createElement("nav", { style: { display: "flex", gap: "4px", padding: "8px 12px 0", borderTop: "1px solid var(--dsw-alias-border-l1)", overflowX: "auto" }, "aria-label": "Project dashboard sections" },
+          tabDefs.map((tab) => {
+            const active = activeTab === tab.id;
+            return React.createElement("button", { key: tab.id, type: "button", onClick: () => setActiveTab(tab.id), "data-dashboard-tab": tab.id, "aria-selected": active ? "true" : "false", style: { flex: "0 0 auto", padding: "8px 11px", border: "none", borderBottom: "2px solid " + (active ? "var(--dsw-alias-brand-primary)" : "transparent"), background: "transparent", color: active ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-label-secondary)", cursor: "pointer", fontFamily: "inherit", fontSize: "11px", fontWeight: active ? "700" : "500" } }, tab.icon + " " + tab.label);
+          }),
+        ),
+        React.createElement("div", { style: { padding: "12px" }, "data-dashboard-panel": activeTab },
+          activeTab === "overview" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
+            dashSection("🛠️", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, techChips, toolingChips) : emptyNode),
+            dashSection("🗂️", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
+            dashSection("🚪", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode),
+          ) : null,
+          activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true }) : null,
+          activeTab === "work" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },
+            dashSection("📋", "dash.todo", todoNode),
+            dashSection("📅", "dash.timeline", timelineNode),
+          ) : null,
+          activeTab === "knowledge" ? dashSection("🧠", "dash.memory", memoryNode) : null,
         ),
         React.createElement("div", { style: { padding: "8px 16px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "4px" } },
           React.createElement("span", null, "🕒"),
@@ -1358,7 +1538,7 @@ window.__ModuleLoader__.load({
       }, [r.workspaceId, r.workspacePath, r.sessionId]);
 
       const containerStyle = {
-        padding: "16px 0 32px",
+        padding: "10px 0 28px",
         background: "var(--dsw-alias-bg-base)",
         color: "var(--dsw-alias-label-primary)",
         minHeight: "100%",
@@ -1415,16 +1595,19 @@ window.__ModuleLoader__.load({
       }
 
       return React.createElement("div", containerProps,
+        React.createElement("style", null, [
+          ".dsh-project-brain-preview *{box-sizing:border-box}",
+          ".dsh-brain-summary-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:10px;margin:8px 12px}",
+          "@media(max-width:760px){.dsh-brain-summary-grid{grid-template-columns:1fr}.dsh-project-brain-preview [data-architecture-diagram=semantic-layers]>div{grid-template-columns:1fr!important}}",
+          ".dsh-project-brain-preview button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}",
+          ".dsh-project-brain-preview button:not(:disabled):active{transform:translateY(1px)}",
+        ].join("\n")),
         headerWithBadge,
         React.createElement(HeaderBlock, { data: dataWithLocale, t }),
-        React.createElement(StatusBannerBlock, { data: dataWithLocale, t }),
-        React.createElement(PhaseBlock, { data: dataWithLocale, t }),
-        React.createElement(TodoBlock, { data: dataWithLocale, t }),
-        React.createElement(CodeGraphBlock, { data: dataWithLocale, t }),
-        React.createElement(ActivityBlock, { data: dataWithLocale, t }),
-        React.createElement(MemoriesBlock, { data: dataWithLocale, t }),
-        React.createElement(StatsBlock, { data: dataWithLocale, t }),
-        React.createElement(ActionsBlock, { t, localeCode }),
+        React.createElement("div", { className: "dsh-brain-summary-grid", "data-block": "summary-grid" },
+          React.createElement(StatusBannerBlock, { data: dataWithLocale, t, compact: true }),
+          React.createElement(PhaseBlock, { data: dataWithLocale, t, compact: true }),
+        ),
         React.createElement(DashboardSection, {
           data: dataWithLocale,
           t,

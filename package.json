@@ -1,8 +1,16 @@
 {
   "name": "dsh-project-brain",
-  "version": "0.6.0",
+  "version": "0.7.0-beta.1",
   "description": "DSH 持久化项目大脑：理解代码架构、记住项目历史、跨 Session 保持上下文",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yj-liuzepeng/dsh-project-brain.git"
+  },
+  "homepage": "https://github.com/yj-liuzepeng/dsh-project-brain#readme",
+  "bugs": {
+    "url": "https://github.com/yj-liuzepeng/dsh-project-brain/issues"
+  },
   "keywords": [
     "dsh",
     "project-memory",
@@ -37,6 +45,7 @@
     "CHANGELOG.md",
     "INSTALL.md",
     "STORE_LISTING.md",
+    "RELEASE_CHECKLIST.md",
     "LICENSE"
   ],
   "dsh": {
@@ -70,6 +79,7 @@
     "build": "node build.js",
     "build:watch": "node build.js --watch",
     "test": "node scripts/run-smoke.mjs",
+    "verify:release": "node scripts/check-release.mjs",
     "test:runtime-workspace": "node scripts/smoke-runtime-workspace.mjs",
     "test:project-memory": "node scripts/smoke-project-memory.mjs"
   },

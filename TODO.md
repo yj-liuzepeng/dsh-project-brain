@@ -5,7 +5,20 @@
 
 ---
 
-## 总体进度：v0.6.0（通用 workspace + 长期记忆隔离）
+## 总体进度：v0.7.0-beta.1（公开试用候选）
+
+### 发布状态
+
+- [x] 12 组 smoke suite 全部通过
+- [x] release-safe Host/Client 构建通过
+- [x] npm 文件白名单、隐私泄漏和版本一致性自动检查
+- [x] npm audit：0 vulnerabilities
+- [x] README / INSTALL / CHANGELOG / STORE_LISTING / RELEASE_CHECKLIST 同步
+- [ ] 干净 DSH profile 真实安装验收
+- [ ] 普通仓库 + Monorepo 跨 workspace 验收
+- [ ] 商店截图与稳定版发布
+
+详细验收步骤见 `RELEASE_CHECKLIST.md`。
 
 ### v0.6.0 已完成
 
@@ -21,6 +34,15 @@
 - [x] 可选 OpenAI-compatible Embedding 混合检索、增量缓存和失败自动降级
 - [x] Dashboard / project_status 展示检索模式，文档补齐隐私与配置说明
 - [x] 新增向量检索 smoke suite，统一测试扩展到 11 组
+- [x] 初始化/重扫生成版本化 `architecture.json`，本地分析失败不阻塞项目脑
+- [x] 默认复用当前 DSH Session LLM 做架构语义增强，可配置关闭并自动降级
+- [x] Dashboard 语义分层架构认知报告与结构变化自动刷新（目录仅作证据）
+- [x] LLM 结合 README/manifest/符号/import/关键源码摘要生成项目定位、职责组件、流程和关键文件导览
+- [x] 新增架构分析 smoke suite，统一测试扩展到 12 组
+- [x] 修复当前 DSH LLM 接入：静态声明 `llm` 依赖、恢复 header/event 路由、延迟重解析并细分诊断码
+- [x] 架构 LLM 输出容错：提取围栏/混合文本 JSON、清理尾逗号、失败时自动进行一次 JSON 修复重试
+- [x] README 项目简介净化：过滤 Logo/徽章/HTML/导航，历史脏描述在扫描与展示两端清理
+- [x] Dashboard 信息架构重构：去重摘要/全量区块，四标签导航，自适应网格和统一交互状态
 
 > 下方 v0.5.1 及更早章节是历史执行记录，不再代表当前运行时架构。
 

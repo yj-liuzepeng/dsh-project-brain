@@ -11,6 +11,7 @@
 import { buildSidebarPreview, buildWorkspacePreview, invalidateAggregatorCache } from "../sidebar/aggregator.js";
 import { scanAndWrite } from "../../tools.js";
 import { publicMemoryConfig } from "../memory/config.js";
+import { resolveSessionRoute } from "../architecture/analyzer.js";
 
 export const PROJECT_BRAIN_RPC_CHANNEL = "/project-brain";
 
@@ -26,6 +27,13 @@ export function getCwdBySession(ctx, sessionId) {
   } catch (e) {
     return null;
   }
+}
+
+function getSession(ctx, sessionId) {
+  if (!sessionId) return null;
+  let sessions;
+  try { sessions = ctx.get ? ctx.get("sessions") : ctx.sessions; } catch (e) { sessions = null; }
+  try { return sessions && typeof sessions.get === "function" ? sessions.get(sessionId) : null; } catch (e) { return null; }
 }
 
 function rpcOk(value) {
@@ -56,7 +64,7 @@ function resolveRpcProjectPath(ctx, payload) {
  * every request, so Sessions created after the bundle was built work without a
  * rebuild or a Desktop restart.
  */
-export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig }) {
+export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, getLlm }) {
   if (!connection || !connection.rpc || typeof connection.rpc.handle !== "function") {
     if (logger && typeof logger.warn === "function") {
       logger.warn("[dsh-project-brain] connection.rpc unavailable; runtime preview disabled");
@@ -68,6 +76,14 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
     PROJECT_BRAIN_RPC_CHANNEL,
     async (endpoint, payload) => {
       const projectPath = resolveRpcProjectPath(ctx, payload || {});
+      const session = getSession(ctx, payload && payload.sessionId);
+      const architectureRuntime = {
+        getMemoryConfig,
+        getLlm,
+        llmRoute: resolveSessionRoute(session),
+        getLlmRoute: () => resolveSessionRoute(getSession(ctx, payload && payload.sessionId)),
+        sessionId: payload && payload.sessionId,
+      };
       if (!projectPath) {
         return rpcError(
           "WORKSPACE_NOT_FOUND",
@@ -91,6 +107,7 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
           sandboxPolicy,
           { path: projectPath, dryRun: false },
           "project_init",
+          architectureRuntime,
         );
         if (!result || !result.ok) {
           const error = result && result.data && result.data.error;
@@ -128,6 +145,7 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
             sandboxPolicy,
             { path: projectPath, dryRun: false },
             "project_rescan",
+            architectureRuntime,
           );
           if (!result || !result.ok) {
             const error = result && result.data && result.data.error;

@@ -7,7 +7,7 @@
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanProject } from "../src/scanner.js";
+import { firstReadmeParagraph, sanitizeProjectDescription, scanProject } from "../src/scanner.js";
 import * as files from "../src/host/store/brain-files.js";
 import * as logic from "../src/host/store/brain-logic.js";
 import { loadProjectData } from "../build.js";
@@ -57,6 +57,19 @@ writeFileSync(join(root, "src", "index.js"), "import { app } from './app.js'; ap
 writeFileSync(join(root, "src", "app.js"), "const express = require('express'); module.exports = { app: express() };");
 writeFileSync(join(root, "src", "util.js"), "export function h() { return 1; }");
 writeFileSync(join(root, "README.md"), "# smoke");
+
+const decorativeReadme = `<p align="center"><a href="https://github.com/example/project">
+<img src="logo.png" alt="Project logo">
+</a></p>
+
+# Project
+
+[![Build](https://img.shields.io/badge/build-passing.svg)](https://example.com)
+
+Project is a reusable local-first knowledge service for software teams.
+`;
+check("README 跳过 HTML Logo/徽章并提取自然语言简介", firstReadmeParagraph(decorativeReadme) === "Project is a reusable local-first knowledge service for software teams.", firstReadmeParagraph(decorativeReadme));
+check("历史 HTML 描述不会直接进入 UI", sanitizeProjectDescription('<p align="center"> <a href="https://github.com/apconw/Aix-DB">') === null);
 
 console.log("== scanner ==");
 const scan = await scanProject(fsAdapter, root);

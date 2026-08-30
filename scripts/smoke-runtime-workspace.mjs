@@ -100,6 +100,8 @@ assert.equal(initialized.value.projectPath, root);
 assert.equal(initialized.value.preview.initialized, true);
 assert.equal(initialized.value.preview.project.name, root.split("/").pop());
 assert.equal(statSync(join(root, ".project-brain", "project.json")).isFile(), true);
+assert.equal(statSync(join(root, ".project-brain", "architecture.json")).isFile(), true);
+assert.equal(initialized.value.preview.architecture.nodes.length > 0, true);
 
 const missing = await rpcHandler("preview", { sessionId: "session-missing" });
 assert.equal(missing.ok, false);
@@ -133,4 +135,4 @@ const forbidden = await rpcHandler("action", { sessionId: "session-new", action:
 assert.equal(forbidden.ok, false);
 assert.equal(forbidden.error.code, "ACTION_NOT_ALLOWED");
 
-console.log("runtime workspace RPC: 28 assertions PASS");
+console.log("runtime workspace RPC: 30 assertions PASS");

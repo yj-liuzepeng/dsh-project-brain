@@ -1,8 +1,10 @@
 # dsh-project-brain 设计方案
 
-**版本：** v0.3.8
-**状态：** Active — v0.3.8 已就绪，等用户重启 DSH 后做最终验证
+**版本：** v0.6.x
+**状态：** Active
 **对应需求文档：** `REQUIREMENTS.md` / **SPEC.md**
+
+> 当前实现说明（优先于本文后续历史章节）：Client/Host 已通过 DSH `connection.rpc` 实时通信，Host 每次按 live Session header 解析 workspace；默认发布构建不嵌入本机项目数据。初始化/重扫会生成语义版 `architecture.json`：本地收集 README、manifest、入口、符号/import 和关键源码摘要，再复用当前 Session 的 DSH LLM 抽象项目定位、架构风格、概念层、职责组件、关系、运行流程和关键文件。目录只作为证据。Dashboard 渲染交互式分层架构认知报告；Session 结束检测到源码变化时自动刷新。下文 v0.3.x 内容保留为历史记录。
 
 ---
 

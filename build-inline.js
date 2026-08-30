@@ -58,11 +58,13 @@ function loadProjectData(workspace) {
       memoriesAll: [],
       todos: [],
       timelineAll: [],
+      architecture: null,
       stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
     };
   }
   const raw = readJsonFile(projPath);
   if (!raw) throw new Error("empty project.json");
+  const architecture = readJsonFile(join(brainDir, "architecture.json"));
   const timelineAll = readJsonlFile(join(brainDir, "timeline.jsonl"))
     .slice().sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0)).slice(0, 50);
   const recentActivity = timelineAll.slice(0, 5).map((e) => ({ id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType }));
@@ -87,6 +89,7 @@ function loadProjectData(workspace) {
     recentActivity, memories, memoriesAll,
     todos: todosAll.slice(0, 50),
     timelineAll,
+    architecture,
     stats: { pendingTodos, completedTodos, decisions: memoriesAll.filter((m) => m.type === "decision").length },
   };
 }
@@ -94,6 +97,7 @@ function loadProjectData(workspace) {
 const projectData = workspacePath ? loadProjectData(workspacePath) : {
   generatedAt: Date.now(), initialized: false, project: null, phase: null,
   recentActivity: [], memories: [], memoriesAll: [], todos: [], timelineAll: [],
+  architecture: null,
   stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
 };
 const allWorkspaces = { sessionToWorkspaceId: {}, workspaceProjects: {}, workspacePaths: {}, dshRoot: workspaceRoot };

@@ -23,6 +23,7 @@ import { dirname, resolve, join } from "node:path";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "os";
 import { todoStats, activeTodos, techStackToType } from "./src/host/store/brain-logic.js";
+import { sanitizeProjectDescription } from "./src/scanner.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(__dirname, "dsh-project-brain");
@@ -93,12 +94,14 @@ export function loadProjectData(workspace) {
       memoriesAll: [],
       todos: [],
       timelineAll: [],
+      architecture: null,
       stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
     };
   }
   try {
     const raw = readJsonFile(projPath);
     if (!raw || raw.__error) throw new Error(raw ? raw.__error : "empty project.json");
+    const architecture = readJsonFile(join(brainDir, "architecture.json"));
 
     // timeline（全部，recent-first，最多 50）
     const timelineAll = sortRecentDesc(readJsonlFile(join(brainDir, "timeline.jsonl")), "occurredAt").slice(0, 50);
@@ -141,7 +144,7 @@ export function loadProjectData(workspace) {
         id: raw.id,
         name: raw.name || "(unnamed)",
         type: techStackToType(raw.techStack),
-        description: raw.description || "",
+        description: sanitizeProjectDescription(raw.description) || "",
         techStack: raw.techStack || {},
         tooling: raw.tooling || [],
         languages: raw.languages || {},
@@ -161,6 +164,7 @@ export function loadProjectData(workspace) {
       memoriesAll: memoriesAll,
       todos: todos,
       timelineAll: timelineAll,
+      architecture: architecture,
       stats: {
         pendingTodos: stats.pendingTodos,
         completedTodos: stats.completedTodos,
@@ -178,6 +182,7 @@ export function loadProjectData(workspace) {
       memoriesAll: [],
       todos: [],
       timelineAll: [],
+      architecture: null,
       stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
       _error: String((e && e.message) || e),
     };
