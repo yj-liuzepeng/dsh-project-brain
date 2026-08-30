@@ -2,11 +2,17 @@
 
 ## 公测试用安装
 
-当前 `0.7.0-beta.1` 已具备公开试用条件，代码维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。在进入 DSH 插件市场前，请从 GitHub 克隆并按“本地开发安装”接入；商店发布后可直接搜索 `dsh-project-brain` 安装。Host bundle 安装或升级后都需要完整重启一次 DSH Desktop。
+当前 `0.7.0-beta.1` 已具备公开试用条件，代码与预构建发布包维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。直接安装已发布标签：
+
+```bash
+dsh plugin --profile desktop add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+```
+
+安装命令会使用包内预构建 Host/Client bundle，普通用户不需要克隆源码或执行构建。Host bundle 安装或升级后都需要完整重启一次 DSH Desktop。
 
 打开任意项目后进入“项目”页，点击“启动项目大脑”。插件会从当前 Session 自动解析 workspace，不需要填写路径或执行构建命令。
 
-## 本地开发安装
+## 本地源码开发安装
 
 ```bash
 git clone https://github.com/yj-liuzepeng/dsh-project-brain.git

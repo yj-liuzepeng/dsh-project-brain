@@ -131,7 +131,15 @@ Set `architectureLlmIncludeSource: false` to send structure only, or `architectu
 
 ## Quick start
 
-Requirements: DSH Desktop with static Cordis plugin support and Node.js `22.19+` or `24+` for local builds.
+Install the tagged public beta into your DSH Desktop profile:
+
+```bash
+dsh plugin --profile desktop add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+```
+
+Fully restart DSH Desktop after installation or upgrade. The package contains prebuilt Host and Client bundles, so users do not need Node.js or a local build.
+
+For source development, Node.js `22.19+` or `24+` is required:
 
 ```bash
 git clone https://github.com/yj-liuzepeng/dsh-project-brain.git
@@ -140,9 +148,10 @@ npm install
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 ```
 
-Add the repository to the target DSH profile workspace and make sure the profile's `node_modules/dsh-project-brain` resolves to this package. Enable `dsh-project-brain` in the profile bundle configuration, then fully restart DSH Desktop.
+Source contributors can link the repository into a target DSH profile workspace and enable `dsh-project-brain` in its bundle configuration.
 
 After installation:
 

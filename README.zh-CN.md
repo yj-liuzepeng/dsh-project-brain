@@ -131,7 +131,15 @@ embeddingApiKeyEnv: PROJECT_BRAIN_EMBEDDING_API_KEY
 
 ## 快速开始
 
-本地构建要求 Node.js `22.19+` 或 `24+`，并需要支持静态 Cordis 插件的 DSH Desktop。
+将已发布的公测标签安装到 DSH Desktop profile：
+
+```bash
+dsh plugin --profile desktop add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+```
+
+安装或升级后请完整重启 DSH Desktop。发布包已包含预构建 Host/Client bundle，普通用户无需安装 Node.js 或本地编译。
+
+参与源码开发时需要 Node.js `22.19+` 或 `24+`：
 
 ```bash
 git clone https://github.com/yj-liuzepeng/dsh-project-brain.git
@@ -140,9 +148,10 @@ npm install
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 ```
 
-将仓库加入目标 DSH profile 的 workspace，确保 profile 中的 `node_modules/dsh-project-brain` 指向该包，在 bundle 配置中启用插件，然后完整重启 DSH Desktop。
+源码贡献者可将仓库链接进目标 DSH profile workspace，并在 bundle 配置中启用 `dsh-project-brain`。
 
 安装后：
 
