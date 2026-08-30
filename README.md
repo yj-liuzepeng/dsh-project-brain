@@ -184,12 +184,13 @@ Dashboard quick actions run these workflows in the background and provide loadin
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 npm audit
 ```
 
 The automated suite covers runtime workspace resolution, cross-workspace isolation, cross-Session memory, architecture local/LLM paths, Memory V2, BM25/hybrid retrieval, Session deduplication, scanner behavior, Dashboard/TodoStrip contracts, theme tokens, Git pack/delta handling, and LLM protocols.
 
-`verify:release` validates package metadata, entry points, the npm file allowlist, and scans release files for local paths, Session IDs, credentials, private keys, logs, archives, and project-brain data.
+`verify:release` validates package metadata, entry points, the npm file allowlist, and scans release files for local paths, Session IDs, credentials, private keys, logs, archives, and project-brain data. `verify:install` then packs the exact release artifact and installs it in a clean temporary project to catch peer-dependency or missing-build failures before users do.
 
 ## Current limitations
 

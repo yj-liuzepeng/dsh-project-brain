@@ -11,10 +11,13 @@ npm install
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 npm audit
 ```
 
 `verify:release` 会检查版本一致性、Host/Client 入口、DSH patch、npm 文件白名单，以及发布文件中是否出现本机用户路径、临时目录、Session ID、GitHub Token、私钥或项目脑数据。
+
+`verify:install` 会从当前源码生成真实 tarball，在临时空项目中让 npm 正常解析可选 DSH peers 并安装，再验证 Host、Client 和 patch 入口；用于提前发现用户安装时的 `ERESOLVE` 或缺少构建产物问题。
 
 ## DSH Desktop 人工验收
 

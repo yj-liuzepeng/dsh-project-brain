@@ -15,6 +15,7 @@ npm install
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 ```
 
 把仓库加入 DSH profile 的 `pnpm-workspace.yaml`，并确保：

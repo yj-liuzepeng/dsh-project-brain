@@ -184,12 +184,13 @@ Dashboard 快捷操作会在后台执行这些工作流，并提供加载、确�
 npm test
 npm run build
 npm run verify:release
+npm run verify:install
 npm audit
 ```
 
 自动化覆盖运行时工作区解析、跨项目隔离、跨 Session 记忆、本地/LLM 架构路径、Memory V2、BM25/混合检索、Session 去重、Scanner、Dashboard/TodoStrip、主题、Git pack/delta 和 LLM 协议。
 
-`verify:release` 会验证包元数据、入口和 npm 文件白名单，并扫描本机路径、Session ID、凭据、私钥、日志、归档文件和项目脑数据。
+`verify:release` 会验证包元数据、入口和 npm 文件白名单，并扫描本机路径、Session ID、凭据、私钥、日志、归档文件和项目脑数据。`verify:install` 会把实际发布包安装进临时空项目，提前发现 peer 依赖冲突或构建产物缺失。
 
 ## 当前限制
 
