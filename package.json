@@ -42,6 +42,8 @@
     "dsh-project-brain/lib/client.js.map",
     "cordis.patch.yml",
     "README.md",
+    "README.zh-CN.md",
+    "docs/screenshots/*.png",
     "CHANGELOG.md",
     "INSTALL.md",
     "STORE_LISTING.md",

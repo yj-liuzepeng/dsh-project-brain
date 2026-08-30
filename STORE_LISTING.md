@@ -52,5 +52,6 @@ dsh-project-brain 为每个 DSH workspace 建立独立的本地“项目大脑�
 - [x] 发布隐私自动检查：无本机路径、Session ID、凭据或 `.project-brain/` 数据
 - [x] `npm audit`：0 vulnerabilities
 - [x] MIT License
+- [x] README 已包含 Dashboard、架构分层和任务时间线截图
 - [ ] 在目标 DSH Desktop 版本完成一次真实安装和跨项目切换验收
-- [ ] 补充 Sidebar、TodoStrip、项目初始化和跨 Session 恢复截图
+- [ ] 补充 TodoStrip、项目初始化和跨 Session 恢复截图
