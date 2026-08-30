@@ -1,0 +1,82 @@
+{
+  "name": "dsh-project-brain",
+  "version": "0.6.0",
+  "description": "DSH 持久化项目大脑：理解代码架构、记住项目历史、跨 Session 保持上下文",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "project-memory",
+    "developer-tools",
+    "local-first",
+    "ai-assistant"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dsh-project-brain/lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./dsh-project-brain/lib/index.js"
+    },
+    "./client": {
+      "default": "./dsh-project-brain/lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dsh-project-brain/lib/index.js",
+    "dsh-project-brain/lib/index.js.map",
+    "dsh-project-brain/lib/client.js",
+    "dsh-project-brain/lib/client.js.map",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "INSTALL.md",
+    "STORE_LISTING.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "slots",
+        "locale",
+        "connection"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "@deepseek-ai/dsh-session": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true }
+  },
+  "scripts": {
+    "build": "node build.js",
+    "build:watch": "node build.js --watch",
+    "test": "node scripts/run-smoke.mjs",
+    "test:runtime-workspace": "node scripts/smoke-runtime-workspace.mjs",
+    "test:project-memory": "node scripts/smoke-project-memory.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "tree-sitter": "^0.25.1",
+    "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-python": "^0.25.0"
+  }
+}

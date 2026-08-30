@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+node_modules.backup-*/
+.pnpm-store/
+pnpm-lock.yaml
+
+# Build output（运行时通过 symlink 路径访问，不要 commit）
+# 保留 dsh-project-brain/lib/，因为这是 dshmarket hotMount 路径查找的目标
+# 但 build 过程产物 / cache 排除
+dsh-project-brain/.tsbuild/
+dsh-project-brain/lib/host/
+dsh-project-brain/lib/tools/
+dsh-project-brain/lib/scanner.js
+dsh-project-brain/lib/tools.js
+*.tsbuildinfo
+
+# DSH runtime 生成的文件
+.project-brain/
+# dssh-market state
+.dsh-market/
+# 验证用的 mock project（用完删除）
+mock-user-project/
+
+# Logs
+*.log
+dream.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+coverage/
+.nyc_output/
+scripts/_archive/
+scripts/scanner-fix-test.mjs
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# pnpm
+.pnpm-workspace-state-v1.json
