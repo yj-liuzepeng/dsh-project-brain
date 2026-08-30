@@ -136,7 +136,7 @@ embeddingApiKeyEnv: PROJECT_BRAIN_EMBEDDING_API_KEY
 将已发布的公测标签安装到你正在使用的 DSH profile：
 
 ```bash
-dsh plugin --profile <profile> add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
 ```
 
 例如，`dsh web` 通常使用 `--profile web`；如果你的 Desktop 发行版运行 `desktop` profile，则使用 `--profile desktop`。安装或升级后需要重启当前 DSH 进程；使用 DSH Desktop 时应完全退出并重新打开。发布包已包含预构建 Host/Client bundle，普通用户无需安装 Node.js 或本地编译。

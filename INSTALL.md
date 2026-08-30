@@ -5,7 +5,7 @@
 当前 `0.7.0-beta.1` 已具备公开试用条件，代码与预构建发布包维护在 [GitHub](https://github.com/yj-liuzepeng/dsh-project-brain)。将已发布标签安装到你正在使用的 DSH profile：
 
 ```bash
-dsh plugin --profile <profile> add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
 ```
 
 `dsh web` 可使用 `--profile web`；Desktop 发行版如果运行 `desktop` profile，则使用 `--profile desktop`。安装命令会使用包内预构建 Host/Client bundle，普通用户不需要克隆源码或执行构建。安装或升级后需要重启当前 DSH 进程；使用 DSH Desktop 时请完全退出并重新打开。
@@ -84,7 +84,7 @@ Host bundle 更新后重启当前 DSH 进程；使用 DSH Desktop 时完整退�
 
 ## 卸载
 
-使用 `dsh plugin --profile <profile> remove dsh-project-brain`，或通过对应 DSH 客户端的插件管理界面卸载。卸载不会删除各项目里的 `.project-brain/`，因此重新安装后记忆仍然存在。
+例如使用 `dsh plugin --profile web remove dsh-project-brain`；其他环境请把 `web` 换成实际 profile 名称。也可以通过对应 DSH 客户端的插件管理界面卸载。卸载不会删除各项目里的 `.project-brain/`，因此重新安装后记忆仍然存在。
 
 如果确实希望清除某个项目的所有长期记忆，请先备份，再手动删除该项目的 `.project-brain/`。这是不可恢复的数据操作，插件不会自动执行。
 

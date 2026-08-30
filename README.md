@@ -136,7 +136,7 @@ Set `architectureLlmIncludeSource: false` to send structure only, or `architectu
 Install the tagged public beta into the DSH profile you use:
 
 ```bash
-dsh plugin --profile <profile> add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.1
 ```
 
 For example, use `--profile web` with `dsh web`, or `--profile desktop` when your Desktop distribution runs that profile. Restart the active DSH process after installation or upgrade; for DSH Desktop, quit and reopen the application completely. The package contains prebuilt Host and Client bundles, so users do not need Node.js or a local build.
