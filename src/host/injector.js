@@ -102,8 +102,16 @@ function topKMemories(memories, n) {
   return retrieveMemories({ memories, topK: n }).map((hit) => hit.memory);
 }
 
+// 取最近一条带 summary 的 session_summary 事件（决策 3：跨对话高保真续接）
+function latestSessionSummary(timeline) {
+  const summaries = (timeline || [])
+    .filter((e) => e && e.eventType === "session_summary" && e.summary && String(e.summary).trim())
+    .sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+  return summaries.length ? String(summaries[0].summary).trim() : null;
+}
+
 // 渲染 markdown section
-function renderContext(projectData, memories, todos, recentEvents, activeTodo) {
+function renderContext(projectData, memories, todos, recentEvents, activeTodo, lastSummary) {
   const lines = [];
   lines.push("## Project Brain Context（自动注入 · v0.3.0）");
   lines.push("");
@@ -158,6 +166,13 @@ function renderContext(projectData, memories, todos, recentEvents, activeTodo) {
     lines.push("");
   }
 
+  // 上次会话总结（决策 3：token 满切对话后的高保真续接）
+  if (lastSummary) {
+    lines.push("### 上次会话总结");
+    lines.push("> " + lastSummary.replace(/\n+/g, " "));
+    lines.push("");
+  }
+
   // 当前进行中的 TODO 重点提示
   if (activeTodo) {
     lines.push(`> ⚡ 当前进行中：**${activeTodo.title}** （优先级 ${activeTodo.priority || "medium"}）`);
@@ -165,7 +180,8 @@ function renderContext(projectData, memories, todos, recentEvents, activeTodo) {
 
   lines.push("");
   lines.push("### 项目记忆约定");
-  lines.push("- 开发中出现稳定的架构决策、需求约束、Bug 根因或可复用教训时，调用 `project_memory_add` 持久化。");
+  lines.push("- 用户说「记住 X / 以后 Y / 不要 Z / 记一下」等表达长期意图的指令时，立即调 `project_memory_add` 写入当前项目的 `.project-brain/memory.jsonl`，无需再次确认；若是跨项目通用偏好，再同步调 `memory_save` 写入 dsh-mneme。");
+  lines.push("- 开发中出现稳定的架构决策、需求约束、Bug 根因或可复用教训时，主动调 `project_memory_add` 持久化。");
   lines.push("- 新任务用 `project_todo_add`，状态变化用 `project_todo_update` / `project_todo_done`，不要只留在当前对话里。");
   lines.push("- 项目结构发生明显变化后调用 `project_rescan`；需要理解最近代码变化时调用 `project_diff`。");
 
@@ -208,7 +224,8 @@ function getCachedSection(projectPath) {
   const top = topKMemories(memories, 5);
   const recent = recentTimeline(timeline, 3);
   const inProgress = activeTodos.find((t) => t.status === "in_progress");
-  let md = renderContext(project, top, activeTodos, recent, inProgress);
+  const lastSummary = latestSessionSummary(timeline);
+  let md = renderContext(project, top, activeTodos, recent, inProgress, lastSummary);
   md = truncateToTokens(md, DEFAULT_MAX_TOKENS);
   return md;
 }

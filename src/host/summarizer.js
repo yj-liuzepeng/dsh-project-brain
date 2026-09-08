@@ -67,7 +67,7 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
   }
 
-  // 1) git diff（v0.4.3：纯 node git 客户端，不依赖 DSH shell service）
+  // 1) git diff（仅作参考证据，不再作为主路径独立生成 change 记忆）
   let diff;
   try {
     diff = await detectChanges({ projectPath, since: "1" });
@@ -82,13 +82,30 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   const duplicateChange = Boolean(fingerprint && (brain.memories || []).some((m) =>
     m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint
   ));
+  const diffEvidence = changedFiles.length
+    ? "改动文件：\n" + changedFiles.map((f) => "- " + f).join("\n") + (diff.stat ? "\n\nstat:\n" + diff.stat : "")
+    : "";
 
   const now = Date.now();
   const writes = [];
-  let semantic = { status: "not_requested", memories: [] };
+  let semantic = { status: "not_requested", memories: [], summary: "" };
 
-  if (changedFiles.length > 0 && !duplicateChange) {
-    // change 记忆：本次改了什么
+  // 2) LLM 对话总结为主（决策 2）：从会话对话文本抽取稳定语义记忆 + 会话总结，
+  //    git diff 仅作为参考证据喂给 LLM。任何错误都降级，不影响 Session 关闭。
+  try {
+    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1, diffEvidence });
+    for (const entry of semantic.memories) {
+      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
+    }
+    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
+    if (semantic.summary) log("info", "summarizer: session summary generated (" + semantic.summary.length + " chars)");
+  } catch (e) {
+    semantic = { status: "failed", memories: [], summary: "", error: String((e && e.message) || e) };
+    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
+  }
+
+  // 3) fallback：LLM 不可用 / 无输出时，才用 git diff 生成一条 change 记忆兜底
+  if (semantic.memories.length === 0 && changedFiles.length > 0 && !duplicateChange) {
     const title = `本次 session 改动 ${changedFiles.length} 个文件`;
     const content = "改动的文件：\n" + changedFiles.map((f) => "- " + f).join("\n") +
       (diff.stat ? "\n\ngit diff --stat:\n" + diff.stat : "");
@@ -102,29 +119,16 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     }, now);
     writes.push(async () => {
       const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
-      log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`);
+      log(ok ? "info" : "warn", `summarizer: change memory fallback ${ok ? "appended" : "FAILED"} (${entry.id})`);
     });
-    log("info", `summarizer: detected ${changedFiles.length} changed files`);
+    log("info", `summarizer: git diff fallback recorded ${changedFiles.length} changed files (no LLM memories)`);
   } else if (duplicateChange) {
     log("info", "summarizer: unchanged git window already recorded (" + fingerprint + ")");
-  } else {
+  } else if (changedFiles.length === 0) {
     log("info", "summarizer: no git diff (non-git repo or no changes)");
   }
 
-  // 2) 用当前 DSH Session 已选中的模型抽取稳定语义记忆。任何错误都降级，
-  //    避免模型服务或输出格式问题影响 Session 的正常关闭。
-  try {
-    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1 });
-    for (const entry of semantic.memories) {
-      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
-    }
-    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
-  } catch (e) {
-    semantic = { status: "failed", memories: [], error: String((e && e.message) || e) };
-    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
-  }
-
-  // 3) timeline 事件：session_summary
+  // 4) timeline 事件：session_summary（含会话总结 summary，供下个 Session 续接）
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
     title: "Session 摘要完成" + (changedFiles.length > 0
@@ -134,6 +138,7 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     occurredAt: now,
     detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + semantic.memories.length + " semanticStatus=" + semantic.status,
     sessionId: sessionId || null,
+    summary: semantic.summary || "",
     changeFingerprint: fingerprint,
     deduplicated: duplicateChange,
     semanticStatus: semantic.status,
@@ -149,14 +154,14 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   // one another.
   for (const write of writes) await write();
 
-  // 4) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
+  // 5) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
   try {
     if (typeof require !== "undefined") {
       // no-op; emit 在下面统一处理
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length, summary: semantic.summary || "" };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed

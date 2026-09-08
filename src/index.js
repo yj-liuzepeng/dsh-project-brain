@@ -6,6 +6,7 @@ import { buildMemoryAddTool, buildMemoryListTool } from "./tools/memory.js";
 import { buildTodoAddTool, buildTodoListTool, buildTodoDoneTool } from "./tools/todo.js";
 import { buildTodoUpdateTool } from "./tools/todo-update.js";
 import { buildContinueTool } from "./tools/continue.js";
+import { buildSuggestTool } from "./tools/suggest.js";
 import { buildStatusTool } from "./tools/status.js";
 import { buildAskTool } from "./tools/ask.js";
 import { buildDreamTool } from "./tools/dream.js";
@@ -16,6 +17,8 @@ import { registerConnectionRpc, registerSidebarRpc } from "./host/rpc/sidebar.js
 import { setupInjector } from "./host/injector.js";
 // P0.5: Session 摘要（监听 session/disposed → 自动写 change memory + timeline 事件）
 import { setupSummarizer } from "./host/summarizer.js";
+// v0.4.x: 实时交互记忆（监听 agent/inbox/claimed → 检测长期意图信号自动落盘）
+import { setupRealtimeMemory } from "./host/realtime-memory.js";
 import { Config, createMemoryConfigRuntime } from "./host/memory/config.js";
 import { createLlmRuntime } from "./host/architecture/analyzer.js";
 
@@ -84,6 +87,7 @@ function applyImpl(ctx, config) {
     buildProjectInitTool,
     buildProjectRescanTool,
     buildContinueTool,
+    buildSuggestTool,
     buildStatusTool,
     buildMemoryAddTool,
     buildMemoryListTool,
@@ -193,6 +197,17 @@ function applyImpl(ctx, config) {
     });
   } catch (e) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupSummarizer failed:", String((e && e.message) || e)); } catch {}
+  }
+
+  // 4.5) 实时交互记忆：监听 agent/inbox/claimed → 检测长期意图信号 → 自动落盘 context 记忆
+  //   与 4) 的会话结束摘要形成"双通道"：实时信号 + 会话总结兜底
+  try {
+    setupRealtimeMemory(ctx, fs, sandboxPolicy, {
+      getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get,
+    });
+  } catch (e) {
+    if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupRealtimeMemory failed:", String((e && e.message) || e)); } catch {}
   }
 
   // 5) 启动成功 log

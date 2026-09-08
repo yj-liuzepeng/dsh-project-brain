@@ -59,32 +59,38 @@ function fingerprint(item) {
   return createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 24);
 }
 
-function sessionMemoryPrompt(transcript, maxItems) {
-  return [
-    "从下面的软件开发 Session 中提取值得跨会话长期保存的项目知识。",
+function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
+  const parts = [
+    "从下面的软件开发 Session 中提取值得跨会话长期保存的项目知识，并总结本次会话做了什么。",
     "只保留有明确证据的架构决策、稳定需求、Bug 根因与修复、可复用教训、长期问题或重要项目背景。",
-    "忽略寒暄、临时步骤、命令输出、未确认猜测、个人信息、凭据和仅有文件变更的流水账；没有稳定知识时返回空数组。",
-    `最多 ${maxItems} 条。只输出严格 JSON 对象，不要 Markdown。`,
-    "格式：" + JSON.stringify({ memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "简洁标题", content: "自包含的事实与理由", importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"] }] }),
-    "Session：\n" + transcript,
-  ].join("\n");
+    "忽略寒暄、临时步骤、命令输出、未确认猜测、个人信息、凭据；没有稳定知识时 memories 返回空数组。",
+    "summary 用 2-4 句话客观概括本次会话的开发意图、主要动作与产出（作为下一个 Session 的续接上下文，不编造）。",
+    `最多 ${maxItems} 条记忆。只输出严格 JSON 对象，不要 Markdown。`,
+    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "简洁标题", content: "自包含的事实与理由", importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"] }] }),
+  ];
+  if (diffEvidence && String(diffEvidence).trim()) {
+    parts.push("【git diff 参考证据（仅辅助核对文件级事实，不要逐条复述为记忆）】\n" + String(diffEvidence).trim());
+  }
+  parts.push("Session 对话：\n" + transcript);
+  return parts.join("\n");
 }
 
-export async function extractSessionMemories({ session, llm, route, sessionId, existingMemories = [], config = {}, now = Date.now() } = {}) {
-  if (config.sessionSemanticMemoryEnabled === false) return { status: "disabled", memories: [] };
-  if (!llm || typeof llm.stream !== "function") return { status: "llm_unavailable", memories: [] };
-  if (!route || !route.provider || !route.model) return { status: "route_unavailable", memories: [] };
+export async function extractSessionMemories({ session, llm, route, sessionId, existingMemories = [], config = {}, now = Date.now(), diffEvidence = "" } = {}) {
+  if (config.sessionSemanticMemoryEnabled === false) return { status: "disabled", memories: [], summary: "" };
+  if (!llm || typeof llm.stream !== "function") return { status: "llm_unavailable", memories: [], summary: "" };
+  if (!route || !route.provider || !route.model) return { status: "route_unavailable", memories: [], summary: "" };
   const maxChars = Math.max(2000, Math.min(40000, Number(config.sessionSemanticMaxChars) || 16000));
   const maxItems = Math.max(1, Math.min(8, Number(config.sessionSemanticMaxItems) || 4));
   const transcript = boundedSessionTranscript(session, maxChars);
-  if (transcript.length < 40) return { status: "empty_transcript", memories: [] };
+  if (transcript.length < 40) return { status: "empty_transcript", memories: [], summary: "" };
 
-  const text = await streamLlmText(llm, route, sessionMemoryPrompt(transcript, maxItems), sessionId, Number(config.sessionSemanticTimeoutMs) || 30000, {
+  const text = await streamLlmText(llm, route, sessionMemoryPrompt(transcript, maxItems, diffEvidence), sessionId, Number(config.sessionSemanticTimeoutMs) || 30000, {
     system: "Extract durable, evidence-based software-project memory as strict JSON only. Never reproduce credentials or personal data.",
     maxTokens: 2600,
     purpose: "project-session-memory",
   });
   const parsed = parseArchitectureJson(text);
+  const summary = clean(parsed && parsed.summary, 2000);
   const raw = Array.isArray(parsed && parsed.memories) ? parsed.memories : [];
   const known = new Set((existingMemories || []).filter(isActiveMemory).map((item) =>
     item && item.source && item.source.fingerprint ? String(item.source.fingerprint) : fingerprint(item || {})
@@ -108,5 +114,5 @@ export async function extractSessionMemories({ session, llm, route, sessionId, e
       source: { kind: "session_semantic", fingerprint: hash, sessionId: sessionId || null, provider: route.provider, model: route.model },
     }, now));
   }
-  return { status: "completed", memories, transcriptChars: transcript.length };
+  return { status: "completed", memories, summary, transcriptChars: transcript.length };
 }
