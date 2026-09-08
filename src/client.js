@@ -96,8 +96,19 @@ window.__ModuleLoader__.load({
         "dash.tab.architecture": "架构",
         "dash.tab.work": "任务动态",
         "dash.tab.knowledge": "项目记忆",
+        "dash.tab.git": "Git 历史",
         "dash.snapshot": "数据快照 · {time}",
         "dash.none": "（空）",
+        "suggest.title": "💡 你今天可能想推进",
+        "suggest.llmTag": "AI 推荐",
+        "suggest.localTag": "本地推荐",
+        "suggest.fallbackTag": "AI 暂不可用",
+        "suggest.loading": "分析今天的续接建议…",
+        "suggest.confidence": "置信度 {pct}%",
+        "suggest.refresh": "重新生成",
+        "suggest.dismiss": "收起",
+        "suggest.empty": "暂无活跃任务和近期记忆，可用 project_todo_add 规划下一步",
+        "suggest.reasonLabel": "依据",
         "mem.type.decision": "决策",
         "mem.type.bug": "Bug",
         "mem.type.lesson": "教训",
@@ -188,8 +199,19 @@ window.__ModuleLoader__.load({
         "dash.tab.architecture": "Architecture",
         "dash.tab.work": "Work & activity",
         "dash.tab.knowledge": "Knowledge",
+        "dash.tab.git": "Git history",
         "dash.snapshot": "Data snapshot · {time}",
         "dash.none": "(empty)",
+        "suggest.title": "💡 Today you may want to continue",
+        "suggest.llmTag": "AI",
+        "suggest.localTag": "Local",
+        "suggest.fallbackTag": "AI unavailable",
+        "suggest.loading": "Analyzing today’s continuation…",
+        "suggest.confidence": "confidence {pct}%",
+        "suggest.refresh": "Refresh",
+        "suggest.dismiss": "Dismiss",
+        "suggest.empty": "No active tasks or recent memories. Try project_todo_add to plan next steps.",
+        "suggest.reasonLabel": "Why",
         "mem.type.decision": "Decision",
         "mem.type.bug": "Bug",
         "mem.type.lesson": "Lesson",
@@ -1190,6 +1212,741 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ─── 智能续接建议卡（v0.4.15 project_suggest_next） ───
+    // v0.4.16：模块级缓存（跨组件 unmount/mount）+ 5 分钟 TTL + preview.changed 失效。
+    //   - 切 tab / DashboardSection 重 mount 都不重拉（之前用 useRef 失败，因为 React 重 mount 会清空 ref）
+    //   - 用户点 ↻ 重新生成 / preview 变化 / 跨过 5 分钟 才重拉
+    const SUGGESTION_TTL_MS = 5 * 60 * 1000;
+    const suggestionCache = new Map(); // sessionId -> { fetchedAt, status, data, error, dismissed }
+
+    function SuggestionCard({ t, localeCode, sessionId, connection, projectInitialized, embeddedSuggestion, workspacePath }) {
+      // v0.4.18：cache key 只用 workspacePath（项目级共享）；workspacePath 还没解析到时显示 loading。
+      const cacheKey = workspacePath ? String(workspacePath) : null;
+      const cached = cacheKey ? suggestionCache.get(cacheKey) : null;
+      // workspacePath 未就绪 → 强制走 loading，避免用 sessionId 落到跨 session 串数据
+      const initialState = cached
+        ? { status: cached.status, data: cached.data, error: cached.error }
+        : (workspacePath
+            ? { status: embeddedSuggestion ? "ready" : "idle", data: embeddedSuggestion || null, error: null }
+            : { status: "loading", data: null, error: null });
+      const [state, setState] = React.useState(initialState);
+      const [dismissed, setDismissed] = React.useState(Boolean(cached && cached.dismissed));
+
+      const fetchSuggestion = React.useCallback(async (force) => {
+        const rpc = connection && connection.rpc;
+        if (!sessionId || !rpc || typeof rpc.call !== "function") return;
+        // 模块级 TTL：未强制刷新 + 已缓存 + 在 TTL 内 → 直接复用
+        const cur = suggestionCache.get(cacheKey);
+        if (!force && cur && cur.status === "ready" && cur.data && (Date.now() - (cur.fetchedAt || 0)) < SUGGESTION_TTL_MS) {
+          setState({ status: cur.status, data: cur.data, error: cur.error });
+          return;
+        }
+        setState({ status: "loading", data: (cur && cur.data) || state.data || null, error: null });
+        try {
+          // v0.4.18：传 sessionId + workspacePath 让 host 端用工作区路径（不依赖 sessionId 解析），
+          // 保证同一项目下不同 session 拿到的内容完全一致。
+          const payload = { sessionId };
+          if (cacheKey) payload.workspacePath = cacheKey;
+          const res = await rpc.call("/project-brain", "suggest", payload);
+          if (!res) {
+            setState({ status: "error", data: null, error: "RPC 返回 undefined" });
+            return;
+          }
+          if (res.ok === false) {
+            const ec = (res.error && res.error.code) || "?";
+            const em = (res.error && res.error.message) || "(no message)";
+            setState({ status: "error", data: null, error: "RPC ok=false · " + ec + " · " + em });
+            return;
+          }
+          if (res.ok && res.value && res.value.suggestion && res.value.suggestion.suggestion) {
+            suggestionCache.set(cacheKey, {
+              fetchedAt: Date.now(),
+              status: "ready",
+              data: res.value.suggestion,
+              error: null,
+              dismissed: false,
+            });
+            setState({ status: "ready", data: res.value.suggestion, error: null });
+            return;
+          }
+          let errMsg = "智能续接失败";
+          if (res.error && res.error.message) errMsg = res.error.message + " (" + (res.error.code || "?") + ")";
+          else if (!res.value) errMsg = "RPC value 为空";
+          else if (!res.value.suggestion) errMsg = "value.suggestion 为空";
+          else errMsg = "未知状态：" + JSON.stringify(res).slice(0, 200);
+          setState({ status: "error", data: null, error: errMsg });
+        } catch (error) {
+          setState({ status: "error", data: null, error: "throw: " + String((error && error.message) || error) });
+        }
+      }, [sessionId, connection, cacheKey, state.data]);
+
+      React.useEffect(() => {
+        if (!projectInitialized) {
+          setState({ status: "uninitialized", data: null, error: null });
+          return;
+        }
+        if (dismissed) return;
+        const rpc = connection && connection.rpc;
+        if (!rpc || !sessionId) return;
+        // workspacePath 未就绪 → 等；不要用 sessionId 当 cache key（避免跨 session 串数据）
+        if (!cacheKey) {
+          setState({ status: "loading", data: null, error: null });
+          return;
+        }
+        const cur = suggestionCache.get(cacheKey);
+        if (cur && cur.status === "ready" && cur.data && (Date.now() - (cur.fetchedAt || 0)) < SUGGESTION_TTL_MS) {
+          return; // 不重拉
+        }
+        fetchSuggestion(false);
+      }, [projectInitialized, dismissed, fetchSuggestion, sessionId, connection, cacheKey]);
+
+      // v0.4.18：preview.changed → 失效 cache（只失效同 workspacePath 的）
+      React.useEffect(() => {
+        if (typeof window === "undefined" || !window.addEventListener) return undefined;
+        const handler = (event) => {
+          const ev = event && event.detail;
+          const changedPath = ev && typeof ev.projectPath === "string" ? ev.projectPath : null;
+          if (changedPath && cacheKey && changedPath !== cacheKey) return; // 不同项目，不影响
+          const c = suggestionCache.get(cacheKey);
+          if (c) {
+            c.fetchedAt = 0;
+            suggestionCache.set(cacheKey, c);
+          }
+        };
+        window.addEventListener("project_brain/preview.changed", handler);
+        return () => window.removeEventListener("project_brain/preview.changed", handler);
+      }, [cacheKey]);
+
+      if (!projectInitialized) {
+        // v0.4.15：项目未初始化时显示轻提示卡片（不阻塞 Onboarding 流程）
+        return React.createElement(
+          "div",
+          {
+            style: {
+              margin: "0 12px 8px",
+              padding: "8px 12px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              border: "1px dashed var(--dsw-alias-border-l1)",
+              borderRadius: "10px",
+              color: "var(--dsw-alias-label-secondary)",
+              fontSize: "11px",
+            },
+            "data-block": "suggestion-uninit",
+            "data-suggest-status": "uninit",
+          },
+          React.createElement("span", null, "💡 "),
+          React.createElement("span", null, localeCode === "en-US"
+            ? "Init project brain to see today's continuation."
+            : "初始化项目脑后查看今天可能推进的内容。"),
+        );
+      }
+      if (dismissed) {
+        return React.createElement(
+          "div",
+          { style: { padding: "0 12px 8px" }, "data-block": "suggestion-dismissed" },
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              onClick: () => {
+                setDismissed(false);
+                const c = suggestionCache.get(cacheKey);
+                if (c) c.dismissed = false;
+                fetchSuggestion(true);
+              },
+              style: {
+                padding: "4px 10px",
+                background: "transparent",
+                border: "1px dashed var(--dsw-alias-border-l1)",
+                borderRadius: "8px",
+                color: "var(--dsw-alias-label-secondary)",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontFamily: "inherit",
+              },
+              "data-action": "suggest-show",
+            },
+            "💡 " + (localeCode === "en-US" ? "Show suggestion" : "查看续接建议"),
+          ),
+        );
+      }
+
+      const data = state.data || {};
+      const suggestion = data.suggestion || null;
+      const source = data.source || (state.status === "loading" ? "loading" : null);
+
+      let tag;
+      if (source === "llm") tag = t("suggest.llmTag");
+      else if (source === "llm_failed" || source === "local") tag = t("suggest.localTag");
+      else if (source === "local_no_route") tag = t("suggest.localTag");
+      else tag = null;
+
+      const confidencePct = suggestion && Number.isFinite(suggestion.confidence) ? Math.round(suggestion.confidence * 100) : null;
+
+      const cardStyle = {
+        margin: "0 12px 8px",
+        padding: "10px 12px",
+        background: "linear-gradient(135deg, var(--dsw-alias-bg-layer-2) 0%, var(--dsw-alias-bg-layer-1) 100%)",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+        borderRadius: "10px",
+        color: "var(--dsw-alias-label-primary)",
+      };
+
+      const titleRow = React.createElement(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+        React.createElement("span", { style: { fontSize: "13px", fontWeight: "700" } }, t("suggest.title")),
+        tag ? React.createElement("span", {
+          style: {
+            fontSize: "10px", padding: "1px 7px", borderRadius: "8px",
+            background: source === "llm" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-layer-2)",
+            color: source === "llm" ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-secondary)",
+            fontWeight: "600",
+          },
+          "data-suggest-source": source,
+        }, tag) : null,
+        confidencePct != null && source === "llm" ? React.createElement("span", {
+          style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" },
+        }, t("suggest.confidence", { pct: confidencePct })) : null,
+        React.createElement("span", { style: { flex: "1 1 auto" } }),
+        state.status === "ready" ? React.createElement("button", {
+          type: "button",
+          onClick: () => {
+            setDismissed(true);
+            const c = suggestionCache.get(cacheKey);
+            if (c) c.dismissed = true;
+          },
+          title: t("suggest.dismiss"),
+          "data-action": "suggest-dismiss",
+          style: { padding: "2px 8px", background: "transparent", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", color: "var(--dsw-alias-label-secondary)", cursor: "pointer", fontSize: "10px", fontFamily: "inherit" },
+        }, t("suggest.dismiss")) : null,
+        state.status !== "loading" ? React.createElement("button", {
+          type: "button",
+          onClick: () => fetchSuggestion(true),
+          title: t("suggest.refresh"),
+          "data-action": "suggest-refresh",
+          style: { padding: "2px 8px", background: "transparent", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", color: "var(--dsw-alias-label-secondary)", cursor: "pointer", fontSize: "10px", fontFamily: "inherit" },
+        }, "↻ " + t("suggest.refresh")) : null,
+      );
+
+      let bodyContent;
+      if (state.status === "loading") {
+        bodyContent = React.createElement("div", { style: { marginTop: "8px", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+          React.createElement("span", { "data-spinner": "1", style: { width: "12px", height: "12px", borderRadius: "50%", border: "2px solid var(--dsw-alias-border-l2)", borderTopColor: "var(--dsw-alias-brand-primary)", animation: "dsh-brain-spin 0.9s linear infinite", display: "inline-block" } }),
+          t("suggest.loading"),
+        );
+      } else if (state.status === "error") {
+        bodyContent = React.createElement("div", { style: { marginTop: "8px", fontSize: "12px", color: "var(--dsw-alias-state-error-primary)" } },
+          "❌ " + (state.error || t("suggest.empty")),
+        );
+      } else if (!suggestion) {
+        bodyContent = React.createElement("div", { style: { marginTop: "8px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+ t("suggest.empty"),
+        );
+      } else {
+        bodyContent = React.createElement(
+          "div",
+          { style: { marginTop: "8px" }, "data-suggestion": "ready" },
+          React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.5" }, "data-suggestion-title": "1" }, suggestion.title || ""),
+          suggestion.reason ? React.createElement("div", { style: { marginTop: "6px", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.5" }, "data-suggestion-reason": "1" },
+            React.createElement("span", { style: { fontWeight: "600" } }, t("suggest.reasonLabel") + "："),
+            " " + suggestion.reason,
+          ) : null,
+          data.llmError ? React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", color: "var(--dsw-alias-state-warn-primary)" }, "data-suggestion-llm-error": "1" },
+            t("suggest.fallbackTag") + "：" + (data.llmError.message || data.llmError.code || ""),
+          ) : null,
+        );
+      }
+
+      return React.createElement("div", { style: cardStyle, "data-block": "suggestion", "data-source": source || "unknown" },
+        titleRow,
+        bodyContent,
+      );
+    }
+
+    // ─── v0.4.x: GitTab — 可视化 git 提交历史（仅项目是 git 仓库时挂载） ───
+    // 设计：左侧 ASCII graph（| / \ 节点），右侧 commit 信息；点击展开 body + parents。
+    // 数据来源：RPC `git` endpoint（已探测 gitInfo.available 控制挂载）。
+    function GitTab({ gitInfo, t, onRefresh, autoRefresh, onToggleAutoRefresh }) {
+      if (!gitInfo) {
+        return React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }, "data-block": "git-loading" }, "⏳ 加载 git 历史...");
+      }
+      if (gitInfo.available !== true) {
+        return React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }, "data-block": "git-empty" },
+          "📂 当前项目不是 git 仓库",
+          gitInfo.error ? React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", opacity: 0.7 } }, gitInfo.error) : null,
+        );
+      }
+
+      const commits = gitInfo.commits || [];
+      const branches = gitInfo.branches || [];
+      const currentBranch = gitInfo.currentBranch;
+      const [expanded, setExpanded] = React.useState(null);  // 当前展开的 commit hash
+
+      // ── 时间格式化 ──
+      const relTime = (ts) => {
+        if (!ts) return "";
+        const diff = Date.now() / 1000 - ts;
+        if (diff < 60) return Math.round(diff) + "秒前";
+        if (diff < 3600) return Math.round(diff / 60) + "分钟前";
+        if (diff < 86400) return Math.round(diff / 3600) + "小时前";
+        if (diff < 30 * 86400) return Math.round(diff / 86400) + "天前";
+        if (diff < 365 * 86400) return Math.round(diff / 2592000) + "个月前";
+        return Math.round(diff / 31536000) + "年前";
+      };
+      const fmtDate = (ts) => {
+        if (!ts) return "";
+        const d = new Date(ts * 1000);
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+      };
+
+      // ── 按 commit hash 索引 branch refs（多分支时挂到对应 commit 行） ──
+      const refsByHash = new Map();
+      for (const b of branches) {
+        if (!refsByHash.has(b.commit)) refsByHash.set(b.commit, []);
+        refsByHash.get(b.commit).push({ kind: "branch", name: b.name, isCurrent: b.name === currentBranch });
+      }
+
+      // ── 分支配色（按 branch name hash 到固定颜色，让用户视觉区分分支） ──
+      const palette = [
+        { fg: "#1f6feb", bg: "#ddf4ff" },  // 蓝
+        { fg: "#1a7f37", bg: "#dafbe1" },  // 绿
+        { fg: "#8250df", bg: "#fbefff" },  // 紫
+        { fg: "#cf222e", bg: "#ffebe9" },  // 红
+        { fg: "#9a6700", bg: "#fff8c5" },  // 黄
+        { fg: "#0a3069", bg: "#dbeafe" },  // 深蓝
+      ];
+      const colorByBranch = new Map();
+      let colorIdx = 0;
+      for (const b of branches) {
+        if (!colorByBranch.has(b.name)) {
+          colorByBranch.set(b.name, palette[colorIdx % palette.length]);
+          colorIdx += 1;
+        }
+      }
+
+      // ── Styles（VSCode / Cursor 风格：紧凑、留白、hover 高亮） ──
+      const cardStyle = {
+        background: "var(--dsw-alias-bg-layer-2)",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        borderRadius: "10px",
+        padding: "12px 14px",
+        marginBottom: "10px",
+        fontSize: "12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        flexWrap: "wrap",
+      };
+      const branchChipStyle = (isCurrent) => ({
+        fontSize: "11px",
+        padding: "3px 10px",
+        borderRadius: "11px",
+        background: isCurrent ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-base)",
+        color: isCurrent ? "var(--dsh-brain-bg-base, var(--dsw-alias-bg-base))" : "var(--dsw-alias-label-primary)",
+        border: isCurrent ? "none" : "1px solid var(--dsw-alias-border-l1)",
+        fontWeight: "600",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
+      });
+      const listStyle = { listStyle: "none", padding: "0", margin: 0 };
+
+      // 每行 layout: [graph 56px] [commit info flex:1] [refs 130px]
+      const rowStyle = (expanded) => ({
+        display: "grid",
+        gridTemplateColumns: "56px minmax(0, 1fr) 130px",
+        gap: "10px",
+        alignItems: "center",
+        padding: "10px 12px",
+        borderRadius: "8px",
+        marginBottom: "2px",
+        cursor: "pointer",
+        background: expanded ? "var(--dsw-alias-bg-layer-1)" : "transparent",
+        transition: "background-color 0.12s",
+      });
+      const graphCellStyle = {
+        position: "relative",
+        height: "36px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      };
+      const dotStyle = (idx, isMerge) => ({
+        width: "11px",
+        height: "11px",
+        borderRadius: isMerge ? "2px" : "50%",
+        transform: isMerge ? "rotate(45deg)" : "none",
+        background: idx === 0 ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-base)",
+        border: idx === 0 ? "2px solid var(--dsw-alias-brand-primary)" : "2px solid var(--dsw-alias-label-secondary)",
+        zIndex: 2,
+        boxShadow: idx === 0 ? "0 0 0 3px var(--dsw-alias-bg-layer-1)" : "none",
+      });
+      const lineStyle = (idx, total) => ({
+        position: "absolute",
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "var(--dsw-alias-border-l2)",
+        zIndex: 1,
+        ...(idx === 0
+          ? { top: "calc(50% + 6px)", height: "calc(50% - 6px)" }
+          : idx === total - 1
+            ? { top: 0, height: "calc(50% - 6px)" }
+            : { top: 0, bottom: 0 }),
+        width: "2px",
+      });
+
+      const subjectStyle = {
+        fontSize: "13px",
+        color: "var(--dsw-alias-label-primary)",
+        fontWeight: "600",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        lineHeight: "1.4",
+      };
+      const metaStyle = {
+        fontSize: "10.5px",
+        color: "var(--dsw-alias-label-secondary)",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        marginTop: "3px",
+        flexWrap: "wrap",
+      };
+      const hashChipStyle = {
+        fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        fontSize: "10px",
+        padding: "1px 6px",
+        background: "var(--dsw-alias-bg-layer-2)",
+        color: "var(--dsw-alias-label-secondary)",
+        borderRadius: "4px",
+        border: "1px solid var(--dsw-alias-border-l1)",
+      };
+      const refsCellStyle = {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "4px",
+        justifyContent: "flex-end",
+        alignItems: "center",
+      };
+      const refChipStyle = (isCurrent, color) => ({
+        fontSize: "10px",
+        padding: "1px 7px",
+        borderRadius: "9px",
+        background: isCurrent ? color.fg : color.bg,
+        color: isCurrent ? "var(--dsw-alias-bg-base)" : color.fg,
+        border: "1px solid " + (isCurrent ? color.fg : color.bg),
+        fontWeight: isCurrent ? "700" : "500",
+        whiteSpace: "nowrap",
+      });
+
+      // 展开后的详情块样式
+      const expandedPanelStyle = {
+        gridColumn: "2 / -1",
+        marginTop: "8px",
+        padding: "12px 14px",
+        background: "var(--dsw-alias-bg-layer-2)",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        borderRadius: "8px",
+        fontSize: "11.5px",
+        color: "var(--dsw-alias-label-primary)",
+      };
+      const detailRowStyle = {
+        display: "grid",
+        gridTemplateColumns: "70px minmax(0, 1fr)",
+        gap: "8px",
+        padding: "3px 0",
+        fontSize: "11px",
+      };
+      const detailLabelStyle = {
+        color: "var(--dsw-alias-label-secondary)",
+        fontSize: "10px",
+        textTransform: "uppercase",
+        letterSpacing: "0.4px",
+      };
+      const monospaceStyle = {
+        fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        fontSize: "10.5px",
+      };
+      const bodyTextStyle = {
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        lineHeight: "1.55",
+        color: "var(--dsw-alias-label-primary)",
+        padding: "8px 10px",
+        background: "var(--dsw-alias-bg-base)",
+        borderRadius: "6px",
+        marginBottom: "10px",
+        fontSize: "11.5px",
+      };
+
+      // ── 行渲染 ──
+      const total = commits.length;
+      const renderRow = (c, idx) => {
+        const isExpanded = expanded === c.hash;
+        const refs = refsByHash.get(c.hash) || [];
+        return React.createElement("div", {
+          key: c.hash,
+          style: rowStyle(isExpanded),
+          "data-commit": c.hash,
+          "data-expanded": isExpanded ? "1" : "0",
+          onClick: (ev) => {
+            // 阻止展开内部链接/按钮冒泡
+            const tag = ev && ev.target && ev.target.tagName;
+            if (tag === "A" || tag === "BUTTON") return;
+            setExpanded(isExpanded ? null : c.hash);
+          },
+        },
+          // graph column
+          React.createElement("div", { style: graphCellStyle },
+            React.createElement("div", { style: lineStyle(idx, total) }),
+            React.createElement("div", { style: dotStyle(idx, c.isMerge) }),
+          ),
+          // info column
+          React.createElement("div", { style: { minWidth: 0 } },
+            React.createElement("div", { style: subjectStyle, title: c.subject }, c.subject || "(无标题)"),
+            React.createElement("div", { style: metaStyle },
+              React.createElement("span", { style: hashChipStyle }, c.shortHash),
+              React.createElement("span", { style: { fontWeight: "500" } }, c.author || "?"),
+              React.createElement("span", null, "·"),
+              React.createElement("span", { title: c.isoTime || "" }, relTime(c.timestamp)),
+              c.isMerge ? React.createElement("span", { style: { color: "var(--dsw-alias-state-warn-primary)", fontSize: "10px" } }, "⎇ merge") : null,
+              // v0.4.x: 变更文件摘要（来自 history.js 的 tree diff；pack 不可读时为 0）
+              typeof c.filesChangedTotal === "number" && c.filesChangedTotal > 0
+                ? (() => {
+                    const fileStatText =
+                      "\u{1F4C1} " +
+                      (c.filesAdded ? "+" + c.filesAdded + " " : "") +
+                      (c.filesModified ? "~" + c.filesModified + " " : "") +
+                      (c.filesRemoved ? "-" + c.filesRemoved + " " : "") +
+                      "(" + c.filesChangedTotal + " \u6587\u4EF6)";
+                    return React.createElement("span", {
+                      style: { fontSize: "10px", padding: "1px 6px", borderRadius: "4px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", display: "inline-flex", alignItems: "center", gap: "4px" },
+                    }, fileStatText);
+                  })()
+                : null,
+            ),
+            // 展开后的详情
+            isExpanded ? React.createElement("div", { style: expandedPanelStyle },
+              c.body ? React.createElement("div", { style: bodyTextStyle }, c.body) : React.createElement("div", { style: Object.assign({}, bodyTextStyle, { opacity: 0.6, fontStyle: "italic" }) }, "（无详细描述）"),
+              React.createElement("div", { style: detailRowStyle },
+                React.createElement("div", { style: detailLabelStyle }, "Hash"),
+                React.createElement("div", { style: monospaceStyle }, c.hash),
+              ),
+              c.authorEmail ? React.createElement("div", { style: detailRowStyle },
+                React.createElement("div", { style: detailLabelStyle }, "Author"),
+                React.createElement("div", null, c.author + " <" + c.authorEmail + ">"),
+              ) : null,
+              React.createElement("div", { style: detailRowStyle },
+                React.createElement("div", { style: detailLabelStyle }, "Date"),
+                React.createElement("div", null, fmtDate(c.timestamp) + " " + (c.isoTime || "").slice(11, 19) + " UTC"),
+              ),
+              c.firstParent ? React.createElement("div", { style: detailRowStyle },
+                React.createElement("div", { style: detailLabelStyle }, "Parent"),
+                React.createElement("div", { style: monospaceStyle }, c.firstParent),
+              ) : null,
+              c.extraParents && c.extraParents.length > 0 ? React.createElement("div", { style: detailRowStyle },
+                React.createElement("div", { style: detailLabelStyle }, "Merged"),
+                React.createElement("div", { style: monospaceStyle, color: "var(--dsw-alias-state-warn-primary)" }, c.extraParents.join(", ")),
+              ) : null,
+              // v0.4.x: Changed Files 列表（tree diff 失败时不显示）
+              Array.isArray(c.filesChanged) && c.filesChanged.length > 0 ? React.createElement("div", { style: Object.assign({}, detailRowStyle, { alignItems: "flex-start" }) },
+                React.createElement("div", { style: detailLabelStyle }, "Files"),
+                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } },
+                  c.filesChanged.map((f) =>
+                    React.createElement("span", {
+                      key: f,
+                      style: { fontSize: "10px", fontFamily: "ui-monospace, monospace", padding: "1px 6px", background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "3px", color: "var(--dsw-alias-label-primary)", maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                      title: f,
+                    }, f),
+                  ),
+                  c.filesTruncated ? React.createElement("span", {
+                    style: { fontSize: "10px", padding: "1px 6px", color: "var(--dsw-alias-label-secondary)", fontStyle: "italic" },
+                  }, "… +" + (c.filesChangedTotal - c.filesChanged.length) + " more") : null,
+                ),
+              ) : null,
+            ) : null,
+          ),
+          // refs column
+          React.createElement("div", { style: refsCellStyle },
+            refs.map((r) => {
+              const color = colorByBranch.get(r.name) || palette[0];
+              return React.createElement("span", {
+                key: r.name,
+                style: refChipStyle(r.isCurrent, color),
+                title: "refs/heads/" + r.name + (r.isCurrent ? " (current)" : ""),
+              }, r.name);
+            }),
+          ),
+        );
+      };
+
+      const otherBranches = branches.filter((b) => b.name !== currentBranch);
+
+      // v0.4.x: Working Tree 区块（HEAD tree vs 工作树对比，列出 untracked / deleted）
+      const wt = gitInfo && gitInfo.workTree;
+      const [wtExpanded, setwtExpanded] = React.useState(false);
+      const renderWorkTreeSection = (workTree) => {
+        if (!workTree || workTree.available !== true) return null;
+        const untrackedTotal = workTree.untrackedTotal || 0;
+        const deletedTotal = workTree.deletedTotal || 0;
+        if (untrackedTotal === 0 && deletedTotal === 0) return null;
+        const wtCardStyle = {
+          margin: "12px 0 4px",
+          padding: "12px 14px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderRadius: "10px",
+          fontSize: "12px",
+        };
+        const wtHeaderStyle = {
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          marginBottom: untrackedTotal + deletedTotal > 0 && wtExpanded ? "10px" : 0,
+          cursor: "pointer",
+          userSelect: "none",
+        };
+        const fileRowStyle = {
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "3px 0",
+          fontFamily: "ui-monospace, monospace",
+          fontSize: "10.5px",
+          color: "var(--dsw-alias-label-primary)",
+        };
+        const filePathStyle = {
+          padding: "1px 6px",
+          background: "var(--dsw-alias-bg-base)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderRadius: "3px",
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        };
+        const statusBadgeStyle = (kind) => ({
+          fontSize: "10px",
+          padding: "1px 7px",
+          borderRadius: "9px",
+          fontWeight: "600",
+          flex: "0 0 auto",
+          background: kind === "untracked" ? "var(--dsw-alias-state-warn-bg, var(--dsw-alias-bg-layer-2))" : "var(--dsw-alias-state-error-bg, var(--dsw-alias-bg-layer-2))",
+          color: kind === "untracked" ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-state-error-primary)",
+        });
+        const renderFileGroup = (label, kind, sample, total, truncated) => {
+          if (total === 0) return null;
+          const visible = wtExpanded ? sample : sample.slice(0, 8);
+          return React.createElement("div", { style: { marginBottom: "8px" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" } },
+              React.createElement("span", { style: statusBadgeStyle(kind) }, label),
+              React.createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, total + " 文件" + (truncated ? "（已截断）" : "")),
+            ),
+            visible.length > 0 ? React.createElement("div", { style: { paddingLeft: "8px" } },
+              visible.map((f) =>
+                React.createElement("div", { key: f, style: fileRowStyle, title: f },
+                  React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)", fontSize: "10px", flex: "0 0 auto" } }, "•"),
+                  React.createElement("span", { style: filePathStyle }, f),
+                ),
+              ),
+              !wtExpanded && sample.length > 8
+                ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", paddingLeft: "16px" } }, "+ " + (sample.length - 8) + " 更多（点击展开查看全部）")
+                : null,
+              wtExpanded && truncated
+                ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", paddingLeft: "16px" } }, "（后端已截断，全部 " + total + " 个）")
+                : null,
+            ) : null,
+          );
+        };
+        return React.createElement("div", { style: wtCardStyle, "data-block": "work-tree" },
+          React.createElement("div", { style: wtHeaderStyle, onClick: () => setwtExpanded(!wtExpanded) },
+            React.createElement("span", { style: { fontSize: "14px" } }, "🔸"),
+            React.createElement("span", { style: { fontWeight: "600", fontSize: "12.5px" } }, "Working Tree"),
+            React.createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+              untrackedTotal + " untracked" + (deletedTotal > 0 ? " · " + deletedTotal + " deleted" : ""),
+            ),
+            workTree.reference === "fallback"
+              ? React.createElement("span", {
+                  style: { fontSize: "10px", padding: "1px 7px", borderRadius: "9px", background: "var(--dsw-alias-state-warn-bg, var(--dsw-alias-bg-layer-1))", border: "1px solid var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-state-warn-primary)", fontWeight: "600" },
+                  title: "HEAD tree 不可读（pack 解析限制），已沿 first-parent 链回退到 " + (workTree.referenceCommitShort || "?") + " 作为参考，结果可能略有过期",
+                }, "vs " + (workTree.referenceCommitShort || "fallback"))
+              : null,
+            React.createElement("span", { style: { marginLeft: "auto", fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, wtExpanded ? "▴" : "▾"),
+          ),
+          wtExpanded ? React.createElement("div", null,
+            renderFileGroup("Untracked", "untracked", workTree.untrackedSample || [], untrackedTotal, workTree.truncatedUntracked),
+            renderFileGroup("Deleted", "deleted", workTree.deletedSample || [], deletedTotal, workTree.truncatedDeleted),
+          ) : null,
+        );
+      };
+
+      return React.createElement("div", { style: { padding: "0 4px 16px" }, "data-block": "git-tab" },
+        // header card
+        React.createElement("div", { style: cardStyle },
+          React.createElement("span", { style: branchChipStyle(true) }, "⎇ " + (currentBranch || "detached HEAD")),
+          React.createElement("span", { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+            commits.length + " 个提交" + (gitInfo.truncated ? "（已截断）" : ""),
+          ),
+          otherBranches.length > 0 ? React.createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+            "· " + otherBranches.length + " 个其他分支",
+          ) : null,
+          gitInfo.head ? React.createElement("span", { style: { marginLeft: "auto", fontFamily: "ui-monospace, monospace", fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, "HEAD " + gitInfo.head.substring(0, 7)) : null,
+          // v0.4.x: 自动刷新开关 + 手动刷新按钮
+          typeof onRefresh === "function" ? React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px", marginLeft: "8px" } },
+            typeof onToggleAutoRefresh === "function" ? React.createElement("button", {
+              key: "auto",
+              type: "button",
+              title: autoRefresh ? "自动刷新已开启（30s 间隔），点击关闭" : "自动刷新已关闭，点击开启",
+              onClick: () => onToggleAutoRefresh(!autoRefresh),
+              "data-git-auto": autoRefresh ? "1" : "0",
+              style: {
+                fontSize: "10px",
+                padding: "2px 8px",
+                borderRadius: "10px",
+                border: "1px solid " + (autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-border-l1)"),
+                background: autoRefresh ? "var(--dsw-alias-state-success-bg, var(--dsw-alias-bg-layer-2))" : "transparent",
+                color: autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-secondary)",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              },
+            }, React.createElement("span", { style: { width: "6px", height: "6px", borderRadius: "50%", background: autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-secondary)" } }), autoRefresh ? "自动 30s" : "自动关") : null,
+            React.createElement("button", {
+              key: "refresh",
+              type: "button",
+              title: "刷新 Git 数据",
+              onClick: onRefresh,
+              "data-git-refresh": "1",
+              style: {
+                fontSize: "14px",
+                padding: "2px 8px",
+                borderRadius: "6px",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                background: "transparent",
+                color: "var(--dsw-alias-label-primary)",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                lineHeight: "1",
+              },
+            }, "↻"),
+          ) : null,
+        ),
+        // commits 列表
+        commits.length === 0
+          ? React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } }, "（无提交历史）")
+          : React.createElement("div", { style: listStyle },
+              commits.map((c, idx) => renderRow(c, idx)),
+            ),
+        // v0.4.x: Working Tree 区块 — HEAD tree vs 工作树对比，不依赖 git binary
+        renderWorkTreeSection(gitInfo.workTree),
+      );
+    }
+
     function DashboardSection({ data, t, localeCode, sessionId, connection, onPreviewUpdate }) {
       const p = data.project || {};
       const todos = data.todos || [];
@@ -1199,6 +1956,43 @@ window.__ModuleLoader__.load({
       const [quickActionState, setQuickActionState] = React.useState({});
       const [activeTab, setActiveTab] = React.useState("overview");
       const rpc = connection && connection.rpc;
+      // v0.4.x: Git Tab 数据（null=探测中，{available:false}=非 git 仓库不显示 tab，{available:true,...}=有 git）
+      const [gitInfo, setGitInfo] = React.useState(null);
+      // v0.4.x: Git Tab 自动刷新开关（默认开；localStorage 记忆；切到 git tab 时启动 30 秒轮询）
+      const [gitAutoRefresh, setGitAutoRefresh] = React.useState(() => {
+        try { return localStorage.getItem("dsh-brain-git-auto-refresh") !== "0"; } catch (e) { return true; }
+      });
+      const refreshGit = React.useCallback(async () => {
+        if (!rpc || typeof rpc.call !== "function") return;
+        try {
+          const res = await rpc.call("/project-brain", "git", { sessionId: sessionId, workspacePath: data._workspacePath || null, limit: 50 });
+          if (res && res.ok && res.value) setGitInfo(res.value);
+          else setGitInfo({ available: false, error: (res && res.error && res.error.message) || "no git info" });
+        } catch (e) {
+          setGitInfo({ available: false, error: String((e && e.message) || e) });
+        }
+      }, [rpc, sessionId, data._workspacePath]);
+      React.useEffect(() => {
+        let cancelled = false;
+        if (!rpc || typeof rpc.call !== "function") return undefined;
+        (async () => {
+          try {
+            const res = await rpc.call("/project-brain", "git", { sessionId: sessionId, workspacePath: data._workspacePath || null, limit: 50 });
+            if (cancelled) return;
+            if (res && res.ok && res.value) setGitInfo(res.value);
+            else setGitInfo({ available: false, error: (res && res.error && res.error.message) || "no git info" });
+          } catch (e) {
+            if (!cancelled) setGitInfo({ available: false, error: String((e && e.message) || e) });
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [rpc, sessionId, data._workspacePath]);
+      // v0.4.x: Git Tab 自动轮询（仅 git tab 激活 + 开关开时启动；30 秒间隔）
+      React.useEffect(() => {
+        if (activeTab !== "git" || !gitAutoRefresh) return undefined;
+        const t = setInterval(refreshGit, 30000);
+        return () => clearInterval(t);
+      }, [activeTab, gitAutoRefresh, refreshGit]);
 
       function resultMessage(action, value) {
         const result = value && value.result;
@@ -1277,13 +2071,17 @@ window.__ModuleLoader__.load({
           [qa.id]: { status: "success", message: resultMessage(action, value) },
         }));
       }
-      const techChips = Object.entries(p.techStack || {}).map(([k, v]) =>
-        React.createElement("span", { key: k, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-          React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
-          React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
-          React.createElement("span", { style: { fontWeight: "600" } }, String(v)),
-        ),
-      );
+      const techChips = Object.entries(p.techStack || {}).flatMap(([k, v]) => {
+        // v 可能是 string 或 array（多语言栈并存）；统一展平为多个 chip
+        const values = Array.isArray(v) ? v : [v];
+        return values.filter(Boolean).map((item, idx) =>
+          React.createElement("span", { key: k + "-" + idx, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
+            React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
+            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
+            React.createElement("span", { style: { fontWeight: "600" } }, String(item)),
+          ),
+        );
+      });
       const toolingChips = (p.tooling || []).map((tool) =>
         React.createElement("span", { key: "tool-" + tool, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
           React.createElement("span", null, "🛠️"),
@@ -1317,6 +2115,10 @@ window.__ModuleLoader__.load({
         { id: "work", icon: "✓", label: t("dash.tab.work") },
         { id: "knowledge", icon: "◇", label: t("dash.tab.knowledge") },
       ];
+      // v0.4.x: 仅当项目是 git 仓库时才显示 Git Tab
+      if (gitInfo && gitInfo.available === true) {
+        tabDefs.push({ id: "git", icon: "⎇", label: t("dash.tab.git") });
+      }
       const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
       const todoNode = todos.length > 0
         ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
@@ -1353,6 +2155,13 @@ window.__ModuleLoader__.load({
           }, retrieval.configuredMode === "hybrid" ? "向量已配置" : "本地检索"),
           React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, "点击卡片后台执行"),
         ),
+        // v0.4.15 智能续接：Session 开始时主动给出"今天可能想推进什么"
+        React.createElement(SuggestionCard, {
+          t, localeCode, sessionId, connection,
+          projectInitialized: Boolean(data.initialized && data.project),
+          embeddedSuggestion: data.suggestion || null,
+          workspacePath: data._workspacePath || null,
+        }),
         // v0.4.11: Quick Actions 2x2 网格（替代"继续上次开发"鸡肋按钮）
         (() => {
           const isEn = localeCode === "en-US";
@@ -1430,6 +2239,7 @@ window.__ModuleLoader__.load({
             dashSection("📅", "dash.timeline", timelineNode),
           ) : null,
           activeTab === "knowledge" ? dashSection("🧠", "dash.memory", memoryNode) : null,
+          activeTab === "git" ? React.createElement(GitTab, { gitInfo, t, onRefresh: refreshGit, autoRefresh: gitAutoRefresh, onToggleAutoRefresh: (v) => { try { localStorage.setItem("dsh-brain-git-auto-refresh", v ? "1" : "0"); } catch (e) {} setGitAutoRefresh(v); } }) : null,
         ),
         React.createElement("div", { style: { padding: "8px 16px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "4px" } },
           React.createElement("span", null, "🕒"),
@@ -1552,7 +2362,7 @@ window.__ModuleLoader__.load({
         "data-session-id": (r.sessionId || "").toString().slice(0, 8),
         style: containerStyle,
       };
-      const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode });
+      const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode, _workspacePath: r.workspacePath || null });
 
       const headerWithBadge = React.createElement(
         "section",
@@ -1633,15 +2443,24 @@ window.__ModuleLoader__.load({
       const active = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
       if (active.length === 0) return null;        // 无活跃 TODO 不显示（避免噪音）
 
-      const stripId = "dsh-brain-todo-strip-" + (r.workspaceId || "default");
-      const listId = "dsh-brain-todo-strip-list-" + (r.workspaceId || "default");
+      const wsid = r.workspaceId || "default";
+      const stripId = "dsh-brain-todo-strip-" + wsid;
+      const listId = "dsh-brain-todo-strip-list-" + wsid;
+      const toggleBtnId = "dsh-brain-todo-strip-toggle-" + wsid;
+      const closeBtnId = "dsh-brain-todo-strip-close-" + wsid;
+      const restoreId = "dsh-brain-todo-strip-restore-" + wsid;
+      const dismissedKey = "dsh-brain-todo-strip-dismissed:" + wsid;
+
+      const isDismissed = (() => {
+        try { return localStorage.getItem(dismissedKey) === "1"; } catch (e) { return false; }
+      })();
 
       const containerStyle = {
         display: "flex",
         flexDirection: "column",
-        gap: "6px",
-        padding: "8px 16px",
-        margin: "0 12px 8px",
+        gap: "0",
+        padding: "6px 12px",
+        margin: "0 12px 6px",
         background: "var(--dsw-alias-bg-layer-1)",
         border: "1px solid var(--dsw-alias-border-l1)",
         borderRadius: "6px",
@@ -1652,21 +2471,42 @@ window.__ModuleLoader__.load({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
+        gap: "8px",
+        cursor: "pointer",
+        userSelect: "none",
         fontWeight: "600",
         fontSize: "11px",
         color: "var(--dsw-alias-label-secondary)",
         textTransform: "uppercase",
         letterSpacing: "0.6px",
       };
-      const toggleBtnStyle = {
+      const countBadgeStyle = {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: "18px",
+        height: "16px",
+        padding: "0 6px",
+        marginLeft: "6px",
+        fontSize: "10px",
+        fontWeight: "700",
+        lineHeight: "1",
+        borderRadius: "8px",
+        background: "var(--dsw-alias-bg-layer-2)",
+        color: "var(--dsw-alias-label-primary)",
+        letterSpacing: "0",
+        textTransform: "none",
+      };
+      const iconBtnStyle = {
         background: "transparent",
         border: "none",
         cursor: "pointer",
-        color: "var(--dsw-alias-brand-primary)",
-        fontSize: "11px",
+        color: "var(--dsw-alias-label-secondary)",
+        fontSize: "13px",
         fontFamily: "inherit",
-        padding: "2px 6px",
+        padding: "0 6px",
         borderRadius: "3px",
+        lineHeight: "1",
       };
       const prioColor = { urgent: "var(--dsw-alias-state-error-primary)", high: "var(--dsw-alias-state-warn-primary)" };
       const itemStyle = (idx) => ({
@@ -1686,54 +2526,55 @@ window.__ModuleLoader__.load({
         color: prioColor[priority] ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-secondary)",
       });
 
-      // 折叠态：top-3 + 「查看全部 (n)」
-      // 展开态：全量 + 「收起」
+      // 切换展开/折叠（纯 DOM，避免 useState 触发 DSH static client 兼容性 bug）
       const onToggle = (ev) => {
         try {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
           const listEl = document.getElementById(listId);
-          const btn = ev && (ev.currentTarget || ev.target);
-          if (!listEl) { if (btn) btn.textContent = "N/A"; return; }
+          const btn = document.getElementById(toggleBtnId);
+          if (!listEl) return;
           const expanded = listEl.dataset.expanded === "1";
           if (expanded) {
-            // 折叠：只保留前 3 个
-            const all = listEl.querySelectorAll("[data-todo-item]");
-            for (let i = 0; i < all.length; i++) {
-              if (i >= 3) all[i].style.display = "none";
-            }
+            listEl.style.display = "none";
             listEl.dataset.expanded = "0";
-            if (btn) btn.textContent = active.length > 3 ? (t("todostrip.viewAll") + " (" + active.length + ")") : "";
+            if (btn) btn.textContent = "▾";
           } else {
-            // 展开：显示全部
-            const all = listEl.querySelectorAll("[data-todo-item]");
-            for (let i = 0; i < all.length; i++) {
-              all[i].style.display = "";
-            }
+            listEl.style.display = "flex";
             listEl.dataset.expanded = "1";
-            if (btn) btn.textContent = t("todostrip.close");
+            if (btn) btn.textContent = "▴";
           }
         } catch (e) {}
       };
 
-      const headerChildren = [
-        React.createElement("span", { key: "t" }, "📌 " + t("todostrip.title") + " · " + active.length),
-      ];
-      if (active.length > 3) {
-        headerChildren.push(
-          React.createElement("button", {
-            key: "btn",
-            type: "button",
-            style: toggleBtnStyle,
-            onClick: onToggle,
-            title: t("todostrip.viewAll"),
-          }, t("todostrip.viewAll") + " (" + active.length + ")"),
-        );
-      }
+      // 关闭整个 strip：隐藏 + 写 localStorage + 显示恢复 chip
+      const onClose = (ev) => {
+        try {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
+          const stripEl = document.getElementById(stripId);
+          const restoreEl = document.getElementById(restoreId);
+          if (stripEl) stripEl.style.display = "none";
+          if (restoreEl) restoreEl.style.display = "";
+          try { localStorage.setItem(dismissedKey, "1"); } catch (e) {}
+        } catch (e) {}
+      };
+
+      // 从关闭态恢复
+      const onRestore = (ev) => {
+        try {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
+          const stripEl = document.getElementById(stripId);
+          const restoreEl = document.getElementById(restoreId);
+          if (restoreEl) restoreEl.style.display = "none";
+          if (stripEl) stripEl.style.display = "";
+          try { localStorage.removeItem(dismissedKey); } catch (e) {}
+        } catch (e) {}
+      };
 
       const items = active.map((x, idx) =>
         React.createElement("div", {
           key: x.id,
           "data-todo-item": "1",
-          style: Object.assign({}, itemStyle(idx), idx >= 3 ? { display: "none" } : {}),
+          style: itemStyle(idx),
         },
           React.createElement("span", { style: chipStyle(x.priority) }, t("prio." + (x.priority || "medium"))),
           React.createElement("span", { style: { flex: "1 1 auto" } }, x.title),
@@ -1741,19 +2582,59 @@ window.__ModuleLoader__.load({
         ),
       );
 
-      return React.createElement("div", {
+      // 主 strip（默认折叠，列表隐藏）— header 始终可见，点击切换展开
+      const strip = React.createElement("div", {
         id: stripId,
         "data-block": "todo-strip",
         "data-workspace-id": r.workspaceId || "",
-        style: containerStyle,
+        style: Object.assign({}, containerStyle, isDismissed ? { display: "none" } : {}),
       },
-        React.createElement("div", { style: headerStyle }, headerChildren),
+        React.createElement("div", { style: headerStyle, onClick: onToggle, title: t("todostrip.viewAll") },
+          React.createElement("span", { key: "t", style: { display: "inline-flex", alignItems: "center" } },
+            "📋 " + t("todostrip.title"),
+            React.createElement("span", { style: countBadgeStyle }, String(active.length)),
+          ),
+          React.createElement("div", { key: "actions", style: { display: "flex", gap: "2px", alignItems: "center" } },
+            React.createElement("button", {
+              key: "toggle", id: toggleBtnId, type: "button", style: iconBtnStyle,
+              onClick: onToggle, title: t("todostrip.viewAll"),
+            }, "▾"),
+            React.createElement("button", {
+              key: "close", id: closeBtnId, type: "button", style: iconBtnStyle,
+              onClick: onClose, title: t("todostrip.close"),
+            }, "×"),
+          ),
+        ),
         React.createElement("div", {
-          id: listId,
-          "data-expanded": "0",
-          style: { display: "flex", flexDirection: "column" },
+          id: listId, "data-expanded": "0",
+          style: { display: "none", flexDirection: "column" },
         }, items),
       );
+
+      // 恢复 chip（关闭后显示，极小占用，不钉住）
+      const restoreChip = React.createElement("button", {
+        key: "restore", id: restoreId, type: "button",
+        "data-block": "todo-strip-restore",
+        "data-workspace-id": r.workspaceId || "",
+        style: {
+          display: isDismissed ? "" : "none",
+          alignItems: "center",
+          gap: "4px",
+          padding: "2px 8px",
+          margin: "0 12px 4px",
+          background: "transparent",
+          border: "1px dashed var(--dsw-alias-border-l1)",
+          borderRadius: "10px",
+          fontSize: "11px",
+          color: "var(--dsw-alias-label-secondary)",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          alignSelf: "flex-start",
+        },
+        onClick: onRestore, title: t("todostrip.title"),
+      }, "📋 · " + active.length + " " + t("todostrip.viewAll"));
+
+      return React.createElement(React.Fragment, null, strip, restoreChip);
     }
 
     // ─── apply ───
