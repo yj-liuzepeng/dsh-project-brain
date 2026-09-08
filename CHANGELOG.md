@@ -7,6 +7,76 @@
 
 ## [Unreleased]
 
+### Added（新增）
+
+- **智能续接 v0.4.15（project_suggest_next）**：
+  - 新 Tool `project_suggest_next`：Session 开始时主动给出"💡 你今天可能想推进 X"+依据+关联 TODO/记忆
+  - 双层策略：本地规则（in_progress > 最高优先级 pending > 阻塞 > 近期记忆 > 空）+ 可选 DSH LLM 升级
+  - LLM 失败自动降级到本地规则，不阻塞 Session 启动
+  - 新 RPC `/project-brain` 端点 `suggest`：Dashboard 加载时调一次
+  - Dashboard 顶部 SuggestionCard 组件：source（llm/local）+ 置信度 + 刷新/收起按钮 + 加载/错误/数据三态
+  - build-time 嵌入建议：离线路径下也显示本地规则建议，连接恢复后自动升级
+  - 新增 src/host/suggest.js（纯函数 + 不依赖 runtime，便于 smoke 离线测试）+ src/tools/suggest.js
+  - 修改 src/host/rpc/sidebar.js（注册 suggest 端点）+ src/index.js（注册 buildSuggestTool）+ build.js（build-time 嵌入 buildLocalSuggestion）+ src/client.js（SuggestionCard 组件 + i18n keys）
+  - smoke-suggest.mjs（46/46 PASS）：6 种本地规则场景 + LLM mock 成功/失败/无 route + JSON 容错（围栏/尾逗号/non-JSON）+ normalizeSuggestion 字段裁剪
+  - smoke-todostrip.mjs 新增 3 项 SuggestionCard 打包检查（17/17 → 20/20 after rebuild）
+
+- **技术栈推断大幅扩展（v0.4.14）**：
+  - **JS/TS 框架补全**：Remix / Astro / SvelteKit / Koa / Hapi / Solid / Preact / Angular / React Native / Expo / Tauri
+  - **JS/TS ORM/DB/Cache/Queue 补全**：TypeORM / Sequelize / Mongoose / Drizzle / Knex / MikroORM / Memcached / Bull / RabbitMQ
+  - **Python 后端框架补全**：Sanic / Starlette / aiohttp / Tornado / Pyramid / Bottle / Streamlit / Gradio
+  - **Python ORM/DB 补全**：Peewee / Tortoise ORM / Django ORM / SQLModel / asyncpg → PostgreSQL / aiomysql/pymysql → MySQL / pymongo/motor → MongoDB
+  - **Python 包管理识别**：Poetry / uv / Hatch / PDM / setuptools
+  - **Go 框架补全**：Gin / Echo / Fiber / Chi / FastHTTP
+  - **Go ORM/DB 补全**：GORM / Ent / sqlx / Bun / pgx → PostgreSQL / go-sql-driver/mysql → MySQL / mongo-driver → MongoDB
+  - **Rust 框架补全**：Actix Web / Axum / Rocket / Warp / Tide
+  - **Rust ORM/DB 补全**：Diesel / SeaORM / SQLx
+  - **Rust 工具识别**：Tokio / Serde
+  - **Rust workspace 子 crate 识别**（`[workspace]` → "Cargo Workspace"）
+  - **SQL 文件推断**：从 `result.languages.sql` 反向推断数据库存在
+  - **CI 识别**：`.github/workflows` → GitHub Actions
+- **techStack 字段支持多值数组**：之前单值字段被多种语言栈覆盖（如 `backend: "FastAPI"` 被 Go 段的 "Go" 覆盖）；改为 setStack 助手自动合并到数组，同名字段值保留全部
+- **architecture.technologies 合并到 preview.techStack**：build.js 新增 `mergeTechStackWithArchitecture()`，把 LLM 识别的技术名按分类映射补全到 Dashboard 显示，未分类技术进 `_extra` 字段
+- **smoke-scanner-techstack.mjs**：22 项检查覆盖 JS/TS/Python/Go/Rust 5 种 manifest 的技术栈推断
+- **本地 AST 分析支持 6 种语言**：从 JS/TS/Python 扩展到 Go、Java、Rust、C/C++。新增 `tree-sitter-go`、`tree-sitter-java`、`tree-sitter-rust`、`tree-sitter-c` 4 个 grammar 包（pnpm devDependencies）。
+- **每种新语言的 import/export/function 抽取器**：Go 大写开头视为导出、Java class/interface/record/export、Rust `pub` 修饰符、C `#include` + function_definition。修改文件：`scripts/codegraph-scan.mjs`。
+- **API endpoint 跨语言适配**：Go Gin `r.GET/POST/...`、Java Spring `@RequestMapping/@GetMapping/@PostMapping/...` 注解识别。修改文件：`scripts/codegraph-scan.mjs`。
+- **DB schema 跨语言适配**：Go Gorm `gorm:"..."` struct tag、Java JPA `@Entity/@Column/@Id` 注解、Rust Diesel `#[derive(Queryable)]` / `#[table_name]`。修改文件：`scripts/codegraph-scan.mjs`。
+- **CommonJS `module.exports = {...}` 导出识别**：JS 抽取器补充形如 `module.exports = { foo, bar }` 的导出形式，让典型 Node 服务入口被识别为 entrypoint。修改文件：`scripts/codegraph-scan.mjs`。
+- **config.json `languages` 白名单**：用户可在 `.project-brain/config.json` 配 `languages: ["python", "go"]` 限制扫描范围；默认全开。修改文件：`scripts/codegraph-scan.mjs`。
+- **smoke-multi-lang.mjs 测试套件**：56 项检查覆盖 6 语言 grammar 加载、imports/exports/functions、API endpoints、DB schema、调用图、config 白名单。修改文件：`scripts/smoke-multi-lang.mjs`、`scripts/run-smoke.mjs`、`fixtures-multi-lang/`。
+
+### Changed（变更）
+
+- Context Injector 的"项目记忆约定"段增加硬提示：用户表达「记住 X / 以后 Y / 不要 Z / 记一下」等长期意图时，立即调 `project_memory_add` 写入当前项目 `memory.jsonl`；若是跨项目通用偏好，再同步调 `memory_save` 写入 dsh-mneme，无需再次确认。修改文件：`src/host/injector.js`。
+- `codegraph-scan.mjs` 重构为 6 语言分发器：grammar 注册表 + 每种语言一个 EXTRACTORS / API_EXTRACTORS entry + 函数化 `main(projectPath)`（允许 import 时直接传参，CLI 自动 fallback 到 argv）。修改文件：`scripts/codegraph-scan.mjs`。
+- `run-smoke.mjs` 修复 Windows 路径解析（`new URL(..., import.meta.url).pathname` 在 Windows 返回 `C:\C:\...` 双冒号）；改用 `fileURLToPath` + `dirname`。修改文件：`scripts/run-smoke.mjs`。
+- `src/scanner.js`：techStack 字段改用 `setStack(field, value)` 助手，重复命中自动合并到数组。修改文件：`src/scanner.js`。
+- `src/host/store/brain-logic.js`：`techStackToType()` 支持数组值（多种语言栈并存时拼接为 "FastAPI · Go · Gin · Rust · Axum"）。修改文件：`src/host/store/brain-logic.js`。
+- `src/client.js`：技术栈 chip 渲染支持数组值，每个值独立显示一个 chip。修改文件：`src/client.js`。
+
+### Fixed（修复）
+
+- **`project_ask` 的 useLLM 合成失效**：`buildAskTool` 签名未接收 `getLlm`（`index.js` 统一传参但被解构丢弃），`synthesizeAnswer` 从 `exec.ctx.get('llm')` 现场取 llm，工具执行上下文拿不到 llm service 且裸 `llm.stream({messages})` 缺 provider/model route，导致 useLLM=true 静默降级为纯 BM25（实测 `llm=no`）。修复：`buildAskTool` 增加 `getLlm` 入参，`synthesizeAnswer` 改用 apply 时缓存的 llm service + `resolveSessionRoute` 解析 route + 复用 `streamLlmText`（对齐 `tools/suggest.js`）。修改文件：`src/tools/ask.js`。
+
+- **TodoStrip 占用过多空间、不友好**：之前 composer 上方 TodoStrip 默认展开 3 条活跃待办，固定占据 ~120px，且 ≤3 条时无收起按钮。优化为：默认折叠（仅显示紧凑 header `📋 活跃待办 · n ▾`，约 28px）；header 始终可点击展开/折叠；新增 `×` 关闭按钮（隐藏整个 strip 并写 localStorage 记忆）；关闭后用一个虚线 mini-chip `📋 · n 查看全部` 恢复，不再"钉住"占空间。修改文件：`src/client.js`。
+
+- **TodoStrip 标题不够美观**：弱化"活跃待办"文字（11px/600/uppercase/letter-spacing/label-secondary，更像模块标题），数字独立成圆角 badge（`minWidth:18px, height:16px, borderRadius:8px, bg-layer-2`）。修改文件：`src/client.js`。
+
+### Changed（变更）
+
+- **记忆机制升级为双通道**（决策 1+2）：实时交互记忆（监听 `agent/inbox/claimed`，规则检测"记住/以后/不要/记一下"等长期意图信号，自动落盘 `type=context` 记忆，含 fingerprint 去重 + 每 session 最多 5 条限速）+ 会话结束 LLM 摘要兜底。新增文件：`src/host/realtime-memory.js`；`src/index.js` 注册。
+- **会话摘要反转**（决策 2）：`summarizer.js` 从"git diff 主路径 + LLM 辅助"改为"LLM 对话总结为主，git diff 仅作参考证据喂给 LLM，LLM 失败时降级到 git diff 生成 change 记忆"。`session-extractor.js` 增加 `diffEvidence` 参数 + 输出 `summary`（会话总结文本）。修改文件：`src/host/summarizer.js`、`src/host/memory/session-extractor.js`。
+- **跨对话高保真续接**（决策 3）：session 摘要完成时把 LLM 生成的 `summary` 写入 timeline 的 `session_summary` 事件；`injector.js` 渲染时提取最近一条 session_summary 的 summary，注入"上次会话总结"段（高保真续接，token 满切对话后能看到上次会话做了什么）。修改文件：`src/host/injector.js`、`src/host/summarizer.js`。
+
+- **Git 历史 Tab**（仅 git 仓库显示）：Dashboard 新增"⎇ Git 历史"Tab，仅当项目是 git 仓库时挂载（mount 时通过 RPC `git` endpoint 探测 `available`，无 git 时不渲染 Tab）。Tab 内部可视化最近 50 个提交：左侧 ASCII graph（HEAD=● / merge=◆ / 其他=○ + │ 连接线）、commit subject + author + 相对/绝对时间 + shortHash、其他分支 chip 列表、点击展开 commit body + full hash + parents + author email。新增 `src/host/git/history.js`（纯 node git history 读取，loose + packed-refs 支持，复用 detector.js 的 object 读取）；`detector.js` 修复 `readHead` 分支名 slice 偏移 bug + 导出 `readGitObject` / `readHead` / 新增导出 `readCommitFull`；`src/host/rpc/sidebar.js` 注册 `git` endpoint（返回 `{ available, currentBranch, head, total, commits, branches, error }`）。修改文件：`src/client.js`、`src/host/rpc/sidebar.js`、`src/host/diff/detector.js`；新增 `src/host/git/history.js`。
+
+- **Git 历史样式重构（VSCode/Cursor 风格）**：GitTab 三列 Grid layout（graph 56px / info flex:1 / refs 130px）；圆点 + 竖线 graph（HEAD 实心 + box-shadow 光晕，merge 菱形，普通空心）；按 branch name hash 分配6 色 refs chip；整行点击展开 body + full hash + parents + author email + UTC 时间 + Changed Files 列表；hover/expanded 行背景变化。修改文件：`src/client.js`。
+
+- **每 commit 显示变更文件（tree diff）**：`history.js` 加 `diffCommitTrees` 函数（基于 tree object diff），每个 commit 数据增加 `filesChanged` / `filesChangedTotal` / `filesAdded` / `filesModified` / `filesRemoved` / `filesTruncated` 字段；GitTab meta 行加 `📁 +N ~M -K (X 文件)` 摘要，展开区显示前 8 个文件路径 + "more" 提示。修改文件：`src/host/git/history.js`、`src/client.js`；新增导出 `parseTree` / `collectTreeFiles`。
+
+- **Working Tree 区块（Git Tab 下半部分）**：HEAD tree vs 工作树对比，列出 untracked（工作树有 + HEAD tree 没有）和 deleted（HEAD tree 有 + 工作树没有）文件，**不依赖 git binary**。GitTab 新增 `🔸 Working Tree` 卡片（折叠默认展开 ▾，点 header 切换）：分两组"Untracked"（warn 色 badge）和"Deleted"（error 色 badge），每组默认显示前 8 个路径 + "+ N 更多"提示。硬编码忽略 `node_modules`/`.git`/`.project-brain`/`dist`/`build`/`.next`/`out`/`target`/`__pycache__`/`.venv`/`venv`/`vendor`/`.idea`/`.vscode`/`.turbo`/`.cache`/`.pnpm-store` 等目录和 `.log`/`.bak`/`.tmp`/`.swp`/`.swo` 后缀。鲁棒性：HEAD tree 不可读时（如 pack 解析失败）整个区块不渲染而非误报。修改文件：`src/host/git/history.js`、`src/host/rpc/sidebar.js`、`src/client.js`。
+
 ## [v0.7.0-beta.2] - 2026-08-30
 
 ### Added（新增）

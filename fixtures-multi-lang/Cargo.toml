@@ -1,0 +1,9 @@
+[package]
+name = "sample-rust"
+version = "0.1.0"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1" }
+serde = "1"
+sqlx = "0.7"

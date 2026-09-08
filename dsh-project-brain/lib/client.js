@@ -87,8 +87,19 @@
           "dash.tab.architecture": "\u67B6\u6784",
           "dash.tab.work": "\u4EFB\u52A1\u52A8\u6001",
           "dash.tab.knowledge": "\u9879\u76EE\u8BB0\u5FC6",
+          "dash.tab.git": "Git \u5386\u53F2",
           "dash.snapshot": "\u6570\u636E\u5FEB\u7167 \xB7 {time}",
           "dash.none": "\uFF08\u7A7A\uFF09",
+          "suggest.title": "\u{1F4A1} \u4F60\u4ECA\u5929\u53EF\u80FD\u60F3\u63A8\u8FDB",
+          "suggest.llmTag": "AI \u63A8\u8350",
+          "suggest.localTag": "\u672C\u5730\u63A8\u8350",
+          "suggest.fallbackTag": "AI \u6682\u4E0D\u53EF\u7528",
+          "suggest.loading": "\u5206\u6790\u4ECA\u5929\u7684\u7EED\u63A5\u5EFA\u8BAE\u2026",
+          "suggest.confidence": "\u7F6E\u4FE1\u5EA6 {pct}%",
+          "suggest.refresh": "\u91CD\u65B0\u751F\u6210",
+          "suggest.dismiss": "\u6536\u8D77",
+          "suggest.empty": "\u6682\u65E0\u6D3B\u8DC3\u4EFB\u52A1\u548C\u8FD1\u671F\u8BB0\u5FC6\uFF0C\u53EF\u7528 project_todo_add \u89C4\u5212\u4E0B\u4E00\u6B65",
+          "suggest.reasonLabel": "\u4F9D\u636E",
           "mem.type.decision": "\u51B3\u7B56",
           "mem.type.bug": "Bug",
           "mem.type.lesson": "\u6559\u8BAD",
@@ -179,8 +190,19 @@
           "dash.tab.architecture": "Architecture",
           "dash.tab.work": "Work & activity",
           "dash.tab.knowledge": "Knowledge",
+          "dash.tab.git": "Git history",
           "dash.snapshot": "Data snapshot \xB7 {time}",
           "dash.none": "(empty)",
+          "suggest.title": "\u{1F4A1} Today you may want to continue",
+          "suggest.llmTag": "AI",
+          "suggest.localTag": "Local",
+          "suggest.fallbackTag": "AI unavailable",
+          "suggest.loading": "Analyzing today\u2019s continuation\u2026",
+          "suggest.confidence": "confidence {pct}%",
+          "suggest.refresh": "Refresh",
+          "suggest.dismiss": "Dismiss",
+          "suggest.empty": "No active tasks or recent memories. Try project_todo_add to plan next steps.",
+          "suggest.reasonLabel": "Why",
           "mem.type.decision": "Decision",
           "mem.type.bug": "Bug",
           "mem.type.lesson": "Lesson",
@@ -1225,6 +1247,742 @@
           React.createElement("style", null, "@keyframes dsh-brain-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }")
         );
       }
+      const SUGGESTION_TTL_MS = 5 * 60 * 1e3;
+      const suggestionCache = /* @__PURE__ */ new Map();
+      function SuggestionCard({ t, localeCode, sessionId, connection, projectInitialized, embeddedSuggestion, workspacePath }) {
+        const cacheKey = workspacePath ? String(workspacePath) : null;
+        const cached = cacheKey ? suggestionCache.get(cacheKey) : null;
+        const initialState = cached ? { status: cached.status, data: cached.data, error: cached.error } : workspacePath ? { status: embeddedSuggestion ? "ready" : "idle", data: embeddedSuggestion || null, error: null } : { status: "loading", data: null, error: null };
+        const [state, setState] = React.useState(initialState);
+        const [dismissed, setDismissed] = React.useState(Boolean(cached && cached.dismissed));
+        const fetchSuggestion = React.useCallback(async (force) => {
+          const rpc = connection && connection.rpc;
+          if (!sessionId || !rpc || typeof rpc.call !== "function") return;
+          const cur = suggestionCache.get(cacheKey);
+          if (!force && cur && cur.status === "ready" && cur.data && Date.now() - (cur.fetchedAt || 0) < SUGGESTION_TTL_MS) {
+            setState({ status: cur.status, data: cur.data, error: cur.error });
+            return;
+          }
+          setState({ status: "loading", data: cur && cur.data || state.data || null, error: null });
+          try {
+            const payload = { sessionId };
+            if (cacheKey) payload.workspacePath = cacheKey;
+            const res = await rpc.call("/project-brain", "suggest", payload);
+            if (!res) {
+              setState({ status: "error", data: null, error: "RPC \u8FD4\u56DE undefined" });
+              return;
+            }
+            if (res.ok === false) {
+              const ec = res.error && res.error.code || "?";
+              const em = res.error && res.error.message || "(no message)";
+              setState({ status: "error", data: null, error: "RPC ok=false \xB7 " + ec + " \xB7 " + em });
+              return;
+            }
+            if (res.ok && res.value && res.value.suggestion && res.value.suggestion.suggestion) {
+              suggestionCache.set(cacheKey, {
+                fetchedAt: Date.now(),
+                status: "ready",
+                data: res.value.suggestion,
+                error: null,
+                dismissed: false
+              });
+              setState({ status: "ready", data: res.value.suggestion, error: null });
+              return;
+            }
+            let errMsg = "\u667A\u80FD\u7EED\u63A5\u5931\u8D25";
+            if (res.error && res.error.message) errMsg = res.error.message + " (" + (res.error.code || "?") + ")";
+            else if (!res.value) errMsg = "RPC value \u4E3A\u7A7A";
+            else if (!res.value.suggestion) errMsg = "value.suggestion \u4E3A\u7A7A";
+            else errMsg = "\u672A\u77E5\u72B6\u6001\uFF1A" + JSON.stringify(res).slice(0, 200);
+            setState({ status: "error", data: null, error: errMsg });
+          } catch (error) {
+            setState({ status: "error", data: null, error: "throw: " + String(error && error.message || error) });
+          }
+        }, [sessionId, connection, cacheKey, state.data]);
+        React.useEffect(() => {
+          if (!projectInitialized) {
+            setState({ status: "uninitialized", data: null, error: null });
+            return;
+          }
+          if (dismissed) return;
+          const rpc = connection && connection.rpc;
+          if (!rpc || !sessionId) return;
+          if (!cacheKey) {
+            setState({ status: "loading", data: null, error: null });
+            return;
+          }
+          const cur = suggestionCache.get(cacheKey);
+          if (cur && cur.status === "ready" && cur.data && Date.now() - (cur.fetchedAt || 0) < SUGGESTION_TTL_MS) {
+            return;
+          }
+          fetchSuggestion(false);
+        }, [projectInitialized, dismissed, fetchSuggestion, sessionId, connection, cacheKey]);
+        React.useEffect(() => {
+          if (typeof window === "undefined" || !window.addEventListener) return void 0;
+          const handler = (event) => {
+            const ev = event && event.detail;
+            const changedPath = ev && typeof ev.projectPath === "string" ? ev.projectPath : null;
+            if (changedPath && cacheKey && changedPath !== cacheKey) return;
+            const c = suggestionCache.get(cacheKey);
+            if (c) {
+              c.fetchedAt = 0;
+              suggestionCache.set(cacheKey, c);
+            }
+          };
+          window.addEventListener("project_brain/preview.changed", handler);
+          return () => window.removeEventListener("project_brain/preview.changed", handler);
+        }, [cacheKey]);
+        if (!projectInitialized) {
+          return React.createElement(
+            "div",
+            {
+              style: {
+                margin: "0 12px 8px",
+                padding: "8px 12px",
+                background: "var(--dsw-alias-bg-layer-2)",
+                border: "1px dashed var(--dsw-alias-border-l1)",
+                borderRadius: "10px",
+                color: "var(--dsw-alias-label-secondary)",
+                fontSize: "11px"
+              },
+              "data-block": "suggestion-uninit",
+              "data-suggest-status": "uninit"
+            },
+            React.createElement("span", null, "\u{1F4A1} "),
+            React.createElement("span", null, localeCode === "en-US" ? "Init project brain to see today's continuation." : "\u521D\u59CB\u5316\u9879\u76EE\u8111\u540E\u67E5\u770B\u4ECA\u5929\u53EF\u80FD\u63A8\u8FDB\u7684\u5185\u5BB9\u3002")
+          );
+        }
+        if (dismissed) {
+          return React.createElement(
+            "div",
+            { style: { padding: "0 12px 8px" }, "data-block": "suggestion-dismissed" },
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                onClick: () => {
+                  setDismissed(false);
+                  const c = suggestionCache.get(cacheKey);
+                  if (c) c.dismissed = false;
+                  fetchSuggestion(true);
+                },
+                style: {
+                  padding: "4px 10px",
+                  background: "transparent",
+                  border: "1px dashed var(--dsw-alias-border-l1)",
+                  borderRadius: "8px",
+                  color: "var(--dsw-alias-label-secondary)",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  fontFamily: "inherit"
+                },
+                "data-action": "suggest-show"
+              },
+              "\u{1F4A1} " + (localeCode === "en-US" ? "Show suggestion" : "\u67E5\u770B\u7EED\u63A5\u5EFA\u8BAE")
+            )
+          );
+        }
+        const data = state.data || {};
+        const suggestion = data.suggestion || null;
+        const source = data.source || (state.status === "loading" ? "loading" : null);
+        let tag;
+        if (source === "llm") tag = t("suggest.llmTag");
+        else if (source === "llm_failed" || source === "local") tag = t("suggest.localTag");
+        else if (source === "local_no_route") tag = t("suggest.localTag");
+        else tag = null;
+        const confidencePct = suggestion && Number.isFinite(suggestion.confidence) ? Math.round(suggestion.confidence * 100) : null;
+        const cardStyle = {
+          margin: "0 12px 8px",
+          padding: "10px 12px",
+          background: "linear-gradient(135deg, var(--dsw-alias-bg-layer-2) 0%, var(--dsw-alias-bg-layer-1) 100%)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+          borderRadius: "10px",
+          color: "var(--dsw-alias-label-primary)"
+        };
+        const titleRow = React.createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" } },
+          React.createElement("span", { style: { fontSize: "13px", fontWeight: "700" } }, t("suggest.title")),
+          tag ? React.createElement("span", {
+            style: {
+              fontSize: "10px",
+              padding: "1px 7px",
+              borderRadius: "8px",
+              background: source === "llm" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-layer-2)",
+              color: source === "llm" ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-secondary)",
+              fontWeight: "600"
+            },
+            "data-suggest-source": source
+          }, tag) : null,
+          confidencePct != null && source === "llm" ? React.createElement("span", {
+            style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" }
+          }, t("suggest.confidence", { pct: confidencePct })) : null,
+          React.createElement("span", { style: { flex: "1 1 auto" } }),
+          state.status === "ready" ? React.createElement("button", {
+            type: "button",
+            onClick: () => {
+              setDismissed(true);
+              const c = suggestionCache.get(cacheKey);
+              if (c) c.dismissed = true;
+            },
+            title: t("suggest.dismiss"),
+            "data-action": "suggest-dismiss",
+            style: { padding: "2px 8px", background: "transparent", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", color: "var(--dsw-alias-label-secondary)", cursor: "pointer", fontSize: "10px", fontFamily: "inherit" }
+          }, t("suggest.dismiss")) : null,
+          state.status !== "loading" ? React.createElement("button", {
+            type: "button",
+            onClick: () => fetchSuggestion(true),
+            title: t("suggest.refresh"),
+            "data-action": "suggest-refresh",
+            style: { padding: "2px 8px", background: "transparent", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", color: "var(--dsw-alias-label-secondary)", cursor: "pointer", fontSize: "10px", fontFamily: "inherit" }
+          }, "\u21BB " + t("suggest.refresh")) : null
+        );
+        let bodyContent;
+        if (state.status === "loading") {
+          bodyContent = React.createElement(
+            "div",
+            { style: { marginTop: "8px", display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+            React.createElement("span", { "data-spinner": "1", style: { width: "12px", height: "12px", borderRadius: "50%", border: "2px solid var(--dsw-alias-border-l2)", borderTopColor: "var(--dsw-alias-brand-primary)", animation: "dsh-brain-spin 0.9s linear infinite", display: "inline-block" } }),
+            t("suggest.loading")
+          );
+        } else if (state.status === "error") {
+          bodyContent = React.createElement(
+            "div",
+            { style: { marginTop: "8px", fontSize: "12px", color: "var(--dsw-alias-state-error-primary)" } },
+            "\u274C " + (state.error || t("suggest.empty"))
+          );
+        } else if (!suggestion) {
+          bodyContent = React.createElement(
+            "div",
+            { style: { marginTop: "8px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+            t("suggest.empty")
+          );
+        } else {
+          bodyContent = React.createElement(
+            "div",
+            { style: { marginTop: "8px" }, "data-suggestion": "ready" },
+            React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.5" }, "data-suggestion-title": "1" }, suggestion.title || ""),
+            suggestion.reason ? React.createElement(
+              "div",
+              { style: { marginTop: "6px", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.5" }, "data-suggestion-reason": "1" },
+              React.createElement("span", { style: { fontWeight: "600" } }, t("suggest.reasonLabel") + "\uFF1A"),
+              " " + suggestion.reason
+            ) : null,
+            data.llmError ? React.createElement(
+              "div",
+              { style: { marginTop: "6px", fontSize: "10px", color: "var(--dsw-alias-state-warn-primary)" }, "data-suggestion-llm-error": "1" },
+              t("suggest.fallbackTag") + "\uFF1A" + (data.llmError.message || data.llmError.code || "")
+            ) : null
+          );
+        }
+        return React.createElement(
+          "div",
+          { style: cardStyle, "data-block": "suggestion", "data-source": source || "unknown" },
+          titleRow,
+          bodyContent
+        );
+      }
+      function GitTab({ gitInfo, t, onRefresh, autoRefresh, onToggleAutoRefresh }) {
+        if (!gitInfo) {
+          return React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }, "data-block": "git-loading" }, "\u23F3 \u52A0\u8F7D git \u5386\u53F2...");
+        }
+        if (gitInfo.available !== true) {
+          return React.createElement(
+            "div",
+            { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" }, "data-block": "git-empty" },
+            "\u{1F4C2} \u5F53\u524D\u9879\u76EE\u4E0D\u662F git \u4ED3\u5E93",
+            gitInfo.error ? React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", opacity: 0.7 } }, gitInfo.error) : null
+          );
+        }
+        const commits = gitInfo.commits || [];
+        const branches = gitInfo.branches || [];
+        const currentBranch = gitInfo.currentBranch;
+        const [expanded, setExpanded] = React.useState(null);
+        const relTime = (ts) => {
+          if (!ts) return "";
+          const diff = Date.now() / 1e3 - ts;
+          if (diff < 60) return Math.round(diff) + "\u79D2\u524D";
+          if (diff < 3600) return Math.round(diff / 60) + "\u5206\u949F\u524D";
+          if (diff < 86400) return Math.round(diff / 3600) + "\u5C0F\u65F6\u524D";
+          if (diff < 30 * 86400) return Math.round(diff / 86400) + "\u5929\u524D";
+          if (diff < 365 * 86400) return Math.round(diff / 2592e3) + "\u4E2A\u6708\u524D";
+          return Math.round(diff / 31536e3) + "\u5E74\u524D";
+        };
+        const fmtDate = (ts) => {
+          if (!ts) return "";
+          const d = new Date(ts * 1e3);
+          return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+        };
+        const refsByHash = /* @__PURE__ */ new Map();
+        for (const b of branches) {
+          if (!refsByHash.has(b.commit)) refsByHash.set(b.commit, []);
+          refsByHash.get(b.commit).push({ kind: "branch", name: b.name, isCurrent: b.name === currentBranch });
+        }
+        const palette = [
+          { fg: "#1f6feb", bg: "#ddf4ff" },
+          // 蓝
+          { fg: "#1a7f37", bg: "#dafbe1" },
+          // 绿
+          { fg: "#8250df", bg: "#fbefff" },
+          // 紫
+          { fg: "#cf222e", bg: "#ffebe9" },
+          // 红
+          { fg: "#9a6700", bg: "#fff8c5" },
+          // 黄
+          { fg: "#0a3069", bg: "#dbeafe" }
+          // 深蓝
+        ];
+        const colorByBranch = /* @__PURE__ */ new Map();
+        let colorIdx = 0;
+        for (const b of branches) {
+          if (!colorByBranch.has(b.name)) {
+            colorByBranch.set(b.name, palette[colorIdx % palette.length]);
+            colorIdx += 1;
+          }
+        }
+        const cardStyle = {
+          background: "var(--dsw-alias-bg-layer-2)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderRadius: "10px",
+          padding: "12px 14px",
+          marginBottom: "10px",
+          fontSize: "12px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap"
+        };
+        const branchChipStyle = (isCurrent) => ({
+          fontSize: "11px",
+          padding: "3px 10px",
+          borderRadius: "11px",
+          background: isCurrent ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-base)",
+          color: isCurrent ? "var(--dsh-brain-bg-base, var(--dsw-alias-bg-base))" : "var(--dsw-alias-label-primary)",
+          border: isCurrent ? "none" : "1px solid var(--dsw-alias-border-l1)",
+          fontWeight: "600",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "4px"
+        });
+        const listStyle = { listStyle: "none", padding: "0", margin: 0 };
+        const rowStyle = (expanded2) => ({
+          display: "grid",
+          gridTemplateColumns: "56px minmax(0, 1fr) 130px",
+          gap: "10px",
+          alignItems: "center",
+          padding: "10px 12px",
+          borderRadius: "8px",
+          marginBottom: "2px",
+          cursor: "pointer",
+          background: expanded2 ? "var(--dsw-alias-bg-layer-1)" : "transparent",
+          transition: "background-color 0.12s"
+        });
+        const graphCellStyle = {
+          position: "relative",
+          height: "36px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        };
+        const dotStyle = (idx, isMerge) => ({
+          width: "11px",
+          height: "11px",
+          borderRadius: isMerge ? "2px" : "50%",
+          transform: isMerge ? "rotate(45deg)" : "none",
+          background: idx === 0 ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-bg-base)",
+          border: idx === 0 ? "2px solid var(--dsw-alias-brand-primary)" : "2px solid var(--dsw-alias-label-secondary)",
+          zIndex: 2,
+          boxShadow: idx === 0 ? "0 0 0 3px var(--dsw-alias-bg-layer-1)" : "none"
+        });
+        const lineStyle = (idx, total2) => ({
+          position: "absolute",
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "var(--dsw-alias-border-l2)",
+          zIndex: 1,
+          ...idx === 0 ? { top: "calc(50% + 6px)", height: "calc(50% - 6px)" } : idx === total2 - 1 ? { top: 0, height: "calc(50% - 6px)" } : { top: 0, bottom: 0 },
+          width: "2px"
+        });
+        const subjectStyle = {
+          fontSize: "13px",
+          color: "var(--dsw-alias-label-primary)",
+          fontWeight: "600",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          lineHeight: "1.4"
+        };
+        const metaStyle = {
+          fontSize: "10.5px",
+          color: "var(--dsw-alias-label-secondary)",
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          marginTop: "3px",
+          flexWrap: "wrap"
+        };
+        const hashChipStyle = {
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: "10px",
+          padding: "1px 6px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-secondary)",
+          borderRadius: "4px",
+          border: "1px solid var(--dsw-alias-border-l1)"
+        };
+        const refsCellStyle = {
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "4px",
+          justifyContent: "flex-end",
+          alignItems: "center"
+        };
+        const refChipStyle = (isCurrent, color) => ({
+          fontSize: "10px",
+          padding: "1px 7px",
+          borderRadius: "9px",
+          background: isCurrent ? color.fg : color.bg,
+          color: isCurrent ? "var(--dsw-alias-bg-base)" : color.fg,
+          border: "1px solid " + (isCurrent ? color.fg : color.bg),
+          fontWeight: isCurrent ? "700" : "500",
+          whiteSpace: "nowrap"
+        });
+        const expandedPanelStyle = {
+          gridColumn: "2 / -1",
+          marginTop: "8px",
+          padding: "12px 14px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderRadius: "8px",
+          fontSize: "11.5px",
+          color: "var(--dsw-alias-label-primary)"
+        };
+        const detailRowStyle = {
+          display: "grid",
+          gridTemplateColumns: "70px minmax(0, 1fr)",
+          gap: "8px",
+          padding: "3px 0",
+          fontSize: "11px"
+        };
+        const detailLabelStyle = {
+          color: "var(--dsw-alias-label-secondary)",
+          fontSize: "10px",
+          textTransform: "uppercase",
+          letterSpacing: "0.4px"
+        };
+        const monospaceStyle = {
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: "10.5px"
+        };
+        const bodyTextStyle = {
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          lineHeight: "1.55",
+          color: "var(--dsw-alias-label-primary)",
+          padding: "8px 10px",
+          background: "var(--dsw-alias-bg-base)",
+          borderRadius: "6px",
+          marginBottom: "10px",
+          fontSize: "11.5px"
+        };
+        const total = commits.length;
+        const renderRow = (c, idx) => {
+          const isExpanded = expanded === c.hash;
+          const refs = refsByHash.get(c.hash) || [];
+          return React.createElement(
+            "div",
+            {
+              key: c.hash,
+              style: rowStyle(isExpanded),
+              "data-commit": c.hash,
+              "data-expanded": isExpanded ? "1" : "0",
+              onClick: (ev) => {
+                const tag = ev && ev.target && ev.target.tagName;
+                if (tag === "A" || tag === "BUTTON") return;
+                setExpanded(isExpanded ? null : c.hash);
+              }
+            },
+            // graph column
+            React.createElement(
+              "div",
+              { style: graphCellStyle },
+              React.createElement("div", { style: lineStyle(idx, total) }),
+              React.createElement("div", { style: dotStyle(idx, c.isMerge) })
+            ),
+            // info column
+            React.createElement(
+              "div",
+              { style: { minWidth: 0 } },
+              React.createElement("div", { style: subjectStyle, title: c.subject }, c.subject || "(\u65E0\u6807\u9898)"),
+              React.createElement(
+                "div",
+                { style: metaStyle },
+                React.createElement("span", { style: hashChipStyle }, c.shortHash),
+                React.createElement("span", { style: { fontWeight: "500" } }, c.author || "?"),
+                React.createElement("span", null, "\xB7"),
+                React.createElement("span", { title: c.isoTime || "" }, relTime(c.timestamp)),
+                c.isMerge ? React.createElement("span", { style: { color: "var(--dsw-alias-state-warn-primary)", fontSize: "10px" } }, "\u2387 merge") : null,
+                // v0.4.x: 变更文件摘要（来自 history.js 的 tree diff；pack 不可读时为 0）
+                typeof c.filesChangedTotal === "number" && c.filesChangedTotal > 0 ? (() => {
+                  const fileStatText = "\u{1F4C1} " + (c.filesAdded ? "+" + c.filesAdded + " " : "") + (c.filesModified ? "~" + c.filesModified + " " : "") + (c.filesRemoved ? "-" + c.filesRemoved + " " : "") + "(" + c.filesChangedTotal + " \u6587\u4EF6)";
+                  return React.createElement("span", {
+                    style: { fontSize: "10px", padding: "1px 6px", borderRadius: "4px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", display: "inline-flex", alignItems: "center", gap: "4px" }
+                  }, fileStatText);
+                })() : null
+              ),
+              // 展开后的详情
+              isExpanded ? React.createElement(
+                "div",
+                { style: expandedPanelStyle },
+                c.body ? React.createElement("div", { style: bodyTextStyle }, c.body) : React.createElement("div", { style: Object.assign({}, bodyTextStyle, { opacity: 0.6, fontStyle: "italic" }) }, "\uFF08\u65E0\u8BE6\u7EC6\u63CF\u8FF0\uFF09"),
+                React.createElement(
+                  "div",
+                  { style: detailRowStyle },
+                  React.createElement("div", { style: detailLabelStyle }, "Hash"),
+                  React.createElement("div", { style: monospaceStyle }, c.hash)
+                ),
+                c.authorEmail ? React.createElement(
+                  "div",
+                  { style: detailRowStyle },
+                  React.createElement("div", { style: detailLabelStyle }, "Author"),
+                  React.createElement("div", null, c.author + " <" + c.authorEmail + ">")
+                ) : null,
+                React.createElement(
+                  "div",
+                  { style: detailRowStyle },
+                  React.createElement("div", { style: detailLabelStyle }, "Date"),
+                  React.createElement("div", null, fmtDate(c.timestamp) + " " + (c.isoTime || "").slice(11, 19) + " UTC")
+                ),
+                c.firstParent ? React.createElement(
+                  "div",
+                  { style: detailRowStyle },
+                  React.createElement("div", { style: detailLabelStyle }, "Parent"),
+                  React.createElement("div", { style: monospaceStyle }, c.firstParent)
+                ) : null,
+                c.extraParents && c.extraParents.length > 0 ? React.createElement(
+                  "div",
+                  { style: detailRowStyle },
+                  React.createElement("div", { style: detailLabelStyle }, "Merged"),
+                  React.createElement("div", { style: monospaceStyle, color: "var(--dsw-alias-state-warn-primary)" }, c.extraParents.join(", "))
+                ) : null,
+                // v0.4.x: Changed Files 列表（tree diff 失败时不显示）
+                Array.isArray(c.filesChanged) && c.filesChanged.length > 0 ? React.createElement(
+                  "div",
+                  { style: Object.assign({}, detailRowStyle, { alignItems: "flex-start" }) },
+                  React.createElement("div", { style: detailLabelStyle }, "Files"),
+                  React.createElement(
+                    "div",
+                    { style: { display: "flex", flexWrap: "wrap", gap: "4px" } },
+                    c.filesChanged.map(
+                      (f) => React.createElement("span", {
+                        key: f,
+                        style: { fontSize: "10px", fontFamily: "ui-monospace, monospace", padding: "1px 6px", background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "3px", color: "var(--dsw-alias-label-primary)", maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+                        title: f
+                      }, f)
+                    ),
+                    c.filesTruncated ? React.createElement("span", {
+                      style: { fontSize: "10px", padding: "1px 6px", color: "var(--dsw-alias-label-secondary)", fontStyle: "italic" }
+                    }, "\u2026 +" + (c.filesChangedTotal - c.filesChanged.length) + " more") : null
+                  )
+                ) : null
+              ) : null
+            ),
+            // refs column
+            React.createElement(
+              "div",
+              { style: refsCellStyle },
+              refs.map((r) => {
+                const color = colorByBranch.get(r.name) || palette[0];
+                return React.createElement("span", {
+                  key: r.name,
+                  style: refChipStyle(r.isCurrent, color),
+                  title: "refs/heads/" + r.name + (r.isCurrent ? " (current)" : "")
+                }, r.name);
+              })
+            )
+          );
+        };
+        const otherBranches = branches.filter((b) => b.name !== currentBranch);
+        const wt = gitInfo && gitInfo.workTree;
+        const [wtExpanded, setwtExpanded] = React.useState(false);
+        const renderWorkTreeSection = (workTree) => {
+          if (!workTree || workTree.available !== true) return null;
+          const untrackedTotal = workTree.untrackedTotal || 0;
+          const deletedTotal = workTree.deletedTotal || 0;
+          if (untrackedTotal === 0 && deletedTotal === 0) return null;
+          const wtCardStyle = {
+            margin: "12px 0 4px",
+            padding: "12px 14px",
+            background: "var(--dsw-alias-bg-layer-2)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderRadius: "10px",
+            fontSize: "12px"
+          };
+          const wtHeaderStyle = {
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            marginBottom: untrackedTotal + deletedTotal > 0 && wtExpanded ? "10px" : 0,
+            cursor: "pointer",
+            userSelect: "none"
+          };
+          const fileRowStyle = {
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "3px 0",
+            fontFamily: "ui-monospace, monospace",
+            fontSize: "10.5px",
+            color: "var(--dsw-alias-label-primary)"
+          };
+          const filePathStyle = {
+            padding: "1px 6px",
+            background: "var(--dsw-alias-bg-base)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderRadius: "3px",
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap"
+          };
+          const statusBadgeStyle = (kind) => ({
+            fontSize: "10px",
+            padding: "1px 7px",
+            borderRadius: "9px",
+            fontWeight: "600",
+            flex: "0 0 auto",
+            background: kind === "untracked" ? "var(--dsw-alias-state-warn-bg, var(--dsw-alias-bg-layer-2))" : "var(--dsw-alias-state-error-bg, var(--dsw-alias-bg-layer-2))",
+            color: kind === "untracked" ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-state-error-primary)"
+          });
+          const renderFileGroup = (label, kind, sample, total2, truncated) => {
+            if (total2 === 0) return null;
+            const visible = wtExpanded ? sample : sample.slice(0, 8);
+            return React.createElement(
+              "div",
+              { style: { marginBottom: "8px" } },
+              React.createElement(
+                "div",
+                { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" } },
+                React.createElement("span", { style: statusBadgeStyle(kind) }, label),
+                React.createElement("span", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, total2 + " \u6587\u4EF6" + (truncated ? "\uFF08\u5DF2\u622A\u65AD\uFF09" : ""))
+              ),
+              visible.length > 0 ? React.createElement(
+                "div",
+                { style: { paddingLeft: "8px" } },
+                visible.map(
+                  (f) => React.createElement(
+                    "div",
+                    { key: f, style: fileRowStyle, title: f },
+                    React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)", fontSize: "10px", flex: "0 0 auto" } }, "\u2022"),
+                    React.createElement("span", { style: filePathStyle }, f)
+                  )
+                ),
+                !wtExpanded && sample.length > 8 ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", paddingLeft: "16px" } }, "+ " + (sample.length - 8) + " \u66F4\u591A\uFF08\u70B9\u51FB\u5C55\u5F00\u67E5\u770B\u5168\u90E8\uFF09") : null,
+                wtExpanded && truncated ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", paddingLeft: "16px" } }, "\uFF08\u540E\u7AEF\u5DF2\u622A\u65AD\uFF0C\u5168\u90E8 " + total2 + " \u4E2A\uFF09") : null
+              ) : null
+            );
+          };
+          return React.createElement(
+            "div",
+            { style: wtCardStyle, "data-block": "work-tree" },
+            React.createElement(
+              "div",
+              { style: wtHeaderStyle, onClick: () => setwtExpanded(!wtExpanded) },
+              React.createElement("span", { style: { fontSize: "14px" } }, "\u{1F538}"),
+              React.createElement("span", { style: { fontWeight: "600", fontSize: "12.5px" } }, "Working Tree"),
+              React.createElement(
+                "span",
+                { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+                untrackedTotal + " untracked" + (deletedTotal > 0 ? " \xB7 " + deletedTotal + " deleted" : "")
+              ),
+              workTree.reference === "fallback" ? React.createElement("span", {
+                style: { fontSize: "10px", padding: "1px 7px", borderRadius: "9px", background: "var(--dsw-alias-state-warn-bg, var(--dsw-alias-bg-layer-1))", border: "1px solid var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-state-warn-primary)", fontWeight: "600" },
+                title: "HEAD tree \u4E0D\u53EF\u8BFB\uFF08pack \u89E3\u6790\u9650\u5236\uFF09\uFF0C\u5DF2\u6CBF first-parent \u94FE\u56DE\u9000\u5230 " + (workTree.referenceCommitShort || "?") + " \u4F5C\u4E3A\u53C2\u8003\uFF0C\u7ED3\u679C\u53EF\u80FD\u7565\u6709\u8FC7\u671F"
+              }, "vs " + (workTree.referenceCommitShort || "fallback")) : null,
+              React.createElement("span", { style: { marginLeft: "auto", fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, wtExpanded ? "\u25B4" : "\u25BE")
+            ),
+            wtExpanded ? React.createElement(
+              "div",
+              null,
+              renderFileGroup("Untracked", "untracked", workTree.untrackedSample || [], untrackedTotal, workTree.truncatedUntracked),
+              renderFileGroup("Deleted", "deleted", workTree.deletedSample || [], deletedTotal, workTree.truncatedDeleted)
+            ) : null
+          );
+        };
+        return React.createElement(
+          "div",
+          { style: { padding: "0 4px 16px" }, "data-block": "git-tab" },
+          // header card
+          React.createElement(
+            "div",
+            { style: cardStyle },
+            React.createElement("span", { style: branchChipStyle(true) }, "\u2387 " + (currentBranch || "detached HEAD")),
+            React.createElement(
+              "span",
+              { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } },
+              commits.length + " \u4E2A\u63D0\u4EA4" + (gitInfo.truncated ? "\uFF08\u5DF2\u622A\u65AD\uFF09" : "")
+            ),
+            otherBranches.length > 0 ? React.createElement(
+              "span",
+              { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } },
+              "\xB7 " + otherBranches.length + " \u4E2A\u5176\u4ED6\u5206\u652F"
+            ) : null,
+            gitInfo.head ? React.createElement("span", { style: { marginLeft: "auto", fontFamily: "ui-monospace, monospace", fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, "HEAD " + gitInfo.head.substring(0, 7)) : null,
+            // v0.4.x: 自动刷新开关 + 手动刷新按钮
+            typeof onRefresh === "function" ? React.createElement(
+              "span",
+              { style: { display: "inline-flex", alignItems: "center", gap: "4px", marginLeft: "8px" } },
+              typeof onToggleAutoRefresh === "function" ? React.createElement("button", {
+                key: "auto",
+                type: "button",
+                title: autoRefresh ? "\u81EA\u52A8\u5237\u65B0\u5DF2\u5F00\u542F\uFF0830s \u95F4\u9694\uFF09\uFF0C\u70B9\u51FB\u5173\u95ED" : "\u81EA\u52A8\u5237\u65B0\u5DF2\u5173\u95ED\uFF0C\u70B9\u51FB\u5F00\u542F",
+                onClick: () => onToggleAutoRefresh(!autoRefresh),
+                "data-git-auto": autoRefresh ? "1" : "0",
+                style: {
+                  fontSize: "10px",
+                  padding: "2px 8px",
+                  borderRadius: "10px",
+                  border: "1px solid " + (autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-border-l1)"),
+                  background: autoRefresh ? "var(--dsw-alias-state-success-bg, var(--dsw-alias-bg-layer-2))" : "transparent",
+                  color: autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-secondary)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px"
+                }
+              }, React.createElement("span", { style: { width: "6px", height: "6px", borderRadius: "50%", background: autoRefresh ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-label-secondary)" } }), autoRefresh ? "\u81EA\u52A8 30s" : "\u81EA\u52A8\u5173") : null,
+              React.createElement("button", {
+                key: "refresh",
+                type: "button",
+                title: "\u5237\u65B0 Git \u6570\u636E",
+                onClick: onRefresh,
+                "data-git-refresh": "1",
+                style: {
+                  fontSize: "14px",
+                  padding: "2px 8px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  background: "transparent",
+                  color: "var(--dsw-alias-label-primary)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  lineHeight: "1"
+                }
+              }, "\u21BB")
+            ) : null
+          ),
+          // commits 列表
+          commits.length === 0 ? React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } }, "\uFF08\u65E0\u63D0\u4EA4\u5386\u53F2\uFF09") : React.createElement(
+            "div",
+            { style: listStyle },
+            commits.map((c, idx) => renderRow(c, idx))
+          ),
+          // v0.4.x: Working Tree 区块 — HEAD tree vs 工作树对比，不依赖 git binary
+          renderWorkTreeSection(gitInfo.workTree)
+        );
+      }
       function DashboardSection({ data, t, localeCode, sessionId, connection, onPreviewUpdate }) {
         const p = data.project || {};
         const todos = data.todos || [];
@@ -1234,6 +1992,46 @@
         const [quickActionState, setQuickActionState] = React.useState({});
         const [activeTab, setActiveTab] = React.useState("overview");
         const rpc = connection && connection.rpc;
+        const [gitInfo, setGitInfo] = React.useState(null);
+        const [gitAutoRefresh, setGitAutoRefresh] = React.useState(() => {
+          try {
+            return localStorage.getItem("dsh-brain-git-auto-refresh") !== "0";
+          } catch (e) {
+            return true;
+          }
+        });
+        const refreshGit = React.useCallback(async () => {
+          if (!rpc || typeof rpc.call !== "function") return;
+          try {
+            const res = await rpc.call("/project-brain", "git", { sessionId, workspacePath: data._workspacePath || null, limit: 50 });
+            if (res && res.ok && res.value) setGitInfo(res.value);
+            else setGitInfo({ available: false, error: res && res.error && res.error.message || "no git info" });
+          } catch (e) {
+            setGitInfo({ available: false, error: String(e && e.message || e) });
+          }
+        }, [rpc, sessionId, data._workspacePath]);
+        React.useEffect(() => {
+          let cancelled = false;
+          if (!rpc || typeof rpc.call !== "function") return void 0;
+          (async () => {
+            try {
+              const res = await rpc.call("/project-brain", "git", { sessionId, workspacePath: data._workspacePath || null, limit: 50 });
+              if (cancelled) return;
+              if (res && res.ok && res.value) setGitInfo(res.value);
+              else setGitInfo({ available: false, error: res && res.error && res.error.message || "no git info" });
+            } catch (e) {
+              if (!cancelled) setGitInfo({ available: false, error: String(e && e.message || e) });
+            }
+          })();
+          return () => {
+            cancelled = true;
+          };
+        }, [rpc, sessionId, data._workspacePath]);
+        React.useEffect(() => {
+          if (activeTab !== "git" || !gitAutoRefresh) return void 0;
+          const t2 = setInterval(refreshGit, 3e4);
+          return () => clearInterval(t2);
+        }, [activeTab, gitAutoRefresh, refreshGit]);
         function resultMessage(action, value) {
           const result = value && value.result;
           const detail = result && result.data ? result.data : {};
@@ -1310,15 +2108,18 @@
             [qa.id]: { status: "success", message: resultMessage(action, value) }
           }));
         }
-        const techChips = Object.entries(p.techStack || {}).map(
-          ([k, v]) => React.createElement(
-            "span",
-            { key: k, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-            React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
-            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
-            React.createElement("span", { style: { fontWeight: "600" } }, String(v))
-          )
-        );
+        const techChips = Object.entries(p.techStack || {}).flatMap(([k, v]) => {
+          const values = Array.isArray(v) ? v : [v];
+          return values.filter(Boolean).map(
+            (item, idx) => React.createElement(
+              "span",
+              { key: k + "-" + idx, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
+              React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
+              React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
+              React.createElement("span", { style: { fontWeight: "600" } }, String(item))
+            )
+          );
+        });
         const toolingChips = (p.tooling || []).map(
           (tool) => React.createElement(
             "span",
@@ -1359,6 +2160,9 @@
           { id: "work", icon: "\u2713", label: t("dash.tab.work") },
           { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") }
         ];
+        if (gitInfo && gitInfo.available === true) {
+          tabDefs.push({ id: "git", icon: "\u2387", label: t("dash.tab.git") });
+        }
         const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
         const todoNode = todos.length > 0 ? React.createElement(
           "ul",
@@ -1410,6 +2214,16 @@
             }, retrieval.configuredMode === "hybrid" ? "\u5411\u91CF\u5DF2\u914D\u7F6E" : "\u672C\u5730\u68C0\u7D22"),
             React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, "\u70B9\u51FB\u5361\u7247\u540E\u53F0\u6267\u884C")
           ),
+          // v0.4.15 智能续接：Session 开始时主动给出"今天可能想推进什么"
+          React.createElement(SuggestionCard, {
+            t,
+            localeCode,
+            sessionId,
+            connection,
+            projectInitialized: Boolean(data.initialized && data.project),
+            embeddedSuggestion: data.suggestion || null,
+            workspacePath: data._workspacePath || null
+          }),
           // v0.4.11: Quick Actions 2x2 网格（替代"继续上次开发"鸡肋按钮）
           (() => {
             const isEn = localeCode === "en-US";
@@ -1497,7 +2311,14 @@
               dashSection("\u{1F4CB}", "dash.todo", todoNode),
               dashSection("\u{1F4C5}", "dash.timeline", timelineNode)
             ) : null,
-            activeTab === "knowledge" ? dashSection("\u{1F9E0}", "dash.memory", memoryNode) : null
+            activeTab === "knowledge" ? dashSection("\u{1F9E0}", "dash.memory", memoryNode) : null,
+            activeTab === "git" ? React.createElement(GitTab, { gitInfo, t, onRefresh: refreshGit, autoRefresh: gitAutoRefresh, onToggleAutoRefresh: (v) => {
+              try {
+                localStorage.setItem("dsh-brain-git-auto-refresh", v ? "1" : "0");
+              } catch (e) {
+              }
+              setGitAutoRefresh(v);
+            } }) : null
           ),
           React.createElement(
             "div",
@@ -1607,7 +2428,7 @@
           "data-session-id": (r.sessionId || "").toString().slice(0, 8),
           style: containerStyle
         };
-        const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode });
+        const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode, _workspacePath: r.workspacePath || null });
         const headerWithBadge = React.createElement(
           "section",
           { style: Object.assign({}, sectionStyle, { padding: "12px 16px" }), "data-block": "live-status" },
@@ -1686,14 +2507,26 @@
         if (!data || !data.initialized) return null;
         const active = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
         if (active.length === 0) return null;
-        const stripId = "dsh-brain-todo-strip-" + (r.workspaceId || "default");
-        const listId = "dsh-brain-todo-strip-list-" + (r.workspaceId || "default");
+        const wsid = r.workspaceId || "default";
+        const stripId = "dsh-brain-todo-strip-" + wsid;
+        const listId = "dsh-brain-todo-strip-list-" + wsid;
+        const toggleBtnId = "dsh-brain-todo-strip-toggle-" + wsid;
+        const closeBtnId = "dsh-brain-todo-strip-close-" + wsid;
+        const restoreId = "dsh-brain-todo-strip-restore-" + wsid;
+        const dismissedKey = "dsh-brain-todo-strip-dismissed:" + wsid;
+        const isDismissed = (() => {
+          try {
+            return localStorage.getItem(dismissedKey) === "1";
+          } catch (e) {
+            return false;
+          }
+        })();
         const containerStyle = {
           display: "flex",
           flexDirection: "column",
-          gap: "6px",
-          padding: "8px 16px",
-          margin: "0 12px 8px",
+          gap: "0",
+          padding: "6px 12px",
+          margin: "0 12px 6px",
           background: "var(--dsw-alias-bg-layer-1)",
           border: "1px solid var(--dsw-alias-border-l1)",
           borderRadius: "6px",
@@ -1704,21 +2537,42 @@
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: "8px",
+          cursor: "pointer",
+          userSelect: "none",
           fontWeight: "600",
           fontSize: "11px",
           color: "var(--dsw-alias-label-secondary)",
           textTransform: "uppercase",
           letterSpacing: "0.6px"
         };
-        const toggleBtnStyle = {
+        const countBadgeStyle = {
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: "18px",
+          height: "16px",
+          padding: "0 6px",
+          marginLeft: "6px",
+          fontSize: "10px",
+          fontWeight: "700",
+          lineHeight: "1",
+          borderRadius: "8px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-primary)",
+          letterSpacing: "0",
+          textTransform: "none"
+        };
+        const iconBtnStyle = {
           background: "transparent",
           border: "none",
           cursor: "pointer",
-          color: "var(--dsw-alias-brand-primary)",
-          fontSize: "11px",
+          color: "var(--dsw-alias-label-secondary)",
+          fontSize: "13px",
           fontFamily: "inherit",
-          padding: "2px 6px",
-          borderRadius: "3px"
+          padding: "0 6px",
+          borderRadius: "3px",
+          lineHeight: "1"
         };
         const prioColor = { urgent: "var(--dsw-alias-state-error-primary)", high: "var(--dsw-alias-state-warn-primary)" };
         const itemStyle = (idx) => ({
@@ -1739,73 +2593,133 @@
         });
         const onToggle = (ev) => {
           try {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
             const listEl = document.getElementById(listId);
-            const btn = ev && (ev.currentTarget || ev.target);
-            if (!listEl) {
-              if (btn) btn.textContent = "N/A";
-              return;
-            }
+            const btn = document.getElementById(toggleBtnId);
+            if (!listEl) return;
             const expanded = listEl.dataset.expanded === "1";
             if (expanded) {
-              const all = listEl.querySelectorAll("[data-todo-item]");
-              for (let i = 0; i < all.length; i++) {
-                if (i >= 3) all[i].style.display = "none";
-              }
+              listEl.style.display = "none";
               listEl.dataset.expanded = "0";
-              if (btn) btn.textContent = active.length > 3 ? t("todostrip.viewAll") + " (" + active.length + ")" : "";
+              if (btn) btn.textContent = "\u25BE";
             } else {
-              const all = listEl.querySelectorAll("[data-todo-item]");
-              for (let i = 0; i < all.length; i++) {
-                all[i].style.display = "";
-              }
+              listEl.style.display = "flex";
               listEl.dataset.expanded = "1";
-              if (btn) btn.textContent = t("todostrip.close");
+              if (btn) btn.textContent = "\u25B4";
             }
           } catch (e) {
           }
         };
-        const headerChildren = [
-          React.createElement("span", { key: "t" }, "\u{1F4CC} " + t("todostrip.title") + " \xB7 " + active.length)
-        ];
-        if (active.length > 3) {
-          headerChildren.push(
-            React.createElement("button", {
-              key: "btn",
-              type: "button",
-              style: toggleBtnStyle,
-              onClick: onToggle,
-              title: t("todostrip.viewAll")
-            }, t("todostrip.viewAll") + " (" + active.length + ")")
-          );
-        }
+        const onClose = (ev) => {
+          try {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
+            const stripEl = document.getElementById(stripId);
+            const restoreEl = document.getElementById(restoreId);
+            if (stripEl) stripEl.style.display = "none";
+            if (restoreEl) restoreEl.style.display = "";
+            try {
+              localStorage.setItem(dismissedKey, "1");
+            } catch (e) {
+            }
+          } catch (e) {
+          }
+        };
+        const onRestore = (ev) => {
+          try {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
+            const stripEl = document.getElementById(stripId);
+            const restoreEl = document.getElementById(restoreId);
+            if (restoreEl) restoreEl.style.display = "none";
+            if (stripEl) stripEl.style.display = "";
+            try {
+              localStorage.removeItem(dismissedKey);
+            } catch (e) {
+            }
+          } catch (e) {
+          }
+        };
         const items = active.map(
           (x, idx) => React.createElement(
             "div",
             {
               key: x.id,
               "data-todo-item": "1",
-              style: Object.assign({}, itemStyle(idx), idx >= 3 ? { display: "none" } : {})
+              style: itemStyle(idx)
             },
             React.createElement("span", { style: chipStyle2(x.priority) }, t("prio." + (x.priority || "medium"))),
             React.createElement("span", { style: { flex: "1 1 auto" } }, x.title),
             x.status === "in_progress" ? React.createElement("span", { style: { flex: "0 0 auto", fontSize: "11px", color: "var(--dsw-alias-state-success-primary)" } }, t("st.in_progress")) : null
           )
         );
-        return React.createElement(
+        const strip = React.createElement(
           "div",
           {
             id: stripId,
             "data-block": "todo-strip",
             "data-workspace-id": r.workspaceId || "",
-            style: containerStyle
+            style: Object.assign({}, containerStyle, isDismissed ? { display: "none" } : {})
           },
-          React.createElement("div", { style: headerStyle }, headerChildren),
+          React.createElement(
+            "div",
+            { style: headerStyle, onClick: onToggle, title: t("todostrip.viewAll") },
+            React.createElement(
+              "span",
+              { key: "t", style: { display: "inline-flex", alignItems: "center" } },
+              "\u{1F4CB} " + t("todostrip.title"),
+              React.createElement("span", { style: countBadgeStyle }, String(active.length))
+            ),
+            React.createElement(
+              "div",
+              { key: "actions", style: { display: "flex", gap: "2px", alignItems: "center" } },
+              React.createElement("button", {
+                key: "toggle",
+                id: toggleBtnId,
+                type: "button",
+                style: iconBtnStyle,
+                onClick: onToggle,
+                title: t("todostrip.viewAll")
+              }, "\u25BE"),
+              React.createElement("button", {
+                key: "close",
+                id: closeBtnId,
+                type: "button",
+                style: iconBtnStyle,
+                onClick: onClose,
+                title: t("todostrip.close")
+              }, "\xD7")
+            )
+          ),
           React.createElement("div", {
             id: listId,
             "data-expanded": "0",
-            style: { display: "flex", flexDirection: "column" }
+            style: { display: "none", flexDirection: "column" }
           }, items)
         );
+        const restoreChip = React.createElement("button", {
+          key: "restore",
+          id: restoreId,
+          type: "button",
+          "data-block": "todo-strip-restore",
+          "data-workspace-id": r.workspaceId || "",
+          style: {
+            display: isDismissed ? "" : "none",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 8px",
+            margin: "0 12px 4px",
+            background: "transparent",
+            border: "1px dashed var(--dsw-alias-border-l1)",
+            borderRadius: "10px",
+            fontSize: "11px",
+            color: "var(--dsw-alias-label-secondary)",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            alignSelf: "flex-start"
+          },
+          onClick: onRestore,
+          title: t("todostrip.title")
+        }, "\u{1F4CB} \xB7 " + active.length + " " + t("todostrip.viewAll"));
+        return React.createElement(React.Fragment, null, strip, restoreChip);
       }
       let __DSH_CONNECTION__ = null;
       const apply = (ctx, config) => {

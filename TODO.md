@@ -1495,9 +1495,286 @@ dsh-project-brain/
 ├── package.json             # exports + dsh.client inject
 ├── scripts/
 │   ├── smoke-test.mjs       # 30 项离线测试
-│   ├── codegraph-scan.mjs   # tree-sitter 3 语言扫描
+│   ├── codegraph-scan.mjs   # tree-sitter 6 语言扫描（v0.4.13）
+│   ├── smoke-multi-lang.mjs  # 6 语言扫描 smoke 测试（v0.4.13）
 │   ├── brain-memory.mjs      # timeline/memory CLI
 │   └── ...
-├── dsh-project-brain/lib/   # build 产物（index.js 109kb / client.js 55kb）
+
+---
+
+## v0.4.13 本地 AST 分析扩展到 6 语言 ✅ done
+
+> 用户反馈 v0.4.x codegraph 只支持 JS/TS/Python 3 种语言太少了——Go/Java/Rust/C 后端主流项目完全扫不到。v0.4.13 扩展到 **6 种语言**（JS/TS/Python/Go/Java/Rust/C/C++）。
+
+### 背景
+- v0.3.12 P0.3a 阶段只引入 `tree-sitter` + `tree-sitter-javascript` + `tree-sitter-python` 3 个 grammar
+- `src/scanner.js` 的 EXT_LANG 已经声明 20+ 种语言（做语言统计），但 AST 分析只跑 JS/TS/Python
+- 后端项目（Go / Java / Spring）和系统项目（C / C++ / Rust）扫不到 import/exports/function，调用图和 API endpoint 完全是空的
+- 截至 2026-08-31 9 月 10 日正式版截止前，codegraph 是"半成品"——必须扩展
+
+### 修复方案
+**6 语言统一基线 + config 白名单**：
+- 新增 4 个 grammar 包：`tree-sitter-go`、`tree-sitter-java`、`tree-sitter-rust`、`tree-sitter-c`（pnpm devDependencies）
+- `scripts/codegraph-scan.mjs` 重构为**语言分发器**：grammar 注册表 + 每种语言一个 EXTRACTORS / API_EXTRACTORS / extractDbModels entry
+- 抽取能力对齐 JS/TS/Python：imports / exports / functions / API endpoints / DB schema
+- `config.json` 加 `languages` 数组白名单（默认全开）—— 用户可限制扫描范围节省时间
+
+### 各语言实现要点
+
+| 语言 | import | exports | function | API endpoint | DB schema |
+|---|---|---|---|---|---|
+| **JS/TS** | import_statement + require() | export + class + module.exports={} | function/method | Express/Fastify `.get/post` | Prisma |
+| **Python** | import / from | `__all__` + class | function_definition | FastAPI `@app.get` | SQLAlchemy |
+| **Go** | import_spec / import_declaration | 大写开头 / type | function/method | Gin `r.GET/POST` | Gorm `gorm:"..."` tag |
+| **Java** | import_declaration | class/interface/enum/record | method/constructor | Spring `@GetMapping` 等 | JPA `@Entity/@Column` |
+| **Rust** | use_declaration | pub fn/struct/trait/enum/impl | function_item | — | Diesel `#[derive]`/`#[table_name]` |
+| **C/C++** | `#include <>/""` | — | function_definition | — | — |
+
+### 关键 bug 修复
+1. **Python `decorated_definition` 字段名**：tree-sitter Python 实际没有名为 `decorator`/`definition` 的字段；改按子节点类型查找 → FastAPI 装饰器识别
+2. **Java `modifiers` 注解分散**：JPA `@Entity` 在 `modifiers > marker_annotation` 嵌套；改用全文正则扫 `node.text` → JPA/Gorm 识别
+3. **Go `type_spec` 字段名**：tree-sitter Go 的 type_spec 没有 `name` field；type_identifier 是兄弟节点 → Gorm struct 识别
+4. **JS CommonJS 入口不被识别为 entrypoint**：`module.exports = { app }` 不被 `export_statement` 捕获 → 补充 module.exports 文本提取
+5. **JS require() 引号残留**：`require("user")` 提取出 `("user")` → 增强 strip 兼容括号+引号
+6. **run-smoke.mjs Windows 路径 bug**：`new URL(test, import.meta.url).pathname` 返回 `C:\C:\...` 双冒号；改用 `fileURLToPath` + `dirname`
+
+### 验证
+- ✅ **smoke-multi-lang.mjs 56/56 PASS**：覆盖 6 语言 grammar 加载、各语言 imports/exports/functions、6 种 API 框架识别、2 类 DB schema、调用图跨文件 import、config 白名单过滤
+- ✅ smoke-test 32/32 PASS（核心不破坏）
+- ✅ smoke-todostrip 17/17 PASS（核心不破坏）
+- ✅ `smoke-project-diff.mjs` / `smoke-session-lifecycle.mjs` 等使用 codegraph-scan 的测试沿用，自动受益于 6 语言支持
+
+### 任务清单
+- [x] 文档先行：TODO.md v0.4.13 章节 + SPEC §20 v0.4.8 行 + CHANGELOG Unreleased
+- [x] 安装 4 个 grammar 包（pnpm devDeps）
+- [x] codegraph-scan.mjs 重构为 6 语言分发器
+- [x] 6 种语言各自 EXTRACTORS / API_EXTRACTORS / DB extractor
+- [x] CommonJS module.exports 识别 + require 引号清洗
+- [x] config.json languages 白名单支持
+- [x] fixtures-multi-lang/ 6 语言示例项目
+- [x] smoke-multi-lang.mjs 56/56 PASS
+- [x] run-smoke.mjs Windows 路径修复
+- [x] 不破坏 smoke-test 32/32 + smoke-todostrip 17/17
+- [x] 文档同步（SPEC §2.3 §11.5 / TODO / CHANGELOG）
+- [x] 用户视角验收（DSH Desktop 重启后项目 init → codegraph.json 含 Go/Java/Rust 文件）
+
+### 约束
+- 不破坏现有 241 项 smoke test 状态
+- 不绕过 sandbox policy
+- 不引入新运行时依赖（4 个 grammar 全为 devDependencies，不影响产物 bundle）
+- 文档同步硬约束（commit 含 TODO + SPEC + CHANGELOG）
+
+### 不在 v0.4.13 范围
+- C++ 完整 AST 支持（当前 C++ 用 tree-sitter-c 兜底，能解析 .cpp/.hpp 但 function_definition 抽取精度低）—— 等 tree-sitter-cpp 官方 npm 包稳定后再补
+- Rust API endpoint 识别（Actix-web / Axum）—— 暂无 fixture，待后续按需扩展
+- 调用图跨语言追踪（如 Python 调 Rust FFI）—— 单语言内已支持，跨语言非 MVP 目标
+
+---
+
+## v0.4.14 技术栈推断扩展（30+ 框架 / 库 / 工具） ✅ done
+
+> 用户反馈 Dashboard "技术栈" 框经常显示"（空）"——原 scanner.js 只硬匹配 ~10 个主流框架（Next.js / Express / FastAPI / Spring / Prisma 等），Python 新框架（Sanic / Starlette / aiohttp）、Go web 框架（除 Spring/Gin 全无）、Rust 主流（Actix / Axum / Rocket）全部识别不到。截图证据：用户的项目 language=python·166 / sql·13（说明 manifest 没命中任何框架关键词）。
+
+### 背景
+- v0.3.4 scanner.js 技术栈推断只覆盖 ~10 个主流框架
+- `techStack` 字段是单值（如 `backend: "FastAPI"`），**多语言栈并存时后写覆盖前写**——Go/Rust 段会把 Python 段的 backend/orm 覆盖
+- Dashboard "技术栈" 框显示 `techStack` 对象，空就是空
+- 用户看不到 architecture.technologies（LLM 推断的技术列表）——它是 architecture.json 的字段，没被合并到 preview 数据
+
+### 修复 1：scanner.js 词表扩展（30+ 框架 / 库 / 工具）
+
+**JS/TS 新增**：
+- 框架：Remix / Astro / SvelteKit / Koa / Hapi / Solid / Preact / Angular
+- 跨端：React Native / Expo / Tauri（与 Electron 并列）
+- ORM：TypeORM / Sequelize / Mongoose / Drizzle / Knex / MikroORM
+- Cache：Memcached
+- Queue：Bull / RabbitMQ
+- 工具：ESLint / Prettier / Jest / Vitest / Playwright / Cypress / Tailwind CSS / styled-components / webpack / Turbopack
+
+**Python 新增**：
+- 框架：Sanic / Starlette / aiohttp / Tornado / Pyramid / Bottle
+- 前端：Streamlit / Gradio
+- ORM：Peewee / Tortoise ORM / Django ORM / SQLModel
+- DB driver → 数据库：asyncpg → PostgreSQL / aiomysql+pymysql → MySQL / pymongo+motor → MongoDB
+- 包管理：Poetry / uv / Hatch / PDM / setuptools（识别 pyproject.toml 的 `[tool.*]` 段）
+
+**Go 新增**：
+- 框架：Gin / Echo / Fiber / Chi / FastHTTP（识别 go.mod import）
+- ORM：GORM / Ent / sqlx / Bun
+- DB driver → 数据库：pgx+lib/pq → PostgreSQL / go-sql-driver/mysql → MySQL / mongo-driver → MongoDB
+- Cache：go-redis → Redis
+
+**Rust 新增**：
+- 框架：Actix Web / Axum / Rocket / Warp / Tide（识别 Cargo.toml `[dependencies]` 行）
+- ORM：Diesel / SeaORM / SQLx
+- DB driver → 数据库：postgres → PostgreSQL / mysql → MySQL
+- 工具：Tokio / Serde
+- Workspace：`[workspace]` 段 → "Cargo Workspace"
+
+**新增**：
+- SQL 文件推断：languages.sql 存在 → database="SQL"
+- CI：`.github/workflows` 存在 → GitHub Actions
+
+### 修复 2：techStack 字段改多值数组
+
+之前 `result.techStack.backend = "FastAPI"` 被后写覆盖。现引入 `setStack(field, value)` 助手：
+- 单值 → 字符串
+- 同字段不同值 → 自动合并为数组
+- 重复值去重
+
+效果（fixture 5 manifest 并存）：`backend: ["FastAPI", "Go", "Gin", "Rust", "Axum"]`，`orm: ["Prisma", "SQLAlchemy", "GORM", "SQLx"]`
+
+`brain-logic.js` 的 `techStackToType()` 同步支持数组：拼接为 `"FastAPI · Go · Gin · Rust · Axum"`
+
+### 修复 3：architecture.technologies 合并到 Dashboard preview
+
+`build.js` 新增 `mergeTechStackWithArchitecture(scanTechStack, architecture)`：
+- architecture.json components[].technologies 收集所有 LLM 识别的技术名
+- 按 CATEGORY_MAP（50+ 已知技术分类）合并到 backend/frontend/fullstack/orm/database/cache/desktop 等分类字段
+- 未分类的技术进 `_extra` 数组（可在 UI 单独展示）
+
+效果：Dashboard "技术栈" 现在显示 scan.techStack（manifest 推断）**+** architecture.technologies（LLM 推断），覆盖面最大化。
+
+### 修复 4：client.js 渲染支持数组
+
+`techChips` 用 `Object.entries(p.techStack).flatMap(...)` 把数组值的每个元素渲染为独立 chip。
+
+### 验证
+- ✅ **smoke-scanner-techstack.mjs 22/22 PASS**：
+  - 5 个 fixture manifest 同时存在（package.json + requirements.txt + Cargo.toml + go.mod）
+  - JS：Next.js + Prisma + Redis + Bull + Tailwind + Vite + Vitest + TypeScript
+  - Py：FastAPI + SQLAlchemy + PostgreSQL（via asyncpg）
+  - Go：Gin + GORM
+  - Rust：Axum + SQLx + Tokio + Serde
+  - 核心：orm 数组同时含 Prisma + SQLAlchemy + GORM + SQLx（修复前只能保留最后一个）
+- ✅ smoke-test 32/32 PASS（核心 brain-logic 不破坏）
+- ✅ smoke-multi-lang 56/56 PASS
+- ✅ smoke-todostrip 17/17 PASS（client.js 改动不破坏 bundle）
+
+### 任务清单
+- [x] 文档先行：TODO.md v0.4.14 章节 + CHANGELOG Unreleased
+- [x] scanner.js 词表扩展（JS/TS 13 + Python 18 + Go 14 + Rust 11 = 56 项）
+- [x] scanner.js setStack 助手 + techStack 多值数组
+- [x] brain-logic.js techStackToType 支持数组
+- [x] build.js mergeTechStackWithArchitecture + 50+ 已知技术分类映射
+- [x] client.js techChips 渲染支持数组
+- [x] smoke-scanner-techstack.mjs 22/22 PASS
+- [x] run-smoke.mjs 加 smoke-scanner-techstack
+- [x] 文档同步（TODO + CHANGELOG）
+- [ ] 用户视角验收（DSH Desktop 重启后 Dashboard "技术栈" 显示完整）
+
+### 约束
+- 不破坏 241 项 smoke test
+- 不绕过 sandbox policy
+- 不引入新运行时依赖
+- 文档同步硬约束
+
+### 不在 v0.4.14 范围
+- C/C++ 项目的构建系统识别（CMake / Makefile / autoconf）—— Makefile 已识别为 tooling，构建系统细分收益小
+- Go 框架的 Gin 版本号识别（gin-gonic/gin v1 vs v2）—— 词表细分 ROI 低
+- 私有/企业内部框架识别—— 非通用 MVP 目标
+
+### 文件结构（v0.4.14）
+
+```
+dsh-project-brain/
+├── src/
+│   ├── index.js              # Host entry: 12 tools + summarizer + injector
+│   ├── scanner.js            # techStack 多值推断（v0.4.14）
+│   ├── client.js             # techChips 渲染支持数组（v0.4.14）
+│   ├── tools.js
+│   ├── tools/
+│   │   ├── memory.js / todo.js / todo-update.js
+│   │   ├── continue.js / status.js / ask.js / dream.js
+│   ├── host/
+│   │   ├── summarizer.js / injector.js / rebuild.js
+│   │   ├── architecture/analyzer.js
+│   │   ├── store/brain-files.js / brain-logic.js / path-resolver.js
+│   └── ...
+├── build.js                 # mergeTechStackWithArchitecture + esbuild
+├── scripts/
+│   ├── smoke-test.mjs / smoke-multi-lang.mjs / smoke-scanner-techstack.mjs
+│   ├── codegraph-scan.mjs   # 6 语言 tree-sitter
+│   ├── brain-memory.mjs
+│   └── ...
+├── dsh-project-brain/lib/   # build 产物
 ├── REQUIREMENTS.md / DESIGN.md / SPEC.md / TODO.md / README.md
 ```
+
+---
+
+## v0.4.15 智能续接（project_suggest_next） ✅ done
+
+> 用户确认核心价值是**跨 Session 续接**。当前痛点：续接不够准、不够自动、不连续；Session 开始时用户需要重新描述项目。本节实现 LLM 主动推测"今天可能想推进什么"，配合 Dashboard 顶部 SuggestionCard 让用户一眼看到下一步。
+
+### 背景
+- project_continue 已存在，但只在 Agent 主动调用时才返回 Top-5 记忆 + 简单规则的下一步
+- 用户期望：Session 启动 → Dashboard 顶部直接给出"今天推进 X"卡片，无需再调工具
+- 依赖 DSH LLM 完整能力：架构 JSON、路由稳定；失败自动降级到本地规则
+
+### 实现
+
+**双层策略**：
+- **本地规则**（默认）：按 5 级优先级选 TODO → in_progress > 最高优先级 pending > blocked > 近期记忆 > 空；relatedFiles/tags 关联自动从记忆推回依据
+- **DSH LLM**（可选）：复用 streamLlmText（与 architecture / session-extractor 共用），prompt 注入 in_progress/pending/blocked/Top-5记忆/最近事件/architecture.overview，自动 JSON 提取；失败 / 不可用 / 无 route → 自动降级
+
+**Source 字段**：
+- llm：DSH LLM 成功
+- llm_failed：LLM 调起但失败 → 自动 fallback 到本地，data 含 llmError
+- local：useLLM=false 或无 llm service
+- local_no_route：LLM service 可用但 Session 尚无 route（首次启动）
+
+**build-time 嵌入**：uild.js 通过 uildLocalSuggestion() 把建议写进 previewData.suggestion，客户端拿到 RPC 后会被 runtime 数据覆盖（无感的升级）。
+
+### 新增文件 / 接口
+
+| 文件 | 角色 |
+|---|---|
+| src/host/suggest.js | 纯函数 uildLocalSuggestion / uildSuggestPromptForLlm / parseSuggestJson / 
+ormalizeSuggestion / uildEvidence（无 runtime 依赖，可离线 smoke 测试） |
+| src/tools/suggest.js | DSH Tool project_suggest_next：路径安全 + LLM 失败降级 + render 文本化输出 |
+| scripts/smoke-suggest.mjs | 46 项检查：6 场景本地规则 / 4 LLM 路径 / JSON 容错 / normalize / evidence 收集 |
+
+**修改**：
+- src/index.js：注册 uildSuggestTool 到 toolBuilders
+- src/host/rpc/sidebar.js：新增 RPC /project-brain suggest 端点
+- uild.js：build-time embed uildSuggestForBuild()
+- src/client.js：新增 SuggestionCard 组件（dashboard 顶部）+ i18n zh/en 键 + data-block="suggestion" / data-suggest-source / data-suggestion-title 等可测属性
+
+### 验证
+
+- ✅ smoke-suggest.mjs **46/46 PASS**：6 场景本地规则（in_progress/pending/blocked/记忆/空/relatedFiles 关联）+ LLM mock 成功/失败/无 route + JSON 容错（围栏/尾逗号/non-JSON）+ normalize 字段裁剪（title 必填 / confidence clamp）+ buildSuggestPromptForLlm evidence 收集
+- ✅ smoke-test.mjs **32/32 PASS**：core brain-logic 不破坏
+- ✅ smoke-multi-lang.mjs **56/56 PASS**：v0.4.13 codegraph 不破坏
+- ✅ smoke-scanner-techstack.mjs **22/22 PASS**：v0.4.14 techStack 不破坏
+- ✅ smoke-todostrip.mjs **17/17 → 20/20 after rebuild**（新增 3 项 SuggestionCard bundle 检查）
+- ✅ 
+ode --check 通过：src/client.js / src/tools/suggest.js / src/host/suggest.js / src/host/rpc/sidebar.js / src/index.js / build.js
+- ⏳ 等待用户跑 
+ode build.js 重 build 后 Dashboard 顶部出现"💡 你今天可能想推进"卡片
+
+### 任务清单
+- [x] 文档先行：TODO.md v0.4.15 章节 + CHANGELOG Unreleased
+- [x] src/host/suggest.js：buildLocalSuggestion / buildSuggestPromptForLlm / parseSuggestJson / normalizeSuggestion / buildEvidence
+- [x] src/tools/suggest.js：project_suggest_next 工具（路径安全 + LLM 降级 + render）
+- [x] src/index.js：注册 buildSuggestTool
+- [x] src/host/rpc/sidebar.js：suggest RPC 端点（复用 tools.execute 路径安全）
+- [x] build.js：build-time 嵌入 buildSuggestForBuild
+- [x] src/client.js：SuggestionCard 组件 + i18n zh/en + data 属性
+- [x] scripts/smoke-suggest.mjs 46/46 PASS
+- [x] run-smoke.mjs 加 smoke-suggest
+- [x] smoke-todostrip.mjs 加 3 项 SuggestionCard 检查
+- [x] 文档同步（CHANGELOG + TODO）
+
+### 约束
+- 不破坏 241+ 项 smoke test 状态
+- 不绕过 sandbox policy
+- 不引入新运行时依赖
+- 文档同步硬约束
+
+### 不在 v0.4.15 范围
+- 多语言个性化建议（i18n 已在 i18n 字典，但 prompt 只发中文）—— 后续按需扩展
+- LLM 建议的 A/B 反馈学习（用户接受/拒绝回流到 memory）—— P1 候选
+- 用户主动"标记建议为有用/无用" UI —— P1 候选
+- 多 step 建议（同时给 3 个候选让用户挑）—— 当前只给 1 个，P1 候选
+

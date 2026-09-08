@@ -148,6 +148,16 @@ export async function scanProject(fs, projectPath) {
   const rootTarget = await fs.resolve(projectPath);
   const rootPath = processPathOf(fs, rootTarget);
 
+  // techStack 字段：单值字段（fullstack/structure）+ 多值字段（backend/fullstack/frontend/desktop/mobile/orm/database/cache/queue 都允许数组）
+  // 兼容老代码：保留对象初始化，单值字段保留 string，重复命中改为数组
+  function setStack(field, value) {
+    if (!value) return;
+    const cur = result.techStack[field];
+    if (!cur) result.techStack[field] = value;
+    else if (Array.isArray(cur)) { if (!cur.includes(value)) cur.push(value); }
+    else if (cur !== value) result.techStack[field] = [cur, value];
+  }
+
   const result = {
     projectName: null,
     description: null,
@@ -185,19 +195,57 @@ export async function scanProject(fs, projectPath) {
         result.projectName = typeof pkg.name === "string" ? pkg.name : null;
         result.description = typeof pkg.description === "string" ? sanitizeProjectDescription(pkg.description) : null;
         const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
-        if (deps.next) result.techStack.fullstack = "Next.js";
-        else if (deps.nuxt) result.techStack.fullstack = "Nuxt";
-        else if (deps.express) result.techStack.backend = "Express";
-        else if (deps.fastify) result.techStack.backend = "Fastify";
-        else if (deps["@nestjs/core"]) result.techStack.backend = "NestJS";
-        if (deps.react) result.techStack.frontend = "React";
-        else if (deps.vue) result.techStack.frontend = "Vue";
-        else if (deps.svelte) result.techStack.frontend = "Svelte";
-        if (deps.electron) result.techStack.desktop = "Electron";
-        if (deps.prisma || deps["@prisma/client"]) result.techStack.database = "Prisma";
+        // Backend / Fullstack
+        if (deps.next) setStack("fullstack", "Next.js");
+        else if (deps.nuxt) setStack("fullstack", "Nuxt");
+        else if (deps["@sveltejs/kit"]) setStack("fullstack", "SvelteKit");
+        else if (deps["remix"] || deps["@remix-run/react"]) setStack("fullstack", "Remix");
+        else if (deps.astro) setStack("fullstack", "Astro");
+        else if (deps.express) setStack("backend", "Express");
+        else if (deps.fastify) setStack("backend", "Fastify");
+        else if (deps["@nestjs/core"]) setStack("backend", "NestJS");
+        else if (deps.koa) setStack("backend", "Koa");
+        else if (deps.hapi) setStack("backend", "Hapi");
+        else if (deps["@hapi/hapi"]) setStack("backend", "Hapi");
+        // Frontend
+        if (deps.react) setStack("frontend", "React");
+        else if (deps.vue) setStack("frontend", "Vue");
+        else if (deps.svelte) setStack("frontend", "Svelte");
+        else if (deps.solid || deps["solid-js"]) setStack("frontend", "Solid");
+        else if (deps.preact) setStack("frontend", "Preact");
+        else if (deps.angular || deps["@angular/core"]) setStack("frontend", "Angular");
+        // Desktop / Mobile
+        if (deps.electron) setStack("desktop", "Electron");
+        if (deps["react-native"]) setStack("mobile", "React Native");
+        if (deps.expo) setStack("mobile", "Expo");
+        if (deps["@tauri-apps/api"] || deps.tauri) setStack("desktop", "Tauri");
+        // Database / ORM
+        if (deps.prisma || deps["@prisma/client"]) setStack("orm", "Prisma");
+        if (deps["typeorm"]) setStack("orm", "TypeORM");
+        if (deps["sequelize"] || deps.sequelize) setStack("orm", "Sequelize");
+        if (deps.mongoose) setStack("orm", "Mongoose");
+        if (deps["drizzle-orm"] || deps.drizzle) setStack("orm", "Drizzle");
+        if (deps["knex"]) setStack("orm", "Knex");
+        if (deps.mikro) setStack("orm", "MikroORM");
+        // Cache / Queue
+        if (deps.ioredis || deps.redis) setStack("cache", "Redis");
+        if (deps.memcached || deps["memjs"]) setStack("cache", "Memcached");
+        if (deps.bull || deps["bullmq"]) setStack("queue", "Bull");
+        if (deps["amqplib"]) setStack("queue", "RabbitMQ");
+        // Tooling
         if (deps.vite) result.tooling.push("Vite");
         if (deps.typescript) result.tooling.push("TypeScript");
-        if (pkg.workspaces) result.techStack.structure = "Monorepo";
+        if (deps.eslint) result.tooling.push("ESLint");
+        if (deps.prettier) result.tooling.push("Prettier");
+        if (deps.jest) result.tooling.push("Jest");
+        if (deps.vitest) result.tooling.push("Vitest");
+        if (deps.playwright || deps["@playwright/test"]) result.tooling.push("Playwright");
+        if (deps.cypress) result.tooling.push("Cypress");
+        if (deps.tailwindcss) result.tooling.push("Tailwind CSS");
+        if (deps["styled-components"]) result.tooling.push("styled-components");
+        if (deps.webpack) result.tooling.push("webpack");
+        if (deps.turbo) result.tooling.push("Turbopack");
+        if (pkg.workspaces) setStack("structure", "Monorepo");
         // 入口：npm run dev / build（仅当 scripts 存在时）
         if (pkg.scripts && pkg.scripts.dev) {
           result.entrypoints.push({ path: "npm run dev", type: "script" });
@@ -210,24 +258,98 @@ export async function scanProject(fs, projectPath) {
   }
 
   // —— Python ——
-  const pyToml = names.includes("pyproject.toml") ? await readText(fs, rootPath, "pyproject.toml") : null;
   const requirements = names.includes("requirements.txt") ? await readText(fs, rootPath, "requirements.txt") : null;
-  if (pyToml && pyToml.indexOf("fastapi") !== -1) result.techStack.backend = "FastAPI";
-  else if (pyToml && pyToml.indexOf("django") !== -1) result.techStack.backend = "Django";
-  else if (pyToml && pyToml.indexOf("flask") !== -1) result.techStack.backend = "Flask";
-  else if (requirements && requirements.indexOf("fastapi") !== -1) result.techStack.backend = "FastAPI";
-  else if (requirements && requirements.indexOf("django") !== -1) result.techStack.backend = "Django";
-  else if (requirements && requirements.indexOf("flask") !== -1) result.techStack.backend = "Flask";
+  const pyProject = names.includes("pyproject.toml") ? await readText(fs, rootPath, "pyproject.toml") : null;
+  // helper：检查 pyproject.toml/requirements.txt 是否含某包名（大小写不敏感）
+  const pyHas = (pkg) => {
+    const re = new RegExp("(^|\\s|\\[|\\b)" + pkg + "(\\b|\\s|\\[|>=|<|=|!|~)", "i");
+    return (pyProject && re.test(pyProject)) || (requirements && re.test(requirements));
+  };
+  // Backend frameworks
+  if (pyHas("fastapi")) setStack("backend", "FastAPI");
+  else if (pyHas("django")) setStack("backend", "Django");
+  else if (pyHas("flask")) setStack("backend", "Flask");
+  else if (pyHas("sanic")) setStack("backend", "Sanic");
+  else if (pyHas("starlette")) setStack("backend", "Starlette");
+  else if (pyHas("aiohttp")) setStack("backend", "aiohttp");
+  else if (pyHas("tornado")) setStack("backend", "Tornado");
+  else if (pyHas("pyramid")) setStack("backend", "Pyramid");
+  else if (pyHas("bottle")) setStack("backend", "Bottle");
+  else if (pyHas("streamlit")) setStack("frontend", "Streamlit");
+  else if (pyHas("gradio")) setStack("frontend", "Gradio");
+  // ORM / DB
+  if (pyHas("sqlalchemy")) setStack("orm", "SQLAlchemy");
+  if (pyHas("peewee")) setStack("orm", "Peewee");
+  if (pyHas("tortoise-orm")) setStack("orm", "Tortoise ORM");
+  if (pyHas("django")) setStack("orm", "Django ORM");
+  if (pyHas("sqlmodel")) setStack("orm", "SQLModel");
+  if (pyHas("asyncpg")) setStack("database", "PostgreSQL");
+  if (pyHas("aiomysql") || pyHas("pymysql")) setStack("database", "MySQL");
+  if (pyHas("pymongo") || pyHas("motor")) setStack("database", "MongoDB");
+  if (pyHas("redis")) setStack("cache", "Redis");
+  // 包管理 / 工具
+  if (pyProject && /\[tool\.poetry\]/.test(pyProject)) result.tooling.push("Poetry");
+  if (pyProject && /\[tool\.uv\]/.test(pyProject)) result.tooling.push("uv");
+  if (pyProject && /\[tool\.hatch/.test(pyProject)) result.tooling.push("Hatch");
+  if (pyProject && /\[tool\.pdm\.projects\]/.test(pyProject)) result.tooling.push("PDM");
+  if (pyProject && /setup\.py|setuptools/.test(pyProject) && !/Poetry|uv|Hatch|PDM/.test(result.tooling.join(","))) result.tooling.push("setuptools");
 
-  // —— Go / Java / Rust ——
-  if (names.includes("go.mod")) result.techStack.backend = "Go";
-  if (names.includes("pom.xml")) result.techStack.backend = "Spring (Maven)";
-  else if (names.some((n) => n === "build.gradle" || n === "build.gradle.kts")) result.techStack.backend = "Spring (Gradle)";
-  if (names.includes("Cargo.toml")) result.techStack.backend = "Rust";
+  // —— Go ——
+  const goMod = names.includes("go.mod") ? await readText(fs, rootPath, "go.mod") : null;
+  if (goMod) {
+    setStack("backend", "Go");
+    // ORM / DB
+    if (/gorm\.io\/gorm/.test(goMod)) setStack("orm", "GORM");
+    if (/ent\.go/.test(goMod)) setStack("orm", "Ent");
+    if (/sqlx/.test(goMod)) setStack("orm", "sqlx");
+    if (/bun\.build/.test(goMod)) setStack("orm", "Bun");
+    if (/pgx|lib\/pq/.test(goMod)) setStack("database", "PostgreSQL");
+    if (/go-sql-driver\/mysql/.test(goMod)) setStack("database", "MySQL");
+    if (/mongo-driver/.test(goMod)) setStack("database", "MongoDB");
+    if (/go-redis\/redis/.test(goMod)) setStack("cache", "Redis");
+    // Web 框架
+    if (/gin-gonic\/gin/.test(goMod)) setStack("backend", "Gin");
+    else if (/labstack\/echo/.test(goMod)) setStack("backend", "Echo");
+    else if (/gofiber\/fiber/.test(goMod)) setStack("backend", "Fiber");
+    else if (/go-chi\/chi/.test(goMod)) setStack("backend", "Chi");
+    else if (/valyala\/fasthttp/.test(goMod)) setStack("backend", "FastHTTP");
+  }
+  // —— Java ——
+  if (names.includes("pom.xml")) setStack("backend", "Spring (Maven)");
+  else if (names.some((n) => n === "build.gradle" || n === "build.gradle.kts")) setStack("backend", "Spring (Gradle)");
+  // —— Rust ——
+  const cargoToml = names.includes("Cargo.toml") ? await readText(fs, rootPath, "Cargo.toml") : null;
+  if (cargoToml) {
+    setStack("backend", "Rust");
+    // 识别子 crate workspace
+    if (/\[workspace\]/.test(cargoToml)) setStack("structure", "Cargo Workspace");
+    // Web 框架
+    if (/^actix-web\s*=/m.test(cargoToml)) setStack("backend", "Actix Web");
+    else if (/^axum\s*=/m.test(cargoToml)) setStack("backend", "Axum");
+    else if (/^rocket\s*=/m.test(cargoToml)) setStack("backend", "Rocket");
+    else if (/^warp\s*=/m.test(cargoToml)) setStack("backend", "Warp");
+    else if (/^tide\s*=/m.test(cargoToml)) setStack("backend", "Tide");
+    // ORM
+    if (/^diesel\s*=/m.test(cargoToml)) setStack("orm", "Diesel");
+    if (/^sea-orm\s*=/m.test(cargoToml)) setStack("orm", "SeaORM");
+    if (/^sqlx\s*=/m.test(cargoToml)) setStack("orm", "SQLx");
+    // DB
+    if (/^postgres\s*=/m.test(cargoToml)) setStack("database", "PostgreSQL");
+    if (/^mysql\s*=/m.test(cargoToml)) setStack("database", "MySQL");
+    if (/^redis\s*=/m.test(cargoToml)) setStack("cache", "Redis");
+    // 工具
+    if (/^tokio\s*=/m.test(cargoToml)) result.tooling.push("Tokio");
+    if (/^serde\s*=/m.test(cargoToml)) result.tooling.push("Serde");
+  }
+  // 顶层基础设施
   if (names.includes("Dockerfile") || names.includes("docker-compose.yml") || names.includes("compose.yml")) result.tooling.push("Docker");
-  if (names.includes("pnpm-workspace.yaml") || names.includes("turbo.json") || names.includes("nx.json")) result.techStack.structure = "Monorepo";
+  if (names.includes("pnpm-workspace.yaml") || names.includes("turbo.json") || names.includes("nx.json")) setStack("structure", "Monorepo");
   if (names.some((n) => n.endsWith(".tf"))) result.tooling.push("Terraform");
   if (names.includes("Makefile")) result.tooling.push("Make");
+  // CI
+  if (names.includes(".github") && names.some((n) => n.startsWith(".github"))) result.tooling.push("GitHub Actions");
+  // 检测 SQL 文件存在（之前 EXT_LANG 有 .sql 但 techStack 没数据库字段）
+  if (result.languages.sql && !result.techStack.database) setStack("database", "SQL");
 
   // README 首段通常比目录名更能帮助用户快速理解陌生项目。
   if (!result.description) {

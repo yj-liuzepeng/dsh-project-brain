@@ -1,4 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const tests = [
   "smoke-runtime-workspace.mjs",
@@ -14,11 +18,14 @@ const tests = [
   "smoke-dream-commit.mjs",
   "smoke-session-lifecycle.mjs",
   "smoke-project-diff.mjs",
+  "smoke-multi-lang.mjs",
+  "smoke-scanner-techstack.mjs",
+  "smoke-suggest.mjs",
 ];
 
 for (const test of tests) {
   console.log("\n=== " + test + " ===");
-  const result = spawnSync(process.execPath, [new URL(test, import.meta.url).pathname], { stdio: "inherit" });
+  const result = spawnSync(process.execPath, [join(__dirname, test)], { stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status || 1);
 }
 

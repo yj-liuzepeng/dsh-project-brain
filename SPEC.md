@@ -5,7 +5,7 @@
 **对应文档：** `REQUIREMENTS.md`（PRD） / `DESIGN.md`（设计方案）
 **性质：** 代码、测试、提交流程与排错流程均必须与本文档对齐；若与 PRD/DESIGN 冲突，以本文档为准并回写 PRD/DESIGN。
 
-> **版本说明（v0.3 → v0.4 MINOR bump）**：本次 MINOR bump 开启 v0.4.x，累积 v0.2.1~v0.2.9 + v0.3.0~v0.4.7 共 38 行变更（数据通道重大回退 / 工具面补全 / summarizer + injector / auto-rebuild / path-resolver / sandbox 修复 / TODO strip / dream commit+full / locale-aware / 跨 Session 端到端 / 跨 workspace 隔离实测 / dark/light 主题 token 取证 / auto-rebuild 跨 fiber 修复 / inject timer 根因补漏 / 冷启动诊断 + DSH 原生事件主动唤醒 / spawn 子进程 watcher 终极 fallback / 工具层同步 rebuild 工程止血 / 端到端验证完成 + 接受手动 build fallback / 清理过时 todo + 完善 Project Memory 5 类混合填充 / P0.8 收尾大结局 / appendJsonl 性能优化 O(N) → O(1) / DSH Desktop 发布准备 INSTALL.md + CHANGELOG.md + STORE_LISTING.md / dream 真实架构 diff LLM 接入 + project_diff 工具（v0.4.1 mock fallback 实测 DSH Desktop shell 静默）/ **真实 git + 真实 LLM 绕过 DSH Desktop sandbox（v0.4.2，node 内置模块 + node:fetch）** / **summarizer 真实 git + detector 真实 git 格式修复（v0.4.4：inflateSync + 目录 mode + fixture deflateSync，198/198 PASS）** / **detector 移除 pack 整体拒绝（v0.4.5：commit/tree 在 loose 即可 diff，不读 blob，199/199 PASS）** / **detector pack 真实支持（v0.4.6：parseIdxV2 + readPackEntryByOffset + packed-refs + OFS_DELTA/REF_DELTA，201/201 PASS）** / **llm.js 加 Anthropic 兼容协议（v0.4.7：detectProtocol 自动路由 + fetchAnthropic /v1/messages，210/210 PASS）**）。v0.4.x：v0.4.0 + v0.4.1 + v0.4.2 + v0.4.3 + v0.4.4 + v0.4.5 + v0.4.6 + v0.4.7。真实路径 vs mock fallback 决策记录在 .project-brain/memory.jsonl mem-mtccn6uf。大章节结构与 SPEC §1~§19 保持不变；待 v1.0 MVP 时考虑 MAJOR bump。
+> **版本说明（v0.3 → v0.4 MINOR bump）**：本次 MINOR bump 开启 v0.4.x，累积 v0.2.1~v0.2.9 + v0.3.0~v0.4.8 共 39 行变更（数据通道重大回退 / 工具面补全 / summarizer + injector / auto-rebuild / path-resolver / sandbox 修复 / TODO strip / dream commit+full / locale-aware / 跨 Session 端到端 / 跨 workspace 隔离实测 / dark/light 主题 token 取证 / auto-rebuild 跨 fiber 修复 / inject timer 根因补漏 / 冷启动诊断 + DSH 原生事件主动唤醒 / spawn 子进程 watcher 终极 fallback / 工具层同步 rebuild 工程止血 / 端到端验证完成 + 接受手动 build fallback / 清理过时 todo + 完善 Project Memory 5 类混合填充 / P0.8 收尾大结局 / appendJsonl 性能优化 O(N) → O(1) / DSH Desktop 发布准备 INSTALL.md + CHANGELOG.md + STORE_LISTING.md / dream 真实架构 diff LLM 接入 + project_diff 工具（v0.4.1 mock fallback 实测 DSH Desktop shell 静默）/ **真实 git + 真实 LLM 绕过 DSH Desktop sandbox（v0.4.2，node 内置模块 + node:fetch）** / **summarizer 真实 git + detector 真实 git 格式修复（v0.4.4：inflateSync + 目录 mode + fixture deflateSync，198/198 PASS）** / **detector 移除 pack 整体拒绝（v0.4.5：commit/tree 在 loose 即可 diff，不读 blob，199/199 PASS）** / **detector pack 真实支持（v0.4.6：parseIdxV2 + readPackEntryByOffset + packed-refs + OFS_DELTA/REF_DELTA，201/201 PASS）** / **llm.js 加 Anthropic 兼容协议（v0.4.7：detectProtocol 自动路由 + fetchAnthropic /v1/messages，210/210 PASS）** / **本地 AST 分析扩展到 6 种语言（v0.4.8：Go/Java/Rust/C/C++ 新增；每语言独立 import/export/function/API/DB schema 抽取器；config.json languages 白名单；smoke-multi-lang 56/56 PASS）**）。v0.4.x：v0.4.0 + v0.4.1 + v0.4.2 + v0.4.3 + v0.4.4 + v0.4.5 + v0.4.6 + v0.4.7 + v0.4.8。真实路径 vs mock fallback 决策记录在 .project-brain/memory.jsonl mem-mtccn6uf。大章节结构与 SPEC §1~§19 保持不变；待 v1.0 MVP 时考虑 MAJOR bump。
 
 > **v0.6.0 当前架构覆盖说明：** Client 以 `connection.rpc` 为主通道；Host 每次从 live Session header 解析可信 workspace；build-time embed 仅作无本机数据的离线降级。Context Injector 使用 workspace/session 隔离缓存；Session summarizer 仅处理已初始化项目并去重。早期章节中“只能 build-time embed”“写数据后手动 build”“全局 injector cache”等描述均为历史记录，已被本说明取代。
 
@@ -100,7 +100,7 @@ dsh-project-brain 是一个**静态 + HMR 友好的 Cordis 插件**，通过以�
 | `@deepseek-ai/dsh-tools` | Tool 注册 | 0.1.1-rc.2+ |
 | `@deepseek-ai/dsh-session` | Session 事件 | 0.1.1-rc.2+ |
 | `better-sqlite3` | SQLite | ^11 |
-| `tree-sitter` + TS/JS/Python/Go/Java grammar | AST 解析 | ^0.21+（用 npm 内置 5 个包） |
+| `tree-sitter` + JS/TS/Python/Go/Java/Rust/C grammar | AST 解析（v0.4.8 6 语言） | ^0.21+（6 个 npm 包） |
 | `esbuild` | 开发期 watch 构建 | ^0.24 |
 | `chokidar` | 文件监听（HMR 友好） | ^4 |
 | `@deepseek-ai/schemastery` | Schema 校验 | ^3.18 |
@@ -1229,9 +1229,11 @@ const ConfigSchema = {
 - 增量扫描（fingerprint 驱动）
 - Code Map 面板
 
-**P0.3b Code Graph（Go/Java，可选）**：
-- Gin / Spring 适配
-- GORM / JDBC 表抽取
+**P0.3b Code Graph（Go/Java/Rust/C/C++，v0.4.8 已交付）**：
+- Gin（Go）/ Spring（Java）/ FastAPI（Python）API endpoint 适配
+- GORM（Go）/ JPA（Java）/ SQLAlchemy（Python）/ Diesel（Rust）DB schema 抽取
+- Go 大写开头视为导出；Java class/interface/record/enum 视为导出；Rust `pub` 修饰符；C `#include` + function_definition
+- config.json `languages` 白名单（默认全开 JS/TS/Python/Go/Java/Rust/C/C++ 6 语言）
 
 **P0.4 Memory**：
 - 9 类型校验 + 评分 + 相似度去重

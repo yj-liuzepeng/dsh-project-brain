@@ -18,12 +18,75 @@
 // loadProjectData(workspace) 已导出，供 scripts/smoke-test.mjs 离线验证。
 
 import { build, context } from "esbuild";
+
+// v0.4.15：build-time 嵌入智能续接建议
+// 复用 host/suggest.js 的纯规则路径；失败降级，返回 null 让 client 端 fallback 拉 RPC
+function buildSuggestForBuild({ project, memories, todos, timeline, architecture }) {
+  try {
+    const brain = { project: project || null, memories: memories || [], todos: todos || [], timeline: timeline || [], architecture: architecture || null };
+    const out = buildLocalSuggestion(brain, Date.now());
+    if (out && out.ok && out.data) {
+      return Object.assign({}, out.data, { built: true });
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 合并 architecture.technologies 到 scan.techStack（v0.4.14）
+// scan.techStack 提供 manifest 推断的"后端/前端/全栈/数据库"分类键
+// architecture.json components[].technologies 提供 LLM 识别的技术名（更准确，含 LLM-only 推断）
+// 合并策略：按 CATEGORY_MAP 把已知技术归到对应分类，扫描未分类的作为 architectureOnly 数组
+function mergeTechStackWithArchitecture(scanTechStack, architecture) {
+  const result = JSON.parse(JSON.stringify(scanTechStack || {}));
+  if (!architecture || !Array.isArray(architecture.components)) return result;
+  const append = (field, value) => {
+    if (!value) return;
+    const cur = result[field];
+    if (!cur) result[field] = value;
+    else if (Array.isArray(cur)) { if (!cur.includes(value)) cur.push(value); }
+    else if (cur !== value) result[field] = [cur, value];
+  };
+  const allTechs = new Set();
+  for (const c of architecture.components) {
+    for (const t of c.technologies || []) allTechs.add(t);
+  }
+  const CATEGORY_MAP = {
+    "JavaScript": ["frontend"], "TypeScript": ["frontend"], "Python": ["backend"],
+    "Go": ["backend"], "Rust": ["backend"], "Java": ["backend"], "C++": ["backend"], "C": ["backend"],
+    "React": ["frontend"], "Vue": ["frontend"], "Svelte": ["frontend"], "Angular": ["frontend"], "Solid": ["frontend"],
+    "Next.js": ["fullstack"], "Nuxt": ["fullstack"], "Remix": ["fullstack"], "Astro": ["fullstack"],
+    "Express": ["backend"], "Fastify": ["backend"], "NestJS": ["backend"], "Koa": ["backend"],
+    "FastAPI": ["backend"], "Django": ["backend"], "Flask": ["backend"],
+    "Gin": ["backend"], "Echo": ["backend"], "Fiber": ["backend"],
+    "Actix Web": ["backend"], "Axum": ["backend"], "Rocket": ["backend"],
+    "Spring": ["backend"], "Spring Boot": ["backend"],
+    "Electron": ["desktop"], "Tauri": ["desktop"], "Tauri Apps": ["desktop"],
+    "Prisma": ["orm"], "TypeORM": ["orm"], "Sequelize": ["orm"], "Drizzle": ["orm"],
+    "GORM": ["orm"], "SQLAlchemy": ["orm"], "SQLx": ["orm"], "Diesel": ["orm"], "SeaORM": ["orm"],
+    "PostgreSQL": ["database"], "MySQL": ["database"], "MongoDB": ["database"], "Redis": ["cache"], "SQLite": ["database"],
+  };
+  const unmatched = [];
+  for (const tech of allTechs) {
+    const cats = CATEGORY_MAP[tech];
+    if (cats) {
+      for (const c of cats) append(c, tech);
+    } else {
+      unmatched.push(tech);
+    }
+  }
+  // 未分类的技术作为补充项单独展示（不影响已有分类）
+  if (unmatched.length) result._extra = unmatched;
+  return result;
+}
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "os";
 import { todoStats, activeTodos, techStackToType } from "./src/host/store/brain-logic.js";
 import { sanitizeProjectDescription } from "./src/scanner.js";
+import { buildLocalSuggestion } from "./src/host/suggest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(__dirname, "dsh-project-brain");
@@ -165,11 +228,22 @@ export function loadProjectData(workspace) {
       todos: todos,
       timelineAll: timelineAll,
       architecture: architecture,
+      // 合并 architecture.technologies 到 techStack 字段（v0.4.14 增强）
+      // architecture.json 里的 components[].technologies 含 LLM 识别的技术名，比 scan.techStack 更准确
+      techStack: mergeTechStackWithArchitecture(raw.techStack || {}, architecture),
       stats: {
         pendingTodos: stats.pendingTodos,
         completedTodos: stats.completedTodos,
         decisions: memoriesAll.filter((m) => m.type === "decision").length,
       },
+      // v0.4.15：build-time 嵌入智能续接建议（仅本地规则，不调 LLM）
+      suggestion: buildSuggestForBuild({
+        project: raw,
+        memories: memoriesAll,
+        todos: todosAll,
+        timeline: timelineAll,
+        architecture,
+      }),
     };
   } catch (e) {
     return {

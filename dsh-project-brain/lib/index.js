@@ -146,6 +146,14 @@ async function childTarget(fs, parentTarget, entry) {
 async function scanProject(fs, projectPath) {
   const rootTarget = await fs.resolve(projectPath);
   const rootPath = processPathOf(fs, rootTarget);
+  function setStack(field, value) {
+    if (!value) return;
+    const cur = result.techStack[field];
+    if (!cur) result.techStack[field] = value;
+    else if (Array.isArray(cur)) {
+      if (!cur.includes(value)) cur.push(value);
+    } else if (cur !== value) result.techStack[field] = [cur, value];
+  }
   const result = {
     projectName: null,
     description: null,
@@ -173,19 +181,51 @@ async function scanProject(fs, projectPath) {
         result.projectName = typeof pkg.name === "string" ? pkg.name : null;
         result.description = typeof pkg.description === "string" ? sanitizeProjectDescription(pkg.description) : null;
         const deps = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
-        if (deps.next) result.techStack.fullstack = "Next.js";
-        else if (deps.nuxt) result.techStack.fullstack = "Nuxt";
-        else if (deps.express) result.techStack.backend = "Express";
-        else if (deps.fastify) result.techStack.backend = "Fastify";
-        else if (deps["@nestjs/core"]) result.techStack.backend = "NestJS";
-        if (deps.react) result.techStack.frontend = "React";
-        else if (deps.vue) result.techStack.frontend = "Vue";
-        else if (deps.svelte) result.techStack.frontend = "Svelte";
-        if (deps.electron) result.techStack.desktop = "Electron";
-        if (deps.prisma || deps["@prisma/client"]) result.techStack.database = "Prisma";
+        if (deps.next) setStack("fullstack", "Next.js");
+        else if (deps.nuxt) setStack("fullstack", "Nuxt");
+        else if (deps["@sveltejs/kit"]) setStack("fullstack", "SvelteKit");
+        else if (deps["remix"] || deps["@remix-run/react"]) setStack("fullstack", "Remix");
+        else if (deps.astro) setStack("fullstack", "Astro");
+        else if (deps.express) setStack("backend", "Express");
+        else if (deps.fastify) setStack("backend", "Fastify");
+        else if (deps["@nestjs/core"]) setStack("backend", "NestJS");
+        else if (deps.koa) setStack("backend", "Koa");
+        else if (deps.hapi) setStack("backend", "Hapi");
+        else if (deps["@hapi/hapi"]) setStack("backend", "Hapi");
+        if (deps.react) setStack("frontend", "React");
+        else if (deps.vue) setStack("frontend", "Vue");
+        else if (deps.svelte) setStack("frontend", "Svelte");
+        else if (deps.solid || deps["solid-js"]) setStack("frontend", "Solid");
+        else if (deps.preact) setStack("frontend", "Preact");
+        else if (deps.angular || deps["@angular/core"]) setStack("frontend", "Angular");
+        if (deps.electron) setStack("desktop", "Electron");
+        if (deps["react-native"]) setStack("mobile", "React Native");
+        if (deps.expo) setStack("mobile", "Expo");
+        if (deps["@tauri-apps/api"] || deps.tauri) setStack("desktop", "Tauri");
+        if (deps.prisma || deps["@prisma/client"]) setStack("orm", "Prisma");
+        if (deps["typeorm"]) setStack("orm", "TypeORM");
+        if (deps["sequelize"] || deps.sequelize) setStack("orm", "Sequelize");
+        if (deps.mongoose) setStack("orm", "Mongoose");
+        if (deps["drizzle-orm"] || deps.drizzle) setStack("orm", "Drizzle");
+        if (deps["knex"]) setStack("orm", "Knex");
+        if (deps.mikro) setStack("orm", "MikroORM");
+        if (deps.ioredis || deps.redis) setStack("cache", "Redis");
+        if (deps.memcached || deps["memjs"]) setStack("cache", "Memcached");
+        if (deps.bull || deps["bullmq"]) setStack("queue", "Bull");
+        if (deps["amqplib"]) setStack("queue", "RabbitMQ");
         if (deps.vite) result.tooling.push("Vite");
         if (deps.typescript) result.tooling.push("TypeScript");
-        if (pkg.workspaces) result.techStack.structure = "Monorepo";
+        if (deps.eslint) result.tooling.push("ESLint");
+        if (deps.prettier) result.tooling.push("Prettier");
+        if (deps.jest) result.tooling.push("Jest");
+        if (deps.vitest) result.tooling.push("Vitest");
+        if (deps.playwright || deps["@playwright/test"]) result.tooling.push("Playwright");
+        if (deps.cypress) result.tooling.push("Cypress");
+        if (deps.tailwindcss) result.tooling.push("Tailwind CSS");
+        if (deps["styled-components"]) result.tooling.push("styled-components");
+        if (deps.webpack) result.tooling.push("webpack");
+        if (deps.turbo) result.tooling.push("Turbopack");
+        if (pkg.workspaces) setStack("structure", "Monorepo");
         if (pkg.scripts && pkg.scripts.dev) {
           result.entrypoints.push({ path: "npm run dev", type: "script" });
         }
@@ -196,22 +236,80 @@ async function scanProject(fs, projectPath) {
       }
     }
   }
-  const pyToml = names.includes("pyproject.toml") ? await readText(fs, rootPath, "pyproject.toml") : null;
   const requirements = names.includes("requirements.txt") ? await readText(fs, rootPath, "requirements.txt") : null;
-  if (pyToml && pyToml.indexOf("fastapi") !== -1) result.techStack.backend = "FastAPI";
-  else if (pyToml && pyToml.indexOf("django") !== -1) result.techStack.backend = "Django";
-  else if (pyToml && pyToml.indexOf("flask") !== -1) result.techStack.backend = "Flask";
-  else if (requirements && requirements.indexOf("fastapi") !== -1) result.techStack.backend = "FastAPI";
-  else if (requirements && requirements.indexOf("django") !== -1) result.techStack.backend = "Django";
-  else if (requirements && requirements.indexOf("flask") !== -1) result.techStack.backend = "Flask";
-  if (names.includes("go.mod")) result.techStack.backend = "Go";
-  if (names.includes("pom.xml")) result.techStack.backend = "Spring (Maven)";
-  else if (names.some((n) => n === "build.gradle" || n === "build.gradle.kts")) result.techStack.backend = "Spring (Gradle)";
-  if (names.includes("Cargo.toml")) result.techStack.backend = "Rust";
+  const pyProject = names.includes("pyproject.toml") ? await readText(fs, rootPath, "pyproject.toml") : null;
+  const pyHas = (pkg) => {
+    const re = new RegExp("(^|\\s|\\[|\\b)" + pkg + "(\\b|\\s|\\[|>=|<|=|!|~)", "i");
+    return pyProject && re.test(pyProject) || requirements && re.test(requirements);
+  };
+  if (pyHas("fastapi")) setStack("backend", "FastAPI");
+  else if (pyHas("django")) setStack("backend", "Django");
+  else if (pyHas("flask")) setStack("backend", "Flask");
+  else if (pyHas("sanic")) setStack("backend", "Sanic");
+  else if (pyHas("starlette")) setStack("backend", "Starlette");
+  else if (pyHas("aiohttp")) setStack("backend", "aiohttp");
+  else if (pyHas("tornado")) setStack("backend", "Tornado");
+  else if (pyHas("pyramid")) setStack("backend", "Pyramid");
+  else if (pyHas("bottle")) setStack("backend", "Bottle");
+  else if (pyHas("streamlit")) setStack("frontend", "Streamlit");
+  else if (pyHas("gradio")) setStack("frontend", "Gradio");
+  if (pyHas("sqlalchemy")) setStack("orm", "SQLAlchemy");
+  if (pyHas("peewee")) setStack("orm", "Peewee");
+  if (pyHas("tortoise-orm")) setStack("orm", "Tortoise ORM");
+  if (pyHas("django")) setStack("orm", "Django ORM");
+  if (pyHas("sqlmodel")) setStack("orm", "SQLModel");
+  if (pyHas("asyncpg")) setStack("database", "PostgreSQL");
+  if (pyHas("aiomysql") || pyHas("pymysql")) setStack("database", "MySQL");
+  if (pyHas("pymongo") || pyHas("motor")) setStack("database", "MongoDB");
+  if (pyHas("redis")) setStack("cache", "Redis");
+  if (pyProject && /\[tool\.poetry\]/.test(pyProject)) result.tooling.push("Poetry");
+  if (pyProject && /\[tool\.uv\]/.test(pyProject)) result.tooling.push("uv");
+  if (pyProject && /\[tool\.hatch/.test(pyProject)) result.tooling.push("Hatch");
+  if (pyProject && /\[tool\.pdm\.projects\]/.test(pyProject)) result.tooling.push("PDM");
+  if (pyProject && /setup\.py|setuptools/.test(pyProject) && !/Poetry|uv|Hatch|PDM/.test(result.tooling.join(","))) result.tooling.push("setuptools");
+  const goMod = names.includes("go.mod") ? await readText(fs, rootPath, "go.mod") : null;
+  if (goMod) {
+    setStack("backend", "Go");
+    if (/gorm\.io\/gorm/.test(goMod)) setStack("orm", "GORM");
+    if (/ent\.go/.test(goMod)) setStack("orm", "Ent");
+    if (/sqlx/.test(goMod)) setStack("orm", "sqlx");
+    if (/bun\.build/.test(goMod)) setStack("orm", "Bun");
+    if (/pgx|lib\/pq/.test(goMod)) setStack("database", "PostgreSQL");
+    if (/go-sql-driver\/mysql/.test(goMod)) setStack("database", "MySQL");
+    if (/mongo-driver/.test(goMod)) setStack("database", "MongoDB");
+    if (/go-redis\/redis/.test(goMod)) setStack("cache", "Redis");
+    if (/gin-gonic\/gin/.test(goMod)) setStack("backend", "Gin");
+    else if (/labstack\/echo/.test(goMod)) setStack("backend", "Echo");
+    else if (/gofiber\/fiber/.test(goMod)) setStack("backend", "Fiber");
+    else if (/go-chi\/chi/.test(goMod)) setStack("backend", "Chi");
+    else if (/valyala\/fasthttp/.test(goMod)) setStack("backend", "FastHTTP");
+  }
+  if (names.includes("pom.xml")) setStack("backend", "Spring (Maven)");
+  else if (names.some((n) => n === "build.gradle" || n === "build.gradle.kts")) setStack("backend", "Spring (Gradle)");
+  const cargoToml = names.includes("Cargo.toml") ? await readText(fs, rootPath, "Cargo.toml") : null;
+  if (cargoToml) {
+    setStack("backend", "Rust");
+    if (/\[workspace\]/.test(cargoToml)) setStack("structure", "Cargo Workspace");
+    if (/^actix-web\s*=/m.test(cargoToml)) setStack("backend", "Actix Web");
+    else if (/^axum\s*=/m.test(cargoToml)) setStack("backend", "Axum");
+    else if (/^rocket\s*=/m.test(cargoToml)) setStack("backend", "Rocket");
+    else if (/^warp\s*=/m.test(cargoToml)) setStack("backend", "Warp");
+    else if (/^tide\s*=/m.test(cargoToml)) setStack("backend", "Tide");
+    if (/^diesel\s*=/m.test(cargoToml)) setStack("orm", "Diesel");
+    if (/^sea-orm\s*=/m.test(cargoToml)) setStack("orm", "SeaORM");
+    if (/^sqlx\s*=/m.test(cargoToml)) setStack("orm", "SQLx");
+    if (/^postgres\s*=/m.test(cargoToml)) setStack("database", "PostgreSQL");
+    if (/^mysql\s*=/m.test(cargoToml)) setStack("database", "MySQL");
+    if (/^redis\s*=/m.test(cargoToml)) setStack("cache", "Redis");
+    if (/^tokio\s*=/m.test(cargoToml)) result.tooling.push("Tokio");
+    if (/^serde\s*=/m.test(cargoToml)) result.tooling.push("Serde");
+  }
   if (names.includes("Dockerfile") || names.includes("docker-compose.yml") || names.includes("compose.yml")) result.tooling.push("Docker");
-  if (names.includes("pnpm-workspace.yaml") || names.includes("turbo.json") || names.includes("nx.json")) result.techStack.structure = "Monorepo";
+  if (names.includes("pnpm-workspace.yaml") || names.includes("turbo.json") || names.includes("nx.json")) setStack("structure", "Monorepo");
   if (names.some((n) => n.endsWith(".tf"))) result.tooling.push("Terraform");
   if (names.includes("Makefile")) result.tooling.push("Make");
+  if (names.includes(".github") && names.some((n) => n.startsWith(".github"))) result.tooling.push("GitHub Actions");
+  if (result.languages.sql && !result.techStack.database) setStack("database", "SQL");
   if (!result.description) {
     const readmeName = names.find((n) => /^readme(?:\.[a-z0-9]+)?$/i.test(n));
     if (readmeName) result.description = firstReadmeParagraph(await readText(fs, rootPath, readmeName));
@@ -553,7 +651,12 @@ function techStackToType(techStack) {
   if (!techStack || typeof techStack !== "object") return "Untyped";
   const parts = [];
   for (const k of Object.keys(techStack)) {
-    if (techStack[k]) parts.push(String(techStack[k]));
+    const v = techStack[k];
+    if (Array.isArray(v)) {
+      for (const item of v) if (item) parts.push(String(item));
+    } else if (v) {
+      parts.push(String(v));
+    }
   }
   return parts.length > 0 ? parts.join(" \xB7 ") : "Untyped";
 }
@@ -1023,15 +1126,15 @@ function buildLocalArchitecture(scan, evidence, previous, config) {
   const relationships = [];
   for (let i = 0; i < components.length - 1; i++) relationships.push({ id: "relation-local-" + (i + 1), from: components[i].id, to: components[i + 1].id, label: "\u8C03\u7528/\u534F\u4F5C", type: "uses", description: "\u4F9D\u636E\u5E38\u89C1\u5206\u5C42\u65B9\u5411\u63A8\u65AD\uFF0C\u9700\u7ED3\u5408\u4EE3\u7801\u9A8C\u8BC1", confidence: 0.42 });
   const keyFiles = evidence.sourceFacts.slice(0, 12).map((fact) => ({ path: fact.file, role: fact.symbols.length ? "\u5B9A\u4E49 " + fact.symbols.slice(0, 4).map((item) => item.name).join("\u3001") : "\u5173\u952E\u5B9E\u73B0\u6587\u4EF6", whyImportant: fact.imports.length ? "\u8FDE\u63A5 " + fact.imports.slice(0, 4).join("\u3001") : "\u4F4D\u4E8E\u9879\u76EE\u5165\u53E3\u6216\u6838\u5FC3\u5B9E\u73B0\u8DEF\u5F84", category: roleForFile(fact.file).kind }));
-  const fingerprint2 = hashText(JSON.stringify({ files: evidence.sourceFacts.map((fact) => [fact.file, fact.hash, fact.imports]), manifests: evidence.manifests.map((item) => [item.path, item.hash]), readme: hashText(evidence.readme && evidence.readme.content), techStack: scan.techStack }));
-  const changed = !previous || previous.schemaVersion !== 2 || previous.fingerprint !== fingerprint2;
+  const fingerprint3 = hashText(JSON.stringify({ files: evidence.sourceFacts.map((fact) => [fact.file, fact.hash, fact.imports]), manifests: evidence.manifests.map((item) => [item.path, item.hash]), readme: hashText(evidence.readme && evidence.readme.content), techStack: scan.techStack }));
+  const changed = !previous || previous.schemaVersion !== 2 || previous.fingerprint !== fingerprint3;
   const overview = { purpose: localPurpose(scan), audience: "\u9879\u76EE\u5F00\u53D1\u4E0E\u7EF4\u62A4\u4EBA\u5458", category: Object.values(scan.techStack || {})[0] || "\u8F6F\u4EF6\u9879\u76EE", architectureStyle: layers.length >= 3 ? "\u5206\u5C42\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09" : "\u6A21\u5757\u5316\u67B6\u6784\uFF08\u672C\u5730\u63A8\u65AD\uFF09", value: "\u5E2E\u52A9\u5F00\u53D1\u8005\u7406\u89E3\u9879\u76EE\u5165\u53E3\u3001\u6838\u5FC3\u80FD\u529B\u548C\u534F\u4F5C\u8FB9\u754C\u3002" };
   const runtimeFlows = components.length >= 2 ? [{ id: "flow-main", name: "\u4E3B\u8981\u6267\u884C\u94FE\u8DEF\uFF08\u672C\u5730\u63A8\u65AD\uFF09", trigger: "\u7528\u6237\u6216\u5BBF\u4E3B\u89E6\u53D1\u9879\u76EE\u80FD\u529B", outcome: "\u6838\u5FC3\u80FD\u529B\u5B8C\u6210\u5E76\u8BFB\u5199\u9879\u76EE\u6570\u636E", steps: components.map((component, index) => ({ componentId: component.id, action: index === 0 ? "\u63A5\u6536\u8BF7\u6C42" : index === components.length - 1 ? "\u5B8C\u6210\u5904\u7406" : "\u5904\u7406\u5E76\u4F20\u9012" })) }] : [];
   return withAliases({
     schemaVersion: 2,
     version: previous && previous.version && changed ? previous.version + 1 : previous && previous.version || 1,
     generatedAt: Date.now(),
-    fingerprint: fingerprint2,
+    fingerprint: fingerprint3,
     changed,
     source: "local",
     project: { name: scan.projectName || "Project", techStack: scan.techStack || {}, entrypoints: scan.entrypoints || [] },
@@ -1193,7 +1296,17 @@ async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options =
   const chunks = /* @__PURE__ */ new Map();
   const completed = /* @__PURE__ */ new Map();
   try {
-    const request = { provider: route.provider, model: route.model, system: options.system || "Produce an evidence-based conceptual software architecture as strict JSON only.", messages: [{ role: "user", content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-project-brain" } }], maxTokens: options.maxTokens || 6200, purpose: options.purpose || "project-architecture", ...sessionId ? { sessionId } : {}, signal: controller.signal };
+    const request = {
+      provider: route.provider,
+      model: route.model,
+      system: options.system || "Produce an evidence-based conceptual software architecture as strict JSON only.",
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-project-brain" } }],
+      maxTokens: options.maxTokens || 6200,
+      purpose: options.purpose || "project-architecture",
+      ...sessionId ? { sessionId } : {},
+      ...typeof options.temperature === "number" ? { temperature: options.temperature } : {},
+      signal: controller.signal
+    };
     for await (const chunk of llm.stream(request)) {
       if (!chunk) continue;
       if (chunk.type === "text-delta") chunks.set(chunk.index, (chunks.get(chunk.index) || "") + String(chunk.text || ""));
@@ -2116,8 +2229,358 @@ function buildContinueTool({ fs, sandboxPolicy }) {
   });
 }
 
-// src/tools/status.js
+// src/tools/suggest.js
 import { defineTool as defineTool6 } from "@deepseek-ai/dsh-tools";
+
+// src/host/suggest.js
+function buildEvidence(brain, now) {
+  const nowMs = typeof now === "number" ? now : Date.now();
+  const project = brain && brain.project || null;
+  const memories = (brain && brain.memories || []).filter(isActiveMemory);
+  const todos = brain && brain.todos || [];
+  const timeline = brain && brain.timeline || [];
+  const architecture = brain && brain.architecture;
+  const inProgress = todos.filter((t) => t && t.status === "in_progress");
+  const pending = todos.filter((t) => t && t.status === "pending");
+  const blocked = todos.filter((t) => t && t.status === "blocked");
+  const topMem = topMemories(memories, 5, nowMs);
+  const recentEvents = recentTimeline(timeline, 3);
+  const lastSummary = timeline.filter((e) => e && (e.eventType === "session_summary" || e.eventType === "init" || e.eventType === "rescan")).sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0))[0];
+  const daysSinceLastSession = lastSummary ? Math.max(0, Math.round((nowMs - (lastSummary.occurredAt || nowMs)) / 864e5)) : null;
+  return {
+    project,
+    memories: topMem,
+    activeTodos: { inProgress, pending, blocked },
+    recentEvents,
+    architecture,
+    daysSinceLastSession,
+    now: nowMs
+  };
+}
+function buildLocalFallback(evidence) {
+  const { project, memories, activeTodos: t, recentEvents, daysSinceLastSession } = evidence;
+  if (t.inProgress.length > 0) {
+    const top = t.inProgress[0];
+    const relatedMem = pickRelatedMem(top, memories);
+    return {
+      title: "\u7EE7\u7EED\u63A8\u8FDB\uFF1A" + truncate(top.title, 60),
+      reason: relatedMem ? "\u4E0A\u6B21\u4E2D\u65AD\u5728 \u201C" + truncate(relatedMem.title, 30) + "\u201D \u76F8\u5173\u5DE5\u4F5C" : "\u4F60\u6B63\u5728\u5904\u7406\u8FD9\u6761\u4EFB\u52A1\uFF08in_progress\uFF09",
+      confidence: 0.85,
+      suggestedTodoId: top.id || null,
+      suggestedMemoryIds: relatedMem ? [relatedMem.id] : [],
+      fallback: true
+    };
+  }
+  if (t.pending.length > 0) {
+    const sorted = sortTodosByPriority(t.pending);
+    const top = sorted[0];
+    const relatedMem = pickRelatedMem(top, memories);
+    return {
+      title: "\u5EFA\u8BAE\u5F00\u59CB\uFF1A" + truncate(top.title, 60),
+      reason: relatedMem ? "\u4E0E\u5DF2\u8BB0\u5F55\u7684 \u201C" + truncate(relatedMem.title, 30) + "\u201D \u51B3\u7B56/\u6559\u8BAD\u76F8\u5173" : "\u8FD9\u662F\u5F53\u524D\u6700\u9AD8\u4F18\u5148\u7EA7\u5F85\u529E\uFF08" + (top.priority || "medium") + "\uFF09",
+      confidence: 0.7,
+      suggestedTodoId: top.id || null,
+      suggestedMemoryIds: relatedMem ? [relatedMem.id] : [],
+      fallback: true
+    };
+  }
+  if (t.blocked.length > 0) {
+    return {
+      title: "\u89E3\u51B3\u963B\u585E\uFF1A" + truncate(t.blocked[0].title, 60),
+      reason: "\u6709 " + t.blocked.length + " \u4E2A\u4EFB\u52A1\u88AB\u963B\u585E\uFF0C\u5148\u89E3\u51B3\u963B\u585E\u53EF\u89E3\u9501\u540E\u7EED\u5DE5\u4F5C",
+      confidence: 0.5,
+      suggestedTodoId: t.blocked[0].id || null,
+      suggestedMemoryIds: [],
+      fallback: true
+    };
+  }
+  if (memories.length > 0) {
+    const recents = memories.filter((m) => {
+      const age = (evidence.now - (m.updatedAt || m.createdAt || 0)) / 864e5;
+      return age <= 7;
+    });
+    if (recents.length > 0) {
+      return {
+        title: "\u56DE\u987E\u8FD1\u671F\u8BB0\u5FC6\uFF1A" + truncate(recents[0].title, 60),
+        reason: daysSinceLastSession != null && daysSinceLastSession > 0 ? "\u8DDD\u4E0A\u6B21 Session " + daysSinceLastSession + " \u5929\uFF0C\u5148\u56DE\u987E\u8FD1\u671F\u9879\u76EE\u77E5\u8BC6" : "\u6700\u8FD1\u8BB0\u5F55\u7684\u9879\u76EE\u51B3\u7B56\u53EF\u4F5C\u4E3A\u4E0B\u4E00\u6B65\u8D77\u70B9",
+        confidence: 0.45,
+        suggestedTodoId: null,
+        suggestedMemoryIds: [recents[0].id],
+        fallback: true
+      };
+    }
+  }
+  if (recentEvents.length > 0) {
+    return {
+      title: "\u56DE\u987E\u4E0A\u6B21\u6D3B\u52A8\uFF1A" + truncate(recentEvents.title, 60),
+      reason: "\u9879\u76EE\u65E0\u6D3B\u8DC3\u4EFB\u52A1\uFF0C\u53EF\u4ECE\u6700\u8FD1\u6D3B\u52A8\u5165\u624B",
+      confidence: 0.3,
+      suggestedTodoId: null,
+      suggestedMemoryIds: [],
+      fallback: true
+    };
+  }
+  return {
+    title: project ? "\u89C4\u5212\u4E0B\u4E00\u6B65" : "\u521D\u59CB\u5316\u9879\u76EE\u8111",
+    reason: project ? "\u6682\u65E0\u5F85\u529E\u548C\u8FD1\u671F\u8BB0\u5FC6\uFF0C\u5EFA\u8BAE\u7528 project_todo_add \u89C4\u5212\u4E0B\u4E00\u6B65" : "\u9879\u76EE\u8111\u8FD8\u672A\u521D\u59CB\u5316\uFF0C\u8C03\u7528 project_init \u5F00\u59CB",
+    confidence: 0.2,
+    suggestedTodoId: null,
+    suggestedMemoryIds: [],
+    fallback: true
+  };
+}
+function sortTodosByPriority(todos) {
+  const order = { urgent: 0, high: 1, medium: 2, low: 3 };
+  return todos.slice().sort((a, b) => {
+    const pa = order[a.priority || "medium"] != null ? order[a.priority || "medium"] : 2;
+    const pb = order[b.priority || "medium"] != null ? order[b.priority || "medium"] : 2;
+    return pa - pb;
+  });
+}
+function pickRelatedMem(todo, memories) {
+  if (!todo || memories.length === 0) return null;
+  const todoFiles = new Set((todo.relatedFiles || []).map(String));
+  const todoTags = new Set((todo.tags || []).map(String));
+  for (const m of memories) {
+    const overlap = (m.relatedFiles || []).some((f) => todoFiles.has(f));
+    const tagOverlap = (m.tags || []).some((t) => todoTags.has(t));
+    if (overlap || tagOverlap) return m;
+  }
+  return memories[0] || null;
+}
+function truncate(s, limit) {
+  s = String(s || "").trim();
+  if (s.length <= limit) return s;
+  return s.slice(0, limit - 1) + "\u2026";
+}
+function buildSuggestPrompt(evidence) {
+  const payload = {
+    project: evidence.project ? { name: evidence.project.name, type: evidence.project.type || evidence.project.techStack, description: truncate(evidence.project.description, 300) } : null,
+    daysSinceLastSession: evidence.daysSinceLastSession,
+    inProgress: evidence.activeTodos.inProgress.slice(0, 3).map(compactTodo),
+    pendingTop: sortTodosByPriority(evidence.activeTodos.pending).slice(0, 3).map(compactTodo),
+    blocked: evidence.activeTodos.blocked.slice(0, 2).map(compactTodo),
+    topMemories: evidence.memories.slice(0, 5).map(compactMem),
+    recentEvents: evidence.recentEvents.slice(0, 3).map((e) => ({ eventType: e.eventType, title: truncate(e.title, 80), occurredAt: e.occurredAt })),
+    architectureSummary: evidence.architecture && evidence.architecture.summary ? truncate(evidence.architecture.summary, 400) : null
+  };
+  return [
+    "\u4F60\u662F dsh-project-brain \u7684\u300C\u667A\u80FD\u7EED\u63A5\u300D\u52A9\u624B\u3002Session \u5F00\u59CB\u65F6\u7ED9\u7528\u6237 1-2 \u53E5\u8BDD + \u4E00\u6761\u300C\u7406\u7531\u300D\uFF0C\u8BA9\u4ED6\u4E0D\u9700\u8981\u91CD\u65B0\u63CF\u8FF0\u9879\u76EE\u5C31\u77E5\u9053\u4ECA\u5929\u80FD\u505A\u4EC0\u4E48\u3002",
+    "\u6839\u636E\u4E0B\u9762\u63D0\u4F9B\u7684\u9879\u76EE\u72B6\u6001\uFF08\u6D3B\u8DC3 TODO / \u8BB0\u5FC6 / \u65F6\u95F4\u7EBF / \u67B6\u6784\u6982\u51B5\uFF09\u5224\u65AD\uFF1A\u4ECA\u5929\u6700\u503C\u5F97\u63A8\u8FDB\u7684\u4E00\u4EF6\u4E8B\u662F\u4EC0\u4E48\uFF1F\u7406\u7531\u662F\u4EC0\u4E48\uFF1F",
+    "\u89C4\u5219\uFF1A",
+    "1) title \u5FC5\u987B\u7B80\u6D01\uFF08\u2264 30 \u5B57\uFF09\uFF0C\u662F\u52A8\u8BCD\u5F00\u5934\uFF08\u300C\u7EE7\u7EED X\u300D\u300C\u5EFA\u8BAE\u5F00\u59CB X\u300D\u300C\u56DE\u987E X\u300D\u300C\u89E3\u51B3 X\u300D\u300C\u89C4\u5212 X\u300D\uFF09\uFF1B",
+    "3) reason \u5FC5\u987B\u6709\u4F9D\u636E\uFF1A\u5F15\u7528\u5177\u4F53\u7684 TODO id\u3001\u8BB0\u5FC6 title\u3001\u6216\u8005\u65F6\u95F4\u7EBF\u4E8B\u4EF6\uFF1B",
+    "4) suggestedTodoId \u5FC5\u987B\u586B 1 \u4E2A\uFF08\u6700\u76F8\u5173\u7684\u90A3\u4E2A active todo\uFF09\uFF0CsuggestedMemoryIds \u586B 1-3 \u4E2A\u6700\u76F8\u5173\u7684\u8BB0\u5FC6\uFF1B",
+    "5) confidence 0~1\uFF1A\u8FDB\u884C\u4E2D\u4EFB\u52A1 \u22650.8\uFF0C\u6700\u9AD8\u7EA7 pending 0.5-0.8\uFF0C\u8BB0\u5FC6\u63A8\u65AD 0.3-0.5\uFF0C\u7EAF\u7A7A\u767D \u22640.3\uFF1B",
+    "6) \u4E0D\u5141\u8BB8\u7F16\u9020\u4FE1\u606F\uFF1B\u53EA\u80FD\u57FA\u4E8E\u63D0\u4F9B\u7684 evidence\uFF1B\u5982\u679C\u5B8C\u5168\u6CA1\u6570\u636E\uFF0Ctitle \u5199\u300C\u521D\u59CB\u5316\u9879\u76EE\u8111\u300D\u6216\u300C\u89C4\u5212\u4E0B\u4E00\u6B65\u300D\uFF1B",
+    "7) \u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002",
+    "\u683C\u5F0F\uFF1A" + JSON.stringify({ title: "\u52A8\u8BCD + \u5185\u5BB9", reason: "\u4F9D\u636E + \u4E0A\u4E0B\u6587", confidence: 0.7, suggestedTodoId: "todo id \u6216 null", suggestedMemoryIds: ["memory id"] }),
+    "\u8BC1\u636E\uFF1A" + JSON.stringify(payload)
+  ].join("\n");
+}
+function compactTodo(t) {
+  return { id: t.id, title: truncate(t.title, 80), priority: t.priority || "medium", status: t.status, tags: (t.tags || []).slice(0, 3) };
+}
+function compactMem(m) {
+  return { id: m.id, type: m.type, title: truncate(m.title, 80), importance: m.importance, tags: (m.tags || []).slice(0, 3) };
+}
+function parseSuggestJson(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const candidates = [];
+  candidates.push(text);
+  candidates.push(text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim());
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  const stripTrailing = (s) => s.replace(/,\s*([}\]])/g, "$1");
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      return JSON.parse(stripTrailing(c));
+    } catch (e) {
+    }
+  }
+  return null;
+}
+function normalizeSuggestion(parsed) {
+  if (!parsed || typeof parsed !== "object") return null;
+  const title = String(parsed.title || "").trim().slice(0, 80);
+  const reason = String(parsed.reason || "").trim().slice(0, 200);
+  if (!title || !reason) return null;
+  const confidence = Number(parsed.confidence);
+  const suggestedTodoId = parsed.suggestedTodoId && typeof parsed.suggestedTodoId === "string" ? parsed.suggestedTodoId.slice(0, 64) : null;
+  const suggestedMemoryIds = Array.isArray(parsed.suggestedMemoryIds) ? parsed.suggestedMemoryIds.filter((x) => typeof x === "string").slice(0, 5) : [];
+  return {
+    title,
+    reason,
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5,
+    suggestedTodoId,
+    suggestedMemoryIds,
+    fallback: false
+  };
+}
+function buildLocalSuggestion(brain, now) {
+  const evidence = buildEvidence(brain, now);
+  const local = buildLocalFallback(evidence);
+  return {
+    ok: true,
+    data: {
+      suggestion: local,
+      evidence: {
+        activeTodos: {
+          inProgress: evidence.activeTodos.inProgress.length,
+          pending: evidence.activeTodos.pending.length,
+          blocked: evidence.activeTodos.blocked.length
+        },
+        memories: evidence.memories.length,
+        recentEvents: evidence.recentEvents.length,
+        daysSinceLastSession: evidence.daysSinceLastSession
+      },
+      source: "local"
+    }
+  };
+}
+function buildSuggestPromptForLlm(brain, now) {
+  const evidence = buildEvidence(brain, now);
+  return { prompt: buildSuggestPrompt(evidence), evidence };
+}
+
+// src/tools/suggest.js
+var baseOutputSchema3 = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    ok: { type: "boolean" },
+    data: { type: "object", additionalProperties: true },
+    code: { type: "string" },
+    message: { type: "string" }
+  }
+};
+function executionRoute2(exec) {
+  if (!exec) return null;
+  return resolveSessionRoute(exec.session) || resolveSessionRoute(exec.currentSession) || resolveSessionRoute(exec.agent && exec.agent.session) || resolveSessionRoute(exec.agent) || resolveSessionRoute(exec.ctx && exec.ctx.session);
+}
+function executionSessionId2(exec) {
+  return exec && (exec.sessionId || exec.session && exec.session.id || exec.agent && exec.agent.sessionId || exec.agent && exec.agent.session && exec.agent.session.id) || null;
+}
+async function tryLlmSuggestion({ llm, route, sessionId, brain, temperature }) {
+  const { prompt, evidence } = buildSuggestPromptForLlm(brain, Date.now());
+  let text;
+  try {
+    text = await streamLlmText(llm, route, prompt, sessionId, 2e4, {
+      system: "You are the dsh-project-brain 'smart continue' advisor. Output strict JSON only. Never invent TODOs, memories or files that were not provided as evidence.",
+      maxTokens: 400,
+      purpose: "project-suggest-next",
+      // v0.4.17：deterministic 输出，让同一项目下不同 session 拿到的建议尽量一致
+      temperature: typeof temperature === "number" ? temperature : 0
+    });
+  } catch (error) {
+    return { ok: false, error: error && error.code ? error.code : "STREAM_FAILED", message: String(error && error.message || error) };
+  }
+  const parsed = parseSuggestJson(text);
+  if (!parsed) return { ok: false, error: "INVALID_JSON", message: "LLM \u8FD4\u56DE\u975E JSON" };
+  const normalized = normalizeSuggestion(parsed);
+  if (!normalized) return { ok: false, error: "INVALID_SCHEMA", message: "LLM JSON \u7F3A\u5C11\u5FC5\u8981\u5B57\u6BB5" };
+  return { ok: true, data: { suggestion: normalized, evidence: summarizeEvidence(evidence), source: "llm" } };
+}
+function summarizeEvidence(evidence) {
+  return {
+    activeTodos: {
+      inProgress: evidence.activeTodos.inProgress.length,
+      pending: evidence.activeTodos.pending.length,
+      blocked: evidence.activeTodos.blocked.length
+    },
+    memories: evidence.memories.length,
+    recentEvents: evidence.recentEvents.length,
+    daysSinceLastSession: evidence.daysSinceLastSession
+  };
+}
+function buildSuggestTool({ fs, sandboxPolicy, getLlm }) {
+  return defineTool6({
+    name: "project_suggest_next",
+    description: "dsh-project-brain: \u667A\u80FD\u7EED\u63A5\u3002Session \u5F00\u59CB\u65F6\u7ED9\u7528\u6237\u4E00\u53E5\u300C\u4ECA\u5929\u53EF\u80FD\u60F3\u63A8\u8FDB\u4EC0\u4E48\u300D+ \u4F9D\u636E\uFF0C\u7ED3\u5408\u6D3B\u8DC3 TODO / \u8FD1\u671F\u8BB0\u5FC6 / \u6700\u8FD1\u6D3B\u52A8 / \u67B6\u6784\u6982\u89C8\u7EFC\u5408\u63A8\u65AD\u3002\u9ED8\u8BA4\u8D70\u672C\u5730\u89C4\u5219\uFF08in_progress > \u6700\u9AD8\u4F18\u5148\u7EA7 pending > \u963B\u585E > \u8BB0\u5FC6\uFF09\uFF0C\u82E5 DSH \u5F53\u524D Session \u6709\u53EF\u7528 LLM route\uFF0C\u4F1A\u81EA\u52A8\u8C03\u6A21\u578B\u5347\u7EA7\u5EFA\u8BAE\u8D28\u91CF\uFF1B\u5931\u8D25\u65F6\u964D\u7EA7\u5230\u672C\u5730\u3002\u9002\u7528\u4E8E\u300C\u4ECA\u5929\u7EE7\u7EED\u4EC0\u4E48 / \u63A5\u4E0B\u6765\u505A\u4EC0\u4E48\u300D\u7B49\u573A\u666F\u3002",
+    parameters: {
+      path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u53EF\u9009\uFF1B\u9ED8\u8BA4\u4ECE\u5F53\u524D DSH Session \u7684 workspace \u81EA\u52A8\u89E3\u6790\uFF09" },
+      useLLM: { type: "boolean", description: "\u662F\u5426\u5C1D\u8BD5\u8C03 LLM\uFF08\u9ED8\u8BA4 true\uFF1B\u8BBE false \u5F3A\u5236\u8D70\u672C\u5730\u89C4\u5219\uFF09" }
+    },
+    output: { schema: baseOutputSchema3, render: (_args, value) => renderSuggest(value) },
+    async execute(args, exec) {
+      const startMs = Date.now();
+      try {
+        const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        if (projectPath === ".") {
+          return { ok: false, data: { error: { code: "E_NO_PATH", message: "\u65E0\u6CD5\u4ECE\u5F53\u524D Session \u89E3\u6790 workspace \u8DEF\u5F84" } } };
+        }
+        const brain = await readBrain(fs, projectPath);
+        if (!brain.project || brain.project.__error) {
+          return { ok: false, data: { error: { code: "E_NOT_INITIALIZED", message: "\u9879\u76EE\u8FD8\u672A\u521D\u59CB\u5316 .project-brain/project.json\uFF0C\u8BF7\u5148\u8C03\u7528 project_init" } } };
+        }
+        try {
+          const archPath = projectPath.replace(/[\\/]+$/, "") + "/.project-brain/architecture.json";
+          const text = await (async () => {
+            try {
+              return await fs.readText(await fs.resolve(archPath));
+            } catch {
+              return null;
+            }
+          })();
+          if (text) brain.architecture = JSON.parse(text);
+        } catch (e) {
+        }
+        const useLLM = args && args.useLLM === false ? false : true;
+        const llm = getLlm ? getLlm() : null;
+        const route = executionRoute2(exec);
+        const sessionId = executionSessionId2(exec);
+        let result;
+        if (useLLM && llm && route && route.provider && route.model) {
+          result = await tryLlmSuggestion({ llm, route, sessionId, brain, temperature: 0 });
+          if (result.ok) {
+            return { ok: true, data: result.data };
+          }
+          const fallback = buildLocalSuggestion(brain, Date.now());
+          return {
+            ok: true,
+            data: {
+              suggestion: fallback.data.suggestion,
+              evidence: fallback.data.evidence,
+              source: "llm_failed",
+              llmError: { code: result.error, message: result.message }
+            },
+            durationMs: Date.now() - startMs
+          };
+        }
+        const local = buildLocalSuggestion(brain, Date.now());
+        return {
+          ok: true,
+          data: Object.assign({}, local.data, { durationMs: Date.now() - startMs, source: llm && !route ? "local_no_route" : "local" })
+        };
+      } catch (e) {
+        return { ok: false, data: { error: { code: "E_SUGGEST_FAILED", message: String(e && e.message || e) } } };
+      }
+    }
+  });
+}
+function renderSuggest(value) {
+  if (!value || typeof value !== "object") return [{ type: "text", text: "dsh-project-brain: suggest FAILED - " + String(value) }];
+  if (value.ok) {
+    const d = value.data || {};
+    const s = d.suggestion || {};
+    const lines = [{ type: "text", text: `dsh-project-brain: suggest (${d.source || "?"})` }];
+    lines.push({ type: "text", text: `  ${s.title || "(\u65E0\u6807\u9898)"}` });
+    if (s.reason) lines.push({ type: "text", text: `  reason: ${s.reason}` });
+    if (s.confidence != null) lines.push({ type: "text", text: `  confidence: ${(s.confidence * 100).toFixed(0)}%` });
+    if (s.suggestedTodoId) lines.push({ type: "text", text: `  todo: ${s.suggestedTodoId}` });
+    if (s.suggestedMemoryIds && s.suggestedMemoryIds.length) lines.push({ type: "text", text: `  memories: ${s.suggestedMemoryIds.join(", ")}` });
+    if (d.llmError) lines.push({ type: "text", text: `  llm_fallback: ${d.llmError.code} - ${d.llmError.message}` });
+    return lines;
+  }
+  if (value.data && value.data.error) return [{ type: "text", text: "dsh-project-brain: suggest FAILED - " + value.data.error.code + ": " + value.data.error.message }];
+  return [{ type: "text", text: "dsh-project-brain: suggest FAILED - " + JSON.stringify(value) }];
+}
+
+// src/tools/status.js
+import { defineTool as defineTool7 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/retrieval.js
 function activeMemories(memories) {
@@ -2421,7 +2884,7 @@ function createMemoryConfigRuntime(ctx, entryConfig) {
 }
 
 // src/tools/status.js
-var baseOutputSchema3 = {
+var baseOutputSchema4 = {
   type: "object",
   additionalProperties: true,
   properties: {
@@ -2430,13 +2893,13 @@ var baseOutputSchema3 = {
   }
 };
 function buildStatusTool({ fs, sandboxPolicy, getMemoryConfig }) {
-  return defineTool6({
+  return defineTool7({
     name: "project_status",
     description: "dsh-project-brain: \u8FD4\u56DE\u5F53\u524D\u9879\u76EE\u7684\u5FEB\u901F\u72B6\u6001\u5FEB\u7167\uFF08\u9879\u76EE\u5143\u4FE1\u606F + \u5404\u7C7B\u578B Memory \u8BA1\u6570 + TODO \u7EDF\u8BA1 + \u6700\u8FD1\u6D3B\u52A8 + \u662F\u5426\u521D\u59CB\u5316\uFF09\u3002\u6BD4 project_continue \u66F4\u8F7B\u3001\u4E0D\u9700\u8981\u6392\u5E8F\u7B97\u6CD5\u3002",
     parameters: {
       path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF09\uFF0C\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD" }
     },
-    output: { schema: baseOutputSchema3, render: (_args, value) => renderStatus(value) },
+    output: { schema: baseOutputSchema4, render: (_args, value) => renderStatus(value) },
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
@@ -2521,7 +2984,7 @@ function renderStatus(value) {
 }
 
 // src/tools/ask.js
-import { defineTool as defineTool7 } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool8 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/embeddings.js
 import { createHash } from "node:crypto";
@@ -2672,7 +3135,7 @@ async function embedQuery({ query, config, resolveCredential, signal, fetchImpl 
 }
 
 // src/tools/ask.js
-var baseOutputSchema4 = {
+var baseOutputSchema5 = {
   type: "object",
   additionalProperties: true,
   properties: {
@@ -2732,39 +3195,31 @@ function buildRagPrompt(question, sources, projectInfo) {
   parts.push("\u8BF7\u7528\u7B80\u6D01\u7684\u4E2D\u6587\u56DE\u7B54\uFF083-5 \u53E5\u8BDD\uFF09\uFF0C\u5E76\u5728\u672B\u5C3E\u5217\u51FA\u5F15\u7528\u7684\u6765\u6E90\u7F16\u53F7 [1][2]...\u3002\u5982\u679C sources \u65E0\u6CD5\u56DE\u7B54\uFF0C\u76F4\u63A5\u8BF4\u300E\u4FE1\u606F\u4E0D\u8DB3\u300F\u3002");
   return parts.join("\n");
 }
-async function synthesizeAnswer(exec, question, sources, projectInfo) {
+function executionRoute3(exec) {
+  if (!exec) return null;
+  return resolveSessionRoute(exec.session) || resolveSessionRoute(exec.currentSession) || resolveSessionRoute(exec.agent && exec.agent.session) || resolveSessionRoute(exec.agent) || resolveSessionRoute(exec.ctx && exec.ctx.session);
+}
+function executionSessionId3(exec) {
+  return exec && (exec.sessionId || exec.session && exec.session.id || exec.agent && exec.agent.sessionId || exec.agent && exec.agent.session && exec.agent.session.id) || null;
+}
+async function synthesizeAnswer({ llm, route, sessionId, question, sources, projectInfo }) {
   if (!sources || sources.length === 0) return null;
-  let llm = null;
-  try {
-    const ctx = exec && exec.ctx;
-    llm = ctx && (ctx.get ? ctx.get("llm") : ctx.llm);
-  } catch (e) {
-    llm = null;
-  }
   if (!llm || typeof llm.stream !== "function") return null;
+  if (!route || !route.provider || !route.model) return null;
   const prompt = buildRagPrompt(question, sources, projectInfo);
-  const options = {
-    // provider 留空：DSH 通常有默认 route；不传让系统选
-    messages: [{ role: "user", content: prompt }]
-  };
   try {
-    const iterable = llm.stream(options);
-    if (!iterable || typeof iterable[Symbol.asyncIterator] !== "function") return null;
-    let collected = "";
-    for await (const chunk of iterable) {
-      if (!chunk) continue;
-      if (typeof chunk.text === "string") collected += chunk.text;
-      else if (typeof chunk.content === "string") collected += chunk.content;
-      else if (typeof chunk.delta === "string") collected += chunk.delta;
-      if (collected.length > 8e3) break;
-    }
-    return collected.trim() || null;
+    const text = await streamLlmText(llm, route, prompt, sessionId, 3e4, {
+      system: "\u4F60\u662F dsh-project-brain \u52A9\u624B\uFF0C\u4EC5\u57FA\u4E8E\u63D0\u4F9B\u7684 sources \u56DE\u7B54\uFF0C\u4E0D\u8981\u7F16\u9020\u4FE1\u606F\u3002",
+      maxTokens: 800,
+      purpose: "project-brain-ask"
+    });
+    return text && text.trim() ? text.trim() : null;
   } catch (e) {
     return null;
   }
 }
-function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCredential }) {
-  return defineTool7({
+function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCredential, getLlm }) {
+  return defineTool8({
     name: "project_ask",
     description: "dsh-project-brain: \u81EA\u7136\u8BED\u8A00\u67E5\u8BE2\u9879\u76EE\u8111\u3002\u9ED8\u8BA4\u4F7F\u7528\u672C\u5730 BM25 \u68C0\u7D22\uFF1B\u914D\u7F6E\u540E\u53EF\u4F7F\u7528\u6DF7\u5408\u5411\u91CF\u68C0\u7D22\uFF0C\u8FD4\u56DE Top-K sources + \u9879\u76EE\u6982\u89C8\u3002useLLM=true \u65F6\u989D\u5916\u8C03 LLM \u5408\u6210\u7B54\u6848\uFF08RAG \u98CE\u683C\uFF09\u3002\u53EF\u7528\u4E8E\u56DE\u7B54\u300C\u4E3A\u4EC0\u4E48\u8FD9\u4E48\u8BBE\u8BA1 / \u4E4B\u524D\u8E29\u8FC7\u4EC0\u4E48\u5751 / \u6700\u8FD1\u6539\u4E86\u4EC0\u4E48\u300D\u7B49\u95EE\u9898\u3002",
     parameters: {
@@ -2773,7 +3228,7 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
       useLLM: { type: "boolean", description: "\u662F\u5426\u8C03 LLM \u5408\u6210\u7B54\u6848\uFF08\u9ED8\u8BA4 false\uFF0C\u7EAF\u89C4\u5219\u8FD4\u56DE sources\uFF09" },
       path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" }
     },
-    output: { schema: baseOutputSchema4, render: (_args, value) => renderAsk(value) },
+    output: { schema: baseOutputSchema5, render: (_args, value) => renderAsk(value) },
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
@@ -2896,7 +3351,14 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
         let llmError = null;
         if (useLLM) {
           try {
-            answer = await synthesizeAnswer(exec, question, sources, projectInfo);
+            answer = await synthesizeAnswer({
+              llm: getLlm ? getLlm() : null,
+              route: executionRoute3(exec),
+              sessionId: executionSessionId3(exec),
+              question,
+              sources,
+              projectInfo
+            });
             llmUsed = answer != null;
           } catch (e) {
             llmError = String(e && e.message || e);
@@ -2981,8 +3443,8 @@ function renderAsk(value) {
 }
 
 // src/tools/dream.js
-import { defineTool as defineTool8 } from "@deepseek-ai/dsh-tools";
-var baseOutputSchema5 = {
+import { defineTool as defineTool9 } from "@deepseek-ai/dsh-tools";
+var baseOutputSchema6 = {
   type: "object",
   additionalProperties: true,
   properties: {
@@ -2991,7 +3453,7 @@ var baseOutputSchema5 = {
   }
 };
 function buildDreamTool({ fs, sandboxPolicy }) {
-  return defineTool8({
+  return defineTool9({
     name: "project_dream",
     description: "dsh-project-brain: \u9879\u76EE\u8111\u8F7B\u91CF\u6574\u5408\uFF08Dream \u6A21\u5F0F\uFF09\u3002\u626B\u63CF memory.jsonl \u505A\u53BB\u91CD\u5019\u9009 +\u5F52\u6863\u5EFA\u8BAE\uFF0C\u8F93\u51FA plannedActions\uFF1B\u9ED8\u8BA4 dryRun=true\uFF08\u4E0D\u76F4\u63A5\u6539 jsonl\uFF09\uFF0CdryRun=false \u65F6\u5B9E\u9645 commit\uFF08merge + archive\uFF09\u3002full \u6A21\u5F0F\uFF08v0.3.12\uFF09\uFF1A\u5728 light \u57FA\u7840\u4E0A\u989D\u5916\u6E05\u7406 archived \u884C + \u6309 importance \u91CD\u6392\uFF1B\u67B6\u6784 diff / \u5411\u91CF\u5408\u5E76\u7559\u4F5C v0.4.x\u3002",
     parameters: {
@@ -3002,7 +3464,7 @@ function buildDreamTool({ fs, sandboxPolicy }) {
       archiveAgeDays: { type: "number", description: "\u5F52\u6863\u6700\u5C0F\u5E74\u9F84\uFF08\u5929\uFF0C\u9ED8\u8BA4 30\uFF09" },
       path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" }
     },
-    output: { schema: baseOutputSchema5, render: (_args, value) => renderDream(value) },
+    output: { schema: baseOutputSchema6, render: (_args, value) => renderDream(value) },
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
@@ -3115,7 +3577,7 @@ function renderDream(value) {
 }
 
 // src/tools/diff.js
-import { defineTool as defineTool9 } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool10 } from "@deepseek-ai/dsh-tools";
 
 // src/host/diff/detector.js
 import { readFileSync, existsSync, readdirSync } from "node:fs";
@@ -3405,7 +3867,8 @@ function readHead(gitDir) {
   }
   if (!head) return null;
   if (head.startsWith("ref: ")) {
-    const refPath = join(gitDir, head.slice("ref: ".length));
+    const refName = head.slice("ref: ".length);
+    const refPath = join(gitDir, refName);
     let commit = null;
     if (existsSync(refPath)) {
       try {
@@ -3421,7 +3884,7 @@ function readHead(gitDir) {
           for (const line of content.split(/\r?\n/)) {
             if (line.startsWith("#") || !line.trim()) continue;
             const m = line.match(/^([0-9a-f]{40})\s+(\S+)$/);
-            if (m && m[2] === head.slice("ref: ".length)) {
+            if (m && m[2] === refName) {
               commit = m[1];
               break;
             }
@@ -3431,7 +3894,8 @@ function readHead(gitDir) {
       }
     }
     if (!commit) return null;
-    return { branch: head.slice("refs/heads/".length), commit };
+    const branch = refName.startsWith("refs/heads/") ? refName.slice("refs/heads/".length) : refName;
+    return { branch, commit };
   }
   return { branch: null, commit: head };
 }
@@ -3486,6 +3950,56 @@ function readCommit(gitDir, commitHash) {
     else if (line === "") break;
   }
   return tree ? { tree, parents } : null;
+}
+function readCommitFull(gitDir, commitHash) {
+  const obj = readGitObject(gitDir, commitHash);
+  if (!obj || obj.type !== "commit") return null;
+  const text = obj.content.toString("utf8");
+  const headerEnd = text.indexOf("\n\n");
+  const headerText = headerEnd >= 0 ? text.slice(0, headerEnd) : text;
+  const message = headerEnd >= 0 ? text.slice(headerEnd + 2).replace(/\s+$/, "") : "";
+  let tree = null;
+  const parents = [];
+  let author = "", authorEmail = "", authorTimestamp = 0, authorTz = "";
+  let committer = "", committerEmail = "", committerTimestamp = 0, committerTz = "";
+  for (const line of headerText.split("\n")) {
+    if (line.startsWith("tree ")) tree = line.slice(5).trim();
+    else if (line.startsWith("parent ")) parents.push(line.slice(7).trim());
+    else if (line.startsWith("author ")) {
+      const m = line.match(/^author\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})$/);
+      if (m) {
+        author = m[1];
+        authorEmail = m[2];
+        authorTimestamp = Number(m[3]);
+        authorTz = m[4];
+      }
+    } else if (line.startsWith("committer ")) {
+      const m = line.match(/^committer\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})$/);
+      if (m) {
+        committer = m[1];
+        committerEmail = m[2];
+        committerTimestamp = Number(m[3]);
+        committerTz = m[4];
+      }
+    }
+  }
+  if (!tree) return null;
+  return {
+    hash: commitHash,
+    shortHash: commitHash.substring(0, 7),
+    tree,
+    parents,
+    author,
+    authorEmail,
+    authorTimestamp,
+    authorTz,
+    committer,
+    committerEmail,
+    committerTimestamp,
+    committerTz,
+    message,
+    subject: message.split("\n")[0] || ""
+  };
 }
 async function detectChanges({ projectPath, since = "1 day ago" }) {
   const gitDir = join(projectPath, ".git");
@@ -3709,7 +4223,7 @@ function parseLLMArchitectureResponse(text) {
 
 // src/tools/diff.js
 function buildDiffTool({ fs, sandboxPolicy }) {
-  return defineTool9({
+  return defineTool10({
     name: "project_diff",
     description: "dsh-project-brain v0.4.2: \u7528 node \u5185\u7F6E fs/zlib \u8BFB .git \u4ED3\u5E93\uFF08\u4E0D\u4F9D\u8D56 DSH shell service\uFF09\u2192 \u8C03 user-configured LLM\uFF08OpenAI \u517C\u5BB9 API\uFF09\u5206\u6790\u67B6\u6784\u53D8\u5316 \u2192 \u751F\u6210 architecture memory\u3002 \u4E0E project_dream \u533A\u522B\uFF1Adream \u6E05\u7406\u91CD\u590D memory\uFF0Cdiff \u4E3B\u52A8\u7406\u89E3\u4EE3\u7801\u5C42\u67B6\u6784\u53D8\u5316\uFF08\u65B0\u589E\u6A21\u5757 / \u65B0\u4F9D\u8D56 / \u65B0\u6A21\u5F0F\uFF09\u3002 dryRun=true \u65F6\u53EA\u626B\u63CF\u4E0D\u5199 memory\uFF1B\u9ED8\u8BA4 false \u4F1A\u8FFD\u52A0 type=architecture / type=change \u7684 memory \u5230 memory.jsonl\u3002",
     parameters: {
@@ -4044,6 +4558,311 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
   };
 }
 
+// src/host/git/history.js
+import { join as join2, relative, sep } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync3, readdirSync as readdirSync2 } from "node:fs";
+var MAX_FILES = 8;
+function diffCommitTrees(gitDir, currentTreeHash, parentTreeHash) {
+  const currentFiles = collectTreeFiles(gitDir, currentTreeHash);
+  const parentFiles = parentTreeHash ? collectTreeFiles(gitDir, parentTreeHash) : {};
+  const allPaths = /* @__PURE__ */ new Set([...Object.keys(currentFiles), ...Object.keys(parentFiles)]);
+  const added = [];
+  const modified = [];
+  const removed = [];
+  const files = [];
+  for (const path2 of allPaths) {
+    const cur = currentFiles[path2];
+    const par = parentFiles[path2];
+    if (par === void 0) {
+      added.push(path2);
+      files.push(path2);
+    } else if (cur === void 0) {
+      removed.push(path2);
+      files.push(path2);
+    } else if (cur !== par) {
+      modified.push(path2);
+      files.push(path2);
+    }
+  }
+  return {
+    files: files.slice(0, MAX_FILES),
+    totalFiles: files.length,
+    added: added.length,
+    modified: modified.length,
+    removed: removed.length,
+    truncated: files.length > MAX_FILES
+  };
+}
+var GIT_DIR_NAMES = [".git"];
+function findGitDir(projectPath) {
+  if (!projectPath) return null;
+  for (const name2 of GIT_DIR_NAMES) {
+    const candidate = join2(projectPath, name2);
+    if (existsSync3(candidate)) {
+      try {
+        if (existsSync3(join2(candidate, "HEAD"))) return candidate;
+      } catch (e) {
+      }
+    }
+  }
+  return null;
+}
+function readHeadsBranches(gitDir) {
+  const out = [];
+  const headsDir = join2(gitDir, "refs", "heads");
+  if (!existsSync3(headsDir)) return out;
+  const walk = (dir, prefix) => {
+    let entries;
+    try {
+      entries = readdirSync2(dir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join2(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, prefix + entry.name + "/");
+      } else if (entry.isFile()) {
+        try {
+          const hash = readFileSync3(full, "utf8").trim();
+          if (/^[0-9a-f]{40}$/i.test(hash)) {
+            out.push({ name: prefix + entry.name, commit: hash.toLowerCase() });
+          }
+        } catch (e) {
+        }
+      }
+    }
+  };
+  walk(headsDir, "");
+  return out;
+}
+function readPackedBranches(gitDir) {
+  const out = [];
+  const path2 = join2(gitDir, "packed-refs");
+  if (!existsSync3(path2)) return out;
+  try {
+    const content = readFileSync3(path2, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      if (line.startsWith("#") || !line.trim()) continue;
+      const m = line.match(/^([0-9a-f]{40})\s+refs\/heads\/(.+)$/);
+      if (m) out.push({ name: m[2], commit: m[1].toLowerCase() });
+    }
+  } catch (e) {
+  }
+  return out;
+}
+function getGitBranches(projectPath) {
+  const gitDir = findGitDir(projectPath);
+  if (!gitDir) return { available: false, branches: [], currentBranch: null };
+  const head = readHead(gitDir);
+  const fromLoose = readHeadsBranches(gitDir);
+  const fromPacked = readPackedBranches(gitDir);
+  const map = /* @__PURE__ */ new Map();
+  for (const b of fromPacked) map.set(b.name, b);
+  for (const b of fromLoose) map.set(b.name, b);
+  const branches = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    available: true,
+    currentBranch: head && head.branch || null,
+    branches
+  };
+}
+function getGitHistory({ projectPath, limit = 50, branch = null } = {}) {
+  const gitDir = findGitDir(projectPath);
+  if (!gitDir) return { available: false, error: "not a git repository", commits: [] };
+  const head = readHead(gitDir);
+  if (!head || !head.commit) return { available: false, error: "no HEAD commit", commits: [] };
+  const commits = [];
+  const visited = /* @__PURE__ */ new Set();
+  const max = Math.max(1, Math.min(500, Number(limit) || 50));
+  let current = head.commit.toLowerCase();
+  let truncated = false;
+  while (current && !visited.has(current) && commits.length < max) {
+    visited.add(current);
+    const c = readCommitFull(gitDir, current);
+    if (!c) {
+      break;
+    }
+    const firstParent = c.parents && c.parents[0] || null;
+    const extraParents = (c.parents || []).slice(1);
+    let diff = { files: [], totalFiles: 0, added: 0, modified: 0, removed: 0, truncated: false };
+    try {
+      let parentTreeHash = null;
+      if (firstParent) {
+        const parentObj = readGitObject(gitDir, firstParent);
+        if (parentObj && parentObj.type === "commit") {
+          const parentText = parentObj.content.toString("utf8");
+          const treeMatch = parentText.match(/^tree\s+([0-9a-f]{40})\s*$/m);
+          if (treeMatch) parentTreeHash = treeMatch[1];
+        }
+      }
+      diff = diffCommitTrees(gitDir, c.tree, parentTreeHash);
+    } catch (e) {
+    }
+    commits.push({
+      hash: c.hash,
+      shortHash: c.shortHash,
+      subject: c.subject || "",
+      body: c.message && c.message.length > (c.subject || "").length ? c.message.slice((c.subject || "").length).replace(/^\s+/, "").slice(0, 400) : "",
+      author: c.author || "",
+      authorEmail: c.authorEmail || "",
+      timestamp: Number(c.authorTimestamp) || 0,
+      isoTime: c.authorTimestamp ? new Date(Number(c.authorTimestamp) * 1e3).toISOString() : "",
+      firstParent,
+      extraParents,
+      isMerge: extraParents.length > 0,
+      // 文件变更（基于 tree diff）
+      filesChanged: diff.files,
+      filesChangedTotal: diff.totalFiles,
+      filesAdded: diff.added,
+      filesModified: diff.modified,
+      filesRemoved: diff.removed,
+      filesTruncated: diff.truncated
+    });
+    current = firstParent;
+  }
+  if (current && !visited.has(current) === false) {
+    truncated = true;
+  }
+  return {
+    available: true,
+    currentBranch: head && head.branch || null,
+    head: head.commit,
+    total: commits.length,
+    truncated,
+    commits
+  };
+}
+var WORKTREE_IGNORE_DIRS = /* @__PURE__ */ new Set([
+  ".git",
+  ".project-brain",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  "out",
+  "target",
+  "__pycache__",
+  ".DS_Store",
+  ".venv",
+  "venv",
+  "vendor",
+  ".idea",
+  ".vscode",
+  ".turbo",
+  ".cache",
+  ".pnpm-store"
+]);
+var WORKTREE_IGNORE_SUFFIXES = [".log", ".bak", ".tmp", ".swp", ".swo"];
+var WORKTREE_IGNORE_NAMES = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db"]);
+function collectWorkTreeFiles(projectPath) {
+  const out = /* @__PURE__ */ Object.create(null);
+  if (!projectPath) return out;
+  function walk(dir) {
+    let entries;
+    try {
+      entries = readdirSync2(dir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const entry of entries) {
+      const name2 = entry.name;
+      if (WORKTREE_IGNORE_NAMES.has(name2)) continue;
+      if (WORKTREE_IGNORE_DIRS.has(name2)) continue;
+      const full = join2(dir, name2);
+      let isDir = entry.isDirectory();
+      if (!isDir && entry.isSymbolicLink()) {
+        continue;
+      }
+      if (!isDir && WORKTREE_IGNORE_SUFFIXES.some((suf) => name2.endsWith(suf))) continue;
+      if (isDir) {
+        walk(full);
+      } else if (entry.isFile()) {
+        let rel;
+        try {
+          rel = relative(projectPath, full).split(sep).join("/");
+        } catch (e) {
+          continue;
+        }
+        if (!rel || rel.startsWith("..")) continue;
+        out[rel] = true;
+      }
+    }
+  }
+  walk(projectPath);
+  return out;
+}
+function findReadableReferenceTree(gitDir, startCommitHash) {
+  let current = startCommitHash;
+  const visited = /* @__PURE__ */ new Set();
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const c = readCommitFull(gitDir, current);
+    if (!c) break;
+    const files = collectTreeFiles(gitDir, c.tree);
+    if (Object.keys(files).length > 0) {
+      return { files, commitHash: current, commitShort: current.substring(0, 7) };
+    }
+    if (!c.parents || !c.parents[0]) break;
+    current = c.parents[0];
+  }
+  return null;
+}
+function getWorkTreeChanges({ projectPath, maxFiles = 50 } = {}) {
+  const gitDir = findGitDir(projectPath);
+  if (!gitDir) return { available: false, error: "not a git repository" };
+  const head = readHead(gitDir);
+  if (!head || !head.commit) return { available: false, error: "no HEAD commit" };
+  const headCommit = readCommitFull(gitDir, head.commit);
+  if (!headCommit) return { available: false, error: "cannot read HEAD commit" };
+  let headTreeFiles = collectTreeFiles(gitDir, headCommit.tree);
+  let reference = "head";
+  let referenceCommit = head.commit;
+  if (Object.keys(headTreeFiles).length === 0) {
+    const fallback = findReadableReferenceTree(gitDir, head.commit);
+    if (!fallback) {
+      return {
+        available: false,
+        error: "HEAD tree \u4E0D\u53EF\u8BFB\uFF08pack \u89E3\u6790\u9650\u5236\uFF09\uFF0C\u65E0\u6CD5\u53EF\u9760\u68C0\u6D4B\u5DE5\u4F5C\u6811\u53D8\u66F4"
+      };
+    }
+    headTreeFiles = fallback.files;
+    reference = "fallback";
+    referenceCommit = fallback.commitHash;
+  }
+  const headPaths = Object.keys(headTreeFiles);
+  const workFiles = collectWorkTreeFiles(projectPath);
+  const workPaths = Object.keys(workFiles);
+  const untracked = [];
+  const deleted = [];
+  for (const p of workPaths) {
+    if (!Object.prototype.hasOwnProperty.call(headTreeFiles, p)) untracked.push(p);
+  }
+  for (const p of headPaths) {
+    if (!Object.prototype.hasOwnProperty.call(workFiles, p)) deleted.push(p);
+  }
+  untracked.sort();
+  deleted.sort();
+  const cap = Math.max(1, Math.min(200, Number(maxFiles) || 50));
+  return {
+    available: true,
+    head: head.commit,
+    reference,
+    referenceCommit,
+    referenceCommitShort: referenceCommit.substring(0, 7),
+    untracked,
+    deleted,
+    untrackedTotal: untracked.length,
+    deletedTotal: deleted.length,
+    workFilesTotal: workPaths.length,
+    truncatedUntracked: untracked.length > cap,
+    truncatedDeleted: deleted.length > cap,
+    untrackedSample: untracked.slice(0, cap),
+    deletedSample: deleted.slice(0, cap)
+  };
+}
+
 // src/host/rpc/sidebar.js
 var PROJECT_BRAIN_RPC_CHANNEL = "/project-brain";
 function getCwdBySession(ctx, sessionId) {
@@ -4151,6 +4970,71 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
           scan: result.data,
           preview
         });
+      }
+      if (endpoint === "suggest") {
+        const useLLM = !(payload && payload.useLLM === false);
+        const suggestTool = buildSuggestTool({
+          fs,
+          sandboxPolicy,
+          getLlm: architectureRuntime.getLlm
+        });
+        const trustedPath = payload && typeof payload.workspacePath === "string" && payload.workspacePath.trim() ? payload.workspacePath : projectPath;
+        const args = { path: trustedPath };
+        if (!useLLM) args.useLLM = false;
+        let toolResult;
+        try {
+          toolResult = await suggestTool.execute(args, {
+            session,
+            sessionId: payload && payload.sessionId,
+            agent: ctx && ctx.agent || null,
+            ctx
+          });
+        } catch (error) {
+          return rpcError("SUGGEST_FAILED", String(error && error.message || error), { endpoint });
+        }
+        if (!toolResult || toolResult.ok === false) {
+          const error = toolResult && toolResult.data && toolResult.data.error;
+          return rpcError(
+            error && error.code || "SUGGEST_FAILED",
+            error && error.message || "\u667A\u80FD\u7EED\u63A5\u5931\u8D25",
+            { endpoint, projectPath: trustedPath }
+          );
+        }
+        return rpcOk({
+          projectPath: trustedPath,
+          suggestion: toolResult.data
+        });
+      }
+      if (endpoint === "git") {
+        const limit = Math.max(1, Math.min(500, Number(payload && payload.limit) || 50));
+        const branch = payload && typeof payload.branch === "string" && payload.branch.trim() ? payload.branch.trim() : null;
+        try {
+          const history = getGitHistory({ projectPath, limit, branch });
+          const branches = getGitBranches(projectPath);
+          let workTree = { available: false };
+          try {
+            workTree = getWorkTreeChanges({ projectPath, maxFiles: 50 });
+          } catch (e) {
+            workTree = { available: false, error: String(e && e.message || e) };
+          }
+          return rpcOk({
+            projectPath,
+            available: history.available === true,
+            currentBranch: history.currentBranch || branches && branches.currentBranch || null,
+            head: history.head || null,
+            total: history.total || 0,
+            commits: history.commits || [],
+            branches: branches && branches.branches || [],
+            workTree,
+            error: history.error || null
+          });
+        } catch (error) {
+          return rpcError(
+            "GIT_HISTORY_FAILED",
+            String(error && error.message || error),
+            { endpoint, projectPath }
+          );
+        }
       }
       if (endpoint === "action") {
         const action = payload && typeof payload.action === "string" ? payload.action : "";
@@ -4363,7 +5247,11 @@ function truncateToTokens(md, maxTokens) {
 function topKMemories(memories, n) {
   return retrieveMemories({ memories, topK: n }).map((hit) => hit.memory);
 }
-function renderContext(projectData, memories, todos, recentEvents, activeTodo) {
+function latestSessionSummary(timeline) {
+  const summaries = (timeline || []).filter((e) => e && e.eventType === "session_summary" && e.summary && String(e.summary).trim()).sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+  return summaries.length ? String(summaries[0].summary).trim() : null;
+}
+function renderContext(projectData, memories, todos, recentEvents, activeTodo, lastSummary) {
   const lines = [];
   lines.push("## Project Brain Context\uFF08\u81EA\u52A8\u6CE8\u5165 \xB7 v0.3.0\uFF09");
   lines.push("");
@@ -4410,12 +5298,18 @@ function renderContext(projectData, memories, todos, recentEvents, activeTodo) {
     }
     lines.push("");
   }
+  if (lastSummary) {
+    lines.push("### \u4E0A\u6B21\u4F1A\u8BDD\u603B\u7ED3");
+    lines.push("> " + lastSummary.replace(/\n+/g, " "));
+    lines.push("");
+  }
   if (activeTodo) {
     lines.push(`> \u26A1 \u5F53\u524D\u8FDB\u884C\u4E2D\uFF1A**${activeTodo.title}** \uFF08\u4F18\u5148\u7EA7 ${activeTodo.priority || "medium"}\uFF09`);
   }
   lines.push("");
   lines.push("### \u9879\u76EE\u8BB0\u5FC6\u7EA6\u5B9A");
-  lines.push("- \u5F00\u53D1\u4E2D\u51FA\u73B0\u7A33\u5B9A\u7684\u67B6\u6784\u51B3\u7B56\u3001\u9700\u6C42\u7EA6\u675F\u3001Bug \u6839\u56E0\u6216\u53EF\u590D\u7528\u6559\u8BAD\u65F6\uFF0C\u8C03\u7528 `project_memory_add` \u6301\u4E45\u5316\u3002");
+  lines.push("- \u7528\u6237\u8BF4\u300C\u8BB0\u4F4F X / \u4EE5\u540E Y / \u4E0D\u8981 Z / \u8BB0\u4E00\u4E0B\u300D\u7B49\u8868\u8FBE\u957F\u671F\u610F\u56FE\u7684\u6307\u4EE4\u65F6\uFF0C\u7ACB\u5373\u8C03 `project_memory_add` \u5199\u5165\u5F53\u524D\u9879\u76EE\u7684 `.project-brain/memory.jsonl`\uFF0C\u65E0\u9700\u518D\u6B21\u786E\u8BA4\uFF1B\u82E5\u662F\u8DE8\u9879\u76EE\u901A\u7528\u504F\u597D\uFF0C\u518D\u540C\u6B65\u8C03 `memory_save` \u5199\u5165 dsh-mneme\u3002");
+  lines.push("- \u5F00\u53D1\u4E2D\u51FA\u73B0\u7A33\u5B9A\u7684\u67B6\u6784\u51B3\u7B56\u3001\u9700\u6C42\u7EA6\u675F\u3001Bug \u6839\u56E0\u6216\u53EF\u590D\u7528\u6559\u8BAD\u65F6\uFF0C\u4E3B\u52A8\u8C03 `project_memory_add` \u6301\u4E45\u5316\u3002");
   lines.push("- \u65B0\u4EFB\u52A1\u7528 `project_todo_add`\uFF0C\u72B6\u6001\u53D8\u5316\u7528 `project_todo_update` / `project_todo_done`\uFF0C\u4E0D\u8981\u53EA\u7559\u5728\u5F53\u524D\u5BF9\u8BDD\u91CC\u3002");
   lines.push("- \u9879\u76EE\u7ED3\u6784\u53D1\u751F\u660E\u663E\u53D8\u5316\u540E\u8C03\u7528 `project_rescan`\uFF1B\u9700\u8981\u7406\u89E3\u6700\u8FD1\u4EE3\u7801\u53D8\u5316\u65F6\u8C03\u7528 `project_diff`\u3002");
   return lines.join("\n");
@@ -4451,7 +5345,8 @@ function getCachedSection(projectPath) {
   const top = topKMemories(memories, 5);
   const recent = recentTimeline(timeline, 3);
   const inProgress = activeTodos2.find((t) => t.status === "in_progress");
-  let md = renderContext(project, top, activeTodos2, recent, inProgress);
+  const lastSummary = latestSessionSummary(timeline);
+  let md = renderContext(project, top, activeTodos2, recent, inProgress, lastSummary);
   md = truncateToTokens(md, DEFAULT_MAX_TOKENS);
   return md;
 }
@@ -4550,7 +5445,7 @@ function setupInjector(ctx, fs, sandboxPolicy) {
 
 // src/host/memory/session-extractor.js
 import { createHash as createHash2 } from "node:crypto";
-import { isAbsolute, normalize, sep } from "node:path";
+import { isAbsolute, normalize, sep as sep2 } from "node:path";
 var ALLOWED_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "issue", "context"]);
 function clean(value, limit) {
   return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
@@ -4590,7 +5485,7 @@ function boundedSessionTranscript(session, maxChars = 16e3) {
 function safeRelatedFile(value) {
   const file = clean(value, 240).replace(/\\/g, "/");
   if (!file || isAbsolute(file) || file.startsWith("../") || file === "..") return null;
-  const normalized = normalize(file).split(sep).join("/");
+  const normalized = normalize(file).split(sep2).join("/");
   return normalized.startsWith("../") || normalized === ".." ? null : normalized;
 }
 function fingerprint(item) {
@@ -4599,30 +5494,36 @@ ${item.title}
 ${item.content}`.toLowerCase().replace(/\s+/g, " ").trim();
   return createHash2("sha256").update(normalized, "utf8").digest("hex").slice(0, 24);
 }
-function sessionMemoryPrompt(transcript, maxItems) {
-  return [
-    "\u4ECE\u4E0B\u9762\u7684\u8F6F\u4EF6\u5F00\u53D1 Session \u4E2D\u63D0\u53D6\u503C\u5F97\u8DE8\u4F1A\u8BDD\u957F\u671F\u4FDD\u5B58\u7684\u9879\u76EE\u77E5\u8BC6\u3002",
+function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
+  const parts = [
+    "\u4ECE\u4E0B\u9762\u7684\u8F6F\u4EF6\u5F00\u53D1 Session \u4E2D\u63D0\u53D6\u503C\u5F97\u8DE8\u4F1A\u8BDD\u957F\u671F\u4FDD\u5B58\u7684\u9879\u76EE\u77E5\u8BC6\uFF0C\u5E76\u603B\u7ED3\u672C\u6B21\u4F1A\u8BDD\u505A\u4E86\u4EC0\u4E48\u3002",
     "\u53EA\u4FDD\u7559\u6709\u660E\u786E\u8BC1\u636E\u7684\u67B6\u6784\u51B3\u7B56\u3001\u7A33\u5B9A\u9700\u6C42\u3001Bug \u6839\u56E0\u4E0E\u4FEE\u590D\u3001\u53EF\u590D\u7528\u6559\u8BAD\u3001\u957F\u671F\u95EE\u9898\u6216\u91CD\u8981\u9879\u76EE\u80CC\u666F\u3002",
-    "\u5FFD\u7565\u5BD2\u6684\u3001\u4E34\u65F6\u6B65\u9AA4\u3001\u547D\u4EE4\u8F93\u51FA\u3001\u672A\u786E\u8BA4\u731C\u6D4B\u3001\u4E2A\u4EBA\u4FE1\u606F\u3001\u51ED\u636E\u548C\u4EC5\u6709\u6587\u4EF6\u53D8\u66F4\u7684\u6D41\u6C34\u8D26\uFF1B\u6CA1\u6709\u7A33\u5B9A\u77E5\u8BC6\u65F6\u8FD4\u56DE\u7A7A\u6570\u7EC4\u3002",
-    `\u6700\u591A ${maxItems} \u6761\u3002\u53EA\u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002`,
-    "\u683C\u5F0F\uFF1A" + JSON.stringify({ memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "\u7B80\u6D01\u6807\u9898", content: "\u81EA\u5305\u542B\u7684\u4E8B\u5B9E\u4E0E\u7406\u7531", importance: 0.8, confidence: 0.9, relatedFiles: ["\u76F8\u5BF9\u8DEF\u5F84"], tags: ["\u6807\u7B7E"] }] }),
-    "Session\uFF1A\n" + transcript
-  ].join("\n");
+    "\u5FFD\u7565\u5BD2\u6684\u3001\u4E34\u65F6\u6B65\u9AA4\u3001\u547D\u4EE4\u8F93\u51FA\u3001\u672A\u786E\u8BA4\u731C\u6D4B\u3001\u4E2A\u4EBA\u4FE1\u606F\u3001\u51ED\u636E\uFF1B\u6CA1\u6709\u7A33\u5B9A\u77E5\u8BC6\u65F6 memories \u8FD4\u56DE\u7A7A\u6570\u7EC4\u3002",
+    "summary \u7528 2-4 \u53E5\u8BDD\u5BA2\u89C2\u6982\u62EC\u672C\u6B21\u4F1A\u8BDD\u7684\u5F00\u53D1\u610F\u56FE\u3001\u4E3B\u8981\u52A8\u4F5C\u4E0E\u4EA7\u51FA\uFF08\u4F5C\u4E3A\u4E0B\u4E00\u4E2A Session \u7684\u7EED\u63A5\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u7F16\u9020\uFF09\u3002",
+    `\u6700\u591A ${maxItems} \u6761\u8BB0\u5FC6\u3002\u53EA\u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002`,
+    "\u683C\u5F0F\uFF1A" + JSON.stringify({ summary: "\u672C\u6B21\u4F1A\u8BDD\u603B\u7ED3\uFF082-4 \u53E5\u8BDD\uFF09", memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "\u7B80\u6D01\u6807\u9898", content: "\u81EA\u5305\u542B\u7684\u4E8B\u5B9E\u4E0E\u7406\u7531", importance: 0.8, confidence: 0.9, relatedFiles: ["\u76F8\u5BF9\u8DEF\u5F84"], tags: ["\u6807\u7B7E"] }] })
+  ];
+  if (diffEvidence && String(diffEvidence).trim()) {
+    parts.push("\u3010git diff \u53C2\u8003\u8BC1\u636E\uFF08\u4EC5\u8F85\u52A9\u6838\u5BF9\u6587\u4EF6\u7EA7\u4E8B\u5B9E\uFF0C\u4E0D\u8981\u9010\u6761\u590D\u8FF0\u4E3A\u8BB0\u5FC6\uFF09\u3011\n" + String(diffEvidence).trim());
+  }
+  parts.push("Session \u5BF9\u8BDD\uFF1A\n" + transcript);
+  return parts.join("\n");
 }
-async function extractSessionMemories({ session, llm, route, sessionId, existingMemories = [], config = {}, now = Date.now() } = {}) {
-  if (config.sessionSemanticMemoryEnabled === false) return { status: "disabled", memories: [] };
-  if (!llm || typeof llm.stream !== "function") return { status: "llm_unavailable", memories: [] };
-  if (!route || !route.provider || !route.model) return { status: "route_unavailable", memories: [] };
+async function extractSessionMemories({ session, llm, route, sessionId, existingMemories = [], config = {}, now = Date.now(), diffEvidence = "" } = {}) {
+  if (config.sessionSemanticMemoryEnabled === false) return { status: "disabled", memories: [], summary: "" };
+  if (!llm || typeof llm.stream !== "function") return { status: "llm_unavailable", memories: [], summary: "" };
+  if (!route || !route.provider || !route.model) return { status: "route_unavailable", memories: [], summary: "" };
   const maxChars = Math.max(2e3, Math.min(4e4, Number(config.sessionSemanticMaxChars) || 16e3));
   const maxItems = Math.max(1, Math.min(8, Number(config.sessionSemanticMaxItems) || 4));
   const transcript = boundedSessionTranscript(session, maxChars);
-  if (transcript.length < 40) return { status: "empty_transcript", memories: [] };
-  const text = await streamLlmText(llm, route, sessionMemoryPrompt(transcript, maxItems), sessionId, Number(config.sessionSemanticTimeoutMs) || 3e4, {
+  if (transcript.length < 40) return { status: "empty_transcript", memories: [], summary: "" };
+  const text = await streamLlmText(llm, route, sessionMemoryPrompt(transcript, maxItems, diffEvidence), sessionId, Number(config.sessionSemanticTimeoutMs) || 3e4, {
     system: "Extract durable, evidence-based software-project memory as strict JSON only. Never reproduce credentials or personal data.",
     maxTokens: 2600,
     purpose: "project-session-memory"
   });
   const parsed = parseArchitectureJson(text);
+  const summary = clean(parsed && parsed.summary, 2e3);
   const raw = Array.isArray(parsed && parsed.memories) ? parsed.memories : [];
   const known = new Set((existingMemories || []).filter(isActiveMemory).map(
     (item) => item && item.source && item.source.fingerprint ? String(item.source.fingerprint) : fingerprint(item || {})
@@ -4646,7 +5547,7 @@ async function extractSessionMemories({ session, llm, route, sessionId, existing
       source: { kind: "session_semantic", fingerprint: hash, sessionId: sessionId || null, provider: route.provider, model: route.model }
     }, now));
   }
-  return { status: "completed", memories, transcriptChars: transcript.length };
+  return { status: "completed", memories, summary, transcriptChars: transcript.length };
 }
 
 // src/host/summarizer.js
@@ -4700,14 +5601,26 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     log("info", "summarizer: no git diff (" + diff.error + ")");
   }
   const changedFiles = (diff.files || []).filter(Boolean);
-  const fingerprint2 = changedFiles.length ? changeFingerprint(diff) : null;
-  const duplicateChange = Boolean(fingerprint2 && (brain.memories || []).some(
-    (m) => m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint2
+  const fingerprint3 = changedFiles.length ? changeFingerprint(diff) : null;
+  const duplicateChange = Boolean(fingerprint3 && (brain.memories || []).some(
+    (m) => m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint3
   ));
+  const diffEvidence = changedFiles.length ? "\u6539\u52A8\u6587\u4EF6\uFF1A\n" + changedFiles.map((f) => "- " + f).join("\n") + (diff.stat ? "\n\nstat:\n" + diff.stat : "") : "";
   const now = Date.now();
   const writes = [];
-  let semantic = { status: "not_requested", memories: [] };
-  if (changedFiles.length > 0 && !duplicateChange) {
+  let semantic = { status: "not_requested", memories: [], summary: "" };
+  try {
+    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1, diffEvidence });
+    for (const entry of semantic.memories) {
+      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
+    }
+    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
+    if (semantic.summary) log("info", "summarizer: session summary generated (" + semantic.summary.length + " chars)");
+  } catch (e) {
+    semantic = { status: "failed", memories: [], summary: "", error: String(e && e.message || e) };
+    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
+  }
+  if (semantic.memories.length === 0 && changedFiles.length > 0 && !duplicateChange) {
     const title = `\u672C\u6B21 session \u6539\u52A8 ${changedFiles.length} \u4E2A\u6587\u4EF6`;
     const content = "\u6539\u52A8\u7684\u6587\u4EF6\uFF1A\n" + changedFiles.map((f) => "- " + f).join("\n") + (diff.stat ? "\n\ngit diff --stat:\n" + diff.stat : "");
     const entry = makeMemoryEntry({
@@ -4716,27 +5629,17 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
       content,
       importance: 0.55,
       relatedFiles: changedFiles.slice(0, 20),
-      source: { kind: "session_summary", fingerprint: fingerprint2, sessionId: sessionId || null }
+      source: { kind: "session_summary", fingerprint: fingerprint3, sessionId: sessionId || null }
     }, now);
     writes.push(async () => {
       const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
-      log(ok ? "info" : "warn", `summarizer: change memory ${ok ? "appended" : "FAILED"} (${entry.id})`);
+      log(ok ? "info" : "warn", `summarizer: change memory fallback ${ok ? "appended" : "FAILED"} (${entry.id})`);
     });
-    log("info", `summarizer: detected ${changedFiles.length} changed files`);
+    log("info", `summarizer: git diff fallback recorded ${changedFiles.length} changed files (no LLM memories)`);
   } else if (duplicateChange) {
-    log("info", "summarizer: unchanged git window already recorded (" + fingerprint2 + ")");
-  } else {
+    log("info", "summarizer: unchanged git window already recorded (" + fingerprint3 + ")");
+  } else if (changedFiles.length === 0) {
     log("info", "summarizer: no git diff (non-git repo or no changes)");
-  }
-  try {
-    semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1 });
-    for (const entry of semantic.memories) {
-      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
-    }
-    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
-  } catch (e) {
-    semantic = { status: "failed", memories: [], error: String(e && e.message || e) };
-    log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
   }
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
@@ -4745,7 +5648,8 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     occurredAt: now,
     detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + semantic.memories.length + " semanticStatus=" + semantic.status,
     sessionId: sessionId || null,
-    changeFingerprint: fingerprint2,
+    summary: semantic.summary || "",
+    changeFingerprint: fingerprint3,
     deduplicated: duplicateChange,
     semanticStatus: semantic.status,
     semanticMemories: semantic.memories.length
@@ -4760,7 +5664,7 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     }
   } catch (e) {
   }
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint: fingerprint2, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint: fingerprint3, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length, summary: semantic.summary || "" };
 }
 function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
@@ -4832,6 +5736,166 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   });
 }
 
+// src/host/realtime-memory.js
+import { createHash as createHash3 } from "node:crypto";
+var SIGNAL_PATTERNS = [
+  // 中文强信号
+  /(?:记住|记一下|备忘|别忘了|长期记住)\s*[:：]?\s*([^。\n]{4,200})/,
+  // "以后...要..." 或 "以后...不要..." 长期指令
+  /以后\s*([^。\n]{2,80})\s*(?:要|请|一定)?\s*(?:做|处理|记得|注意)/,
+  // 英文强信号
+  /(?:remember|note that|don't forget|never forget|long-term remember)\s*[:：]?\s*([^.\n]{4,200})/i,
+  // 英文 always / never 长期规则
+  /\b(always|never)\s+([a-z][^.\n]{4,150})/i
+];
+var NEGATIVE_CONTEXTS = [
+  /\b(?:eslint|prettier|type:|noqa|tsconfig|build\s*error|报错|编译|运行)\b/i,
+  /\b(?:commit|push|pr|merge|git|分支)\s*(?:不要|别|不要用)/i
+];
+function fingerprint2(text) {
+  return createHash3("sha256").update(text.trim().toLowerCase(), "utf8").digest("hex").slice(0, 16);
+}
+function detectSignal(messageText) {
+  const text = String(messageText || "").trim();
+  if (text.length < 6 || text.length > 2e3) return null;
+  if (NEGATIVE_CONTEXTS.some((re) => re.test(text))) return null;
+  for (const re of SIGNAL_PATTERNS) {
+    const m = text.match(re);
+    if (!m) continue;
+    let content = (m[1] || m[2] || m[0]).toString().trim();
+    content = content.replace(/^[:：\s"']+|[:：\s"']+$/g, "");
+    if (content.length < 4 || content.length > 500) continue;
+    return { kind: "explicit_intent", content, fullText: text };
+  }
+  return null;
+}
+function messageToText(message) {
+  if (!message) return "";
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.filter((block) => block && (block.type === "text" || typeof block.text === "string")).map((block) => String(block.text || "")).join("\n");
+  }
+  return "";
+}
+function sessionCwd2(session) {
+  if (!session) return null;
+  try {
+    if (typeof session.cwd === "string" && session.cwd.trim()) return session.cwd.trim();
+    if (session.meta && typeof session.meta.cwd === "string" && session.meta.cwd.trim()) return session.meta.cwd.trim();
+    if (session.header && typeof session.header.cwd === "string" && session.header.cwd.trim()) return session.header.cwd.trim();
+    if (session.header && session.header.meta && typeof session.header.meta.cwd === "string" && session.header.meta.cwd.trim()) return session.header.meta.cwd.trim();
+  } catch (e) {
+  }
+  return null;
+}
+var projectState = /* @__PURE__ */ new Map();
+var MAX_PER_SESSION = 5;
+var SEEN_CACHE_LIMIT = 50;
+function getProjectState(projectPath) {
+  let st = projectState.get(projectPath);
+  if (!st) {
+    st = { seenFingerprints: /* @__PURE__ */ new Set(), count: 0, sessionStartAt: Date.now() };
+    projectState.set(projectPath, st);
+  }
+  if (Date.now() - st.sessionStartAt > 30 * 60 * 1e3) {
+    st.seenFingerprints.clear();
+    st.count = 0;
+    st.sessionStartAt = Date.now();
+  }
+  return st;
+}
+async function handleOne({ fs, projectPath, sessionId, signal, logger }) {
+  const log = (level, msg) => {
+    try {
+      if (logger && typeof logger[level] === "function") logger[level]("[dsh-project-brain] " + msg);
+    } catch (e) {
+    }
+  };
+  const st = getProjectState(projectPath);
+  if (st.count >= MAX_PER_SESSION) {
+    log("info", "realtime-memory: rate limit reached for " + projectPath + ", skip");
+    return { skipped: "rate_limit" };
+  }
+  const fp = fingerprint2(signal.content);
+  if (st.seenFingerprints.has(fp)) {
+    log("info", "realtime-memory: duplicate signal, skip");
+    return { skipped: "duplicate" };
+  }
+  st.seenFingerprints.add(fp);
+  if (st.seenFingerprints.size > SEEN_CACHE_LIMIT) {
+    const arr = Array.from(st.seenFingerprints);
+    st.seenFingerprints = new Set(arr.slice(arr.length - SEEN_CACHE_LIMIT));
+  }
+  const now = Date.now();
+  const title = "\u5B9E\u65F6\u8BB0\u5FC6\uFF1A" + (signal.content.length > 40 ? signal.content.slice(0, 40) + "\u2026" : signal.content);
+  const entry = makeMemoryEntry({
+    type: "context",
+    title,
+    content: signal.content,
+    importance: 0.6,
+    confidence: 0.7,
+    tags: ["realtime", "user_intent"],
+    source: { kind: "realtime_memory", fingerprint: fp, sessionId: sessionId || null, signalKind: signal.kind }
+  }, now);
+  try {
+    const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
+    st.count += 1;
+    log(ok ? "info" : "warn", `realtime-memory: ${ok ? "appended" : "FAILED"} "${title}"`);
+    return { appended: ok, entry };
+  } catch (e) {
+    log("warn", "realtime-memory: append failed: " + String(e && e.message || e));
+    return { error: String(e && e.message || e) };
+  }
+}
+function setupRealtimeMemory(ctx, fs, sandboxPolicy, runtime = {}) {
+  if (!ctx || typeof ctx.on !== "function") return;
+  let logger = null;
+  try {
+    logger = ctx.logger || null;
+  } catch (e) {
+  }
+  const log = (level, msg) => {
+    try {
+      if (logger && typeof logger[level] === "function") logger[level]("[dsh-project-brain] " + msg);
+      else if (typeof console !== "undefined") console.log("[dsh-project-brain] " + msg);
+    } catch (e) {
+    }
+  };
+  log("info", "realtime-memory: subscribed to agent/inbox/claimed");
+  ctx.on("agent/inbox/claimed", (payload) => {
+    try {
+      const message = payload && payload.message;
+      if (!message || message.role !== "user") return;
+      const text = messageToText(message);
+      if (!text) return;
+      const session = payload.agent && payload.agent.session;
+      const projectPath = sessionCwd2(session);
+      if (!projectPath) return;
+      const sessionId = session && (session.id || session.meta && session.meta.id);
+      const signal = detectSignal(text);
+      if (!signal) return;
+      const work = handleOne({ fs, projectPath, sessionId, signal, logger }).then(async (result) => {
+        if (result && result.appended && ctx && typeof ctx.emit === "function") {
+          try {
+            ctx.emit("project_brain/preview.changed", { projectPath });
+          } catch (e) {
+          }
+        }
+        return result;
+      }).catch((e) => log("warn", "realtime-memory: handler failed: " + String(e && e.message || e)));
+      if (typeof ctx.effect === "function") {
+        try {
+          ctx.effect(() => work, "dsh-project-brain:realtime-memory");
+        } catch (e) {
+        }
+      }
+    } catch (e) {
+      log("warn", "realtime-memory: listener failed: " + String(e && e.message || e));
+    }
+  });
+}
+
 // src/index.js
 var name = "dsh-project-brain";
 var inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions", "llm"];
@@ -4882,6 +5946,7 @@ function applyImpl(ctx, config) {
     buildProjectInitTool,
     buildProjectRescanTool,
     buildContinueTool,
+    buildSuggestTool,
     buildStatusTool,
     buildMemoryAddTool,
     buildMemoryListTool,
@@ -5007,6 +6072,17 @@ function applyImpl(ctx, config) {
   } catch (e) {
     if (ctx.logger) try {
       ctx.logger.warn("[dsh-project-brain] setupSummarizer failed:", String(e && e.message || e));
+    } catch {
+    }
+  }
+  try {
+    setupRealtimeMemory(ctx, fs, sandboxPolicy, {
+      getMemoryConfig: memoryRuntime.get,
+      getLlm: llmRuntime.get
+    });
+  } catch (e) {
+    if (ctx.logger) try {
+      ctx.logger.warn("[dsh-project-brain] setupRealtimeMemory failed:", String(e && e.message || e));
     } catch {
     }
   }

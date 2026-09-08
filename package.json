@@ -71,11 +71,21 @@
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-client-connection": { "optional": true },
-    "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
   },
   "scripts": {
     "build": "node build.js",
@@ -89,7 +99,11 @@
   "devDependencies": {
     "esbuild": "^0.28.2",
     "tree-sitter": "^0.25.1",
+    "tree-sitter-c": "^0.24.1",
+    "tree-sitter-go": "^0.25.0",
+    "tree-sitter-java": "^0.23.5",
     "tree-sitter-javascript": "^0.25.0",
-    "tree-sitter-python": "^0.25.0"
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-rust": "^0.24.0"
   }
 }

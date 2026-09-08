@@ -118,6 +118,27 @@ const responsiveSummary = bundle.includes('"data-block": "summary-grid"')
   && bundle.includes("@media(max-width:760px)");
 checks.push({ name: "responsive summary grid is bundled", ok: responsiveSummary });
 
+// 18) v0.4.15 智能续接建议卡：调用 /project-brain 的 suggest RPC，含数据属性
+const suggestRpc = bundle.includes('"/project-brain"')
+  && bundle.includes('"suggest"')
+  && bundle.includes('"data-block": "suggestion"')
+  && bundle.includes('"data-suggestion-title"')
+  && bundle.includes('"data-suggestion-reason"');
+checks.push({ name: "SuggestionCard calls runtime suggest RPC and renders title/reason", ok: suggestRpc });
+
+// 19) SuggestionCard 标记 source（llm / local / llm_failed）+ 置信度
+const suggestMeta = bundle.includes('"data-suggest-source"')
+  && bundle.includes('"suggest.llmTag"')
+  && bundle.includes('"suggest.localTag"')
+  && bundle.includes('"suggest.confidence"')
+  && bundle.includes('"suggest.refresh"');
+checks.push({ name: "SuggestionCard shows source tag + confidence + refresh/dismiss", ok: suggestMeta });
+
+// 20) SuggestionCard dismiss 后允许重新展开（不影响其它 UI 状态）
+const suggestDismiss = bundle.includes('"data-action": "suggest-dismiss"')
+  && bundle.includes('"data-action": "suggest-show"');
+checks.push({ name: "SuggestionCard dismiss + re-show is bundled", ok: suggestDismiss });
+
 let pass = 0;
 let fail = 0;
 console.log("=== dsh-project-brain TodoStrip smoke test ===");

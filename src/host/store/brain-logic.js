@@ -127,7 +127,12 @@ export function techStackToType(techStack) {
   if (!techStack || typeof techStack !== "object") return "Untyped";
   const parts = [];
   for (const k of Object.keys(techStack)) {
-    if (techStack[k]) parts.push(String(techStack[k]));
+    const v = techStack[k];
+    if (Array.isArray(v)) {
+      for (const item of v) if (item) parts.push(String(item));
+    } else if (v) {
+      parts.push(String(v));
+    }
   }
   return parts.length > 0 ? parts.join(" · ") : "Untyped";
 }

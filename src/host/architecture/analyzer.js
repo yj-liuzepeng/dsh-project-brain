@@ -282,7 +282,17 @@ export async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, op
   const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 60000);
   const chunks = new Map(); const completed = new Map();
   try {
-    const request = { provider: route.provider, model: route.model, system: options.system || "Produce an evidence-based conceptual software architecture as strict JSON only.", messages: [{ role: "user", content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-project-brain" } }], maxTokens: options.maxTokens || 6200, purpose: options.purpose || "project-architecture", ...(sessionId ? { sessionId } : {}), signal: controller.signal };
+    const request = {
+      provider: route.provider,
+      model: route.model,
+      system: options.system || "Produce an evidence-based conceptual software architecture as strict JSON only.",
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }], source: { kind: "plugin", plugin: "dsh-project-brain" } }],
+      maxTokens: options.maxTokens || 6200,
+      purpose: options.purpose || "project-architecture",
+      ...(sessionId ? { sessionId } : {}),
+      ...(typeof options.temperature === "number" ? { temperature: options.temperature } : {}),
+      signal: controller.signal,
+    };
     for await (const chunk of llm.stream(request)) {
       if (!chunk) continue;
       if (chunk.type === "text-delta") chunks.set(chunk.index, (chunks.get(chunk.index) || "") + String(chunk.text || ""));
