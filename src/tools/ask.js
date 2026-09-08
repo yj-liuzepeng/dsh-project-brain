@@ -17,6 +17,7 @@ import { resolveProjectPath } from "../host/store/path-resolver.js";
 import { activeMemories, retrieveMemories } from "../host/memory/retrieval.js";
 import { embedQuery, ensureEmbeddingIndex } from "../host/memory/embeddings.js";
 import { normalizeMemoryConfig } from "../host/memory/config.js";
+import { resolveSessionRoute, streamLlmText } from "../host/architecture/analyzer.js";
 
 const baseOutputSchema = {
   type: "object",
@@ -83,42 +84,45 @@ function buildRagPrompt(question, sources, projectInfo) {
   return parts.join("\n");
 }
 
-// 调 llm.stream 合成答案；失败返回 null（让 caller fallback）
-async function synthesizeAnswer(exec, question, sources, projectInfo) {
+// 从 exec 解析 session model route（与 tools/suggest.js 一致）
+function executionRoute(exec) {
+  if (!exec) return null;
+  return resolveSessionRoute(exec.session)
+    || resolveSessionRoute(exec.currentSession)
+    || resolveSessionRoute(exec.agent && exec.agent.session)
+    || resolveSessionRoute(exec.agent)
+    || resolveSessionRoute(exec.ctx && exec.ctx.session);
+}
+
+function executionSessionId(exec) {
+  return exec && (exec.sessionId
+    || (exec.session && exec.session.id)
+    || (exec.agent && exec.agent.sessionId)
+    || (exec.agent && exec.agent.session && exec.agent.session.id)) || null;
+}
+
+// 调 LLM 合成答案；失败返回 null（让 caller fallback 到纯 BM25）
+// 修复：改用 apply 时缓存的 llm service（getLlm）+ 完整 model route，
+//      不再从 exec.ctx 现场取 llm（工具执行上下文拿不到，导致 useLLM 静默失效）。
+async function synthesizeAnswer({ llm, route, sessionId, question, sources, projectInfo }) {
   if (!sources || sources.length === 0) return null;
-  // 拿 llm service（exec.ctx 是 Cordis context）
-  let llm = null;
-  try {
-    const ctx = exec && exec.ctx;
-    llm = ctx && (ctx.get ? ctx.get("llm") : ctx.llm);
-  } catch (e) { llm = null; }
   if (!llm || typeof llm.stream !== "function") return null;
+  if (!route || !route.provider || !route.model) return null;
 
   const prompt = buildRagPrompt(question, sources, projectInfo);
-  const options = {
-    // provider 留空：DSH 通常有默认 route；不传让系统选
-    messages: [{ role: "user", content: prompt }],
-  };
   try {
-    const iterable = llm.stream(options);
-    if (!iterable || typeof iterable[Symbol.asyncIterator] !== "function") return null;
-    let collected = "";
-    for await (const chunk of iterable) {
-      if (!chunk) continue;
-      // 多种 chunk 形态兼容
-      if (typeof chunk.text === "string") collected += chunk.text;
-      else if (typeof chunk.content === "string") collected += chunk.content;
-      else if (typeof chunk.delta === "string") collected += chunk.delta;
-      // 超长截断
-      if (collected.length > 8000) break;
-    }
-    return collected.trim() || null;
+    const text = await streamLlmText(llm, route, prompt, sessionId, 30000, {
+      system: "你是 dsh-project-brain 助手，仅基于提供的 sources 回答，不要编造信息。",
+      maxTokens: 800,
+      purpose: "project-brain-ask",
+    });
+    return text && text.trim() ? text.trim() : null;
   } catch (e) {
     return null;
   }
 }
 
-export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCredential }) {
+export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCredential, getLlm }) {
   return defineTool({
     name: "project_ask",
     description:
@@ -251,7 +255,14 @@ export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbedd
         let llmError = null;
         if (useLLM) {
           try {
-            answer = await synthesizeAnswer(exec, question, sources, projectInfo);
+            answer = await synthesizeAnswer({
+              llm: getLlm ? getLlm() : null,
+              route: executionRoute(exec),
+              sessionId: executionSessionId(exec),
+              question,
+              sources,
+              projectInfo,
+            });
             llmUsed = answer != null;
           } catch (e) {
             llmError = String((e && e.message) || e);
