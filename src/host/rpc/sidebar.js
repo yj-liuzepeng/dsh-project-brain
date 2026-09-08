@@ -10,8 +10,10 @@
 
 import { buildSidebarPreview, buildWorkspacePreview, invalidateAggregatorCache } from "../sidebar/aggregator.js";
 import { scanAndWrite } from "../../tools.js";
+import { buildSuggestTool } from "../../tools/suggest.js";
 import { publicMemoryConfig } from "../memory/config.js";
 import { resolveSessionRoute } from "../architecture/analyzer.js";
+import { getGitHistory, getGitBranches, getWorkTreeChanges } from "../git/history.js";
 
 export const PROJECT_BRAIN_RPC_CHANNEL = "/project-brain";
 
@@ -125,6 +127,79 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
           scan: result.data,
           preview,
         });
+      }
+
+      // v0.4.15：智能续接 — Session 开始 / Dashboard 加载时调一次
+      if (endpoint === "suggest") {
+        const useLLM = !(payload && payload.useLLM === false);
+        const suggestTool = buildSuggestTool({
+          fs,
+          sandboxPolicy,
+          getLlm: architectureRuntime.getLlm,
+        });
+        // v0.4.17：客户端已传 workspacePath（来自 data._workspacePath），用它作为权威路径。
+        // 不同 session 调同一 endpoint 都拿相同内容（同一 .project-brain/）。
+        const trustedPath = (payload && typeof payload.workspacePath === "string" && payload.workspacePath.trim()) ? payload.workspacePath : projectPath;
+        const args = { path: trustedPath };
+        if (!useLLM) args.useLLM = false;
+        // 直接调 suggestTool.execute（session 上下文用于 LLM route / 错误日志，但 projectPath 取 trustedPath）
+        let toolResult;
+        try {
+          toolResult = await suggestTool.execute(args, {
+            session: session,
+            sessionId: payload && payload.sessionId,
+            agent: (ctx && ctx.agent) || null,
+            ctx: ctx,
+          });
+        } catch (error) {
+          return rpcError("SUGGEST_FAILED", String((error && error.message) || error), { endpoint });
+        }
+        if (!toolResult || toolResult.ok === false) {
+          const error = toolResult && toolResult.data && toolResult.data.error;
+          return rpcError(
+            (error && error.code) || "SUGGEST_FAILED",
+            (error && error.message) || "智能续接失败",
+            { endpoint, projectPath: trustedPath },
+          );
+        }
+        return rpcOk({
+          projectPath: trustedPath,
+          suggestion: toolResult.data,
+        });
+      }
+
+      // v0.4.x: Git 历史 — Dashboard Git Tab 数据源（无 .git 时 available=false 让 Client 不渲染 tab）
+      if (endpoint === "git") {
+        const limit = Math.max(1, Math.min(500, Number(payload && payload.limit) || 50));
+        const branch = (payload && typeof payload.branch === "string" && payload.branch.trim()) ? payload.branch.trim() : null;
+        try {
+          const history = getGitHistory({ projectPath, limit, branch });
+          const branches = getGitBranches(projectPath);
+          // 工作树 vs HEAD tree 对比（不依赖 git binary）：untracked / deleted
+          let workTree = { available: false };
+          try {
+            workTree = getWorkTreeChanges({ projectPath, maxFiles: 50 });
+          } catch (e) {
+            workTree = { available: false, error: String((e && e.message) || e) };
+          }
+          return rpcOk({
+            projectPath,
+            available: history.available === true,
+            currentBranch: history.currentBranch || (branches && branches.currentBranch) || null,
+            head: history.head || null,
+            total: history.total || 0,
+            commits: history.commits || [],
+            branches: (branches && branches.branches) || [],
+            workTree,
+            error: history.error || null,
+          });
+        } catch (error) {
+          return rpcError(
+            "GIT_HISTORY_FAILED",
+            String((error && error.message) || error),
+            { endpoint, projectPath },
+          );
+        }
       }
 
       if (endpoint === "action") {

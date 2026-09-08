@@ -349,7 +349,8 @@ function readHead(gitDir) {
   if (!head) return null;
   // 两种格式：ref: refs/heads/main（detached HEAD 时直接是 hash）
   if (head.startsWith("ref: ")) {
-    const refPath = join(gitDir, head.slice("ref: ".length));
+    const refName = head.slice("ref: ".length);  // e.g. "refs/heads/main"
+    const refPath = join(gitDir, refName);
     let commit = null;
     // 先读 loose ref
     if (existsSync(refPath)) {
@@ -366,7 +367,7 @@ function readHead(gitDir) {
             if (line.startsWith("#") || !line.trim()) continue;
             // 可能还有 peeled 行（hash 在 ref 旁）
             const m = line.match(/^([0-9a-f]{40})\s+(\S+)$/);
-            if (m && m[2] === head.slice("ref: ".length)) {
+            if (m && m[2] === refName) {
               commit = m[1];
               break;
             }
@@ -375,7 +376,9 @@ function readHead(gitDir) {
       }
     }
     if (!commit) return null;
-    return { branch: head.slice("refs/heads/".length), commit };
+    // 从 refName（"refs/heads/main"）切出 branch 名（"main"），而不是直接从含 "ref: " 前缀的 head 切
+    const branch = refName.startsWith("refs/heads/") ? refName.slice("refs/heads/".length) : refName;
+    return { branch, commit };
   }
   return { branch: null, commit: head };  // detached HEAD
 }
@@ -448,6 +451,47 @@ function readCommit(gitDir, commitHash) {
   }
   return tree ? { tree, parents } : null;
 }
+
+// 完整 commit 解析（含 author / committer / 时间 / message）— 供 history.js 用
+// 不影响 detectChanges 内部用 readCommit 的逻辑（readCommit 仍是最小结构）
+export function readCommitFull(gitDir, commitHash) {
+  const obj = readGitObject(gitDir, commitHash);
+  if (!obj || obj.type !== "commit") return null;
+  const text = obj.content.toString("utf8");
+  const headerEnd = text.indexOf("\n\n");
+  const headerText = headerEnd >= 0 ? text.slice(0, headerEnd) : text;
+  const message = headerEnd >= 0 ? text.slice(headerEnd + 2).replace(/\s+$/, "") : "";
+  let tree = null;
+  const parents = [];
+  let author = "", authorEmail = "", authorTimestamp = 0, authorTz = "";
+  let committer = "", committerEmail = "", committerTimestamp = 0, committerTz = "";
+  for (const line of headerText.split("\n")) {
+    if (line.startsWith("tree ")) tree = line.slice(5).trim();
+    else if (line.startsWith("parent ")) parents.push(line.slice(7).trim());
+    else if (line.startsWith("author ")) {
+      // author Name <email> <unix-ts> <tz-offset>
+      const m = line.match(/^author\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})$/);
+      if (m) { author = m[1]; authorEmail = m[2]; authorTimestamp = Number(m[3]); authorTz = m[4]; }
+    } else if (line.startsWith("committer ")) {
+      const m = line.match(/^committer\s+(.+?)\s+<([^>]+)>\s+(\d+)\s+([+-]\d{4})$/);
+      if (m) { committer = m[1]; committerEmail = m[2]; committerTimestamp = Number(m[3]); committerTz = m[4]; }
+    }
+  }
+  if (!tree) return null;
+  return {
+    hash: commitHash,
+    shortHash: commitHash.substring(0, 7),
+    tree,
+    parents,
+    author, authorEmail, authorTimestamp, authorTz,
+    committer, committerEmail, committerTimestamp, committerTz,
+    message,
+    subject: message.split("\n")[0] || "",
+  };
+}
+
+// 导出底层 API 供 history.js 复用（git object 读取 + HEAD 解析 + tree 遍历）
+export { readGitObject, readHead, parseTree, collectTreeFiles };
 
 // 主入口：扫描项目从 since（commit 数）开始的代码变化
 // 简化为"对比 commit N 与 commit N+since"（不是真的时间窗口）
