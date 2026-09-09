@@ -2,16 +2,16 @@
 
 [English](./README.md) · **简体中文**
 
-[![Version](https://img.shields.io/badge/version-0.7.0--beta.2-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
-[![Status](https://img.shields.io/badge/status-public_beta-orange)](./RELEASE_CHECKLIST.md)
+[![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
 
 **DSH 的持久化项目智能与记忆插件。** 它分析当前工作区、解释项目架构、保存开发决策与历史，并在后续 Session 中自动恢复正确的项目上下文。
 
 它的目标不是让每个新对话重新理解仓库，而是把重要知识沉淀在项目内部，随着持续开发越来越熟悉项目。
 
-> 当前版本：`0.7.0-beta.2` 公测版。核心流程、发布构建、项目隔离和隐私检查已经通过自动化验证，仍在扩大不同 DSH profile 与客户端环境的真实试用范围。
+> 当前版本：`1.0.0` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（16 个 smoke suite + 23 个 host-acceptance 场景共 39 项 + DSH Desktop UI 实测）。
 
 [GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.2) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 

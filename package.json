@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-brain",
-  "version": "0.7.0-beta.2",
+  "version": "1.0.0",
   "description": "Persistent project intelligence and memory plugin for DSH: architecture analysis, cross-session context, TODOs, and optional hybrid retrieval",
   "license": "MIT",
   "repository": {
@@ -23,6 +23,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "overrides": {
+    "tree-sitter": "^0.25.1"
   },
   "type": "module",
   "main": "./dsh-project-brain/lib/index.js",
@@ -90,13 +93,17 @@
   "scripts": {
     "build": "node build.js",
     "build:watch": "node build.js --watch",
+    "dev:reload": "node scripts/dev-reload.mjs",
     "test": "node scripts/run-smoke.mjs",
+    "test:acceptance": "node scripts/host-acceptance.mjs",
     "verify:release": "node scripts/check-release.mjs",
     "verify:install": "node scripts/check-tarball-install.mjs",
     "test:runtime-workspace": "node scripts/smoke-runtime-workspace.mjs",
     "test:project-memory": "node scripts/smoke-project-memory.mjs"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "esbuild": "^0.28.2",
     "tree-sitter": "^0.25.1",
     "tree-sitter-c": "^0.24.1",

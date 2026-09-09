@@ -98,7 +98,7 @@ const initialized = await rpcHandler("init", { sessionId: "session-new" });
 assert.equal(initialized.ok, true);
 assert.equal(initialized.value.projectPath, root);
 assert.equal(initialized.value.preview.initialized, true);
-assert.equal(initialized.value.preview.project.name, root.split("/").pop());
+assert.equal(initialized.value.preview.project.name, root.split(/[\\/]/).pop());
 assert.equal(statSync(join(root, ".project-brain", "project.json")).isFile(), true);
 assert.equal(statSync(join(root, ".project-brain", "architecture.json")).isFile(), true);
 assert.equal(initialized.value.preview.architecture.nodes.length > 0, true);

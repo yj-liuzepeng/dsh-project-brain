@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { scanProject } from "../src/scanner.js";
 import { buildArchitecture, createLlmRuntime, parseArchitectureJson, resolveSessionRoute } from "../src/host/architecture/analyzer.js";
-import { scanAndWrite } from "../src/tools.js";
+import { scanAndWrite } from "../src/host/scan-and-write.js";
 
 const root = mkdtempSync(join(tmpdir(), "dsh-brain-architecture-"));
 mkdirSync(join(root, "src", "ui"), { recursive: true });

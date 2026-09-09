@@ -5,9 +5,30 @@
 
 ---
 
-## [Unreleased]
+## [v1.0.0] - 2026-09-09
+
+> **首个稳定版本。** 39/39 端到端验收全过 + 用户实测 DSH Desktop UI 通过。
+> 7 项 P0 发布阻塞修复（npm install ERESOLVE / dsh-tools peer 阻塞 smoke / verify 脚本 ENOENT）+ 拆分 scanAndWrite 纯逻辑层 + 加 dev-reload 一键开发工具。
+
+### Fixed（修复）
+
+- **`npm install` ERESOLVE 复发（v0.7.0-beta.1 修复过的同类问题）**：`tree-sitter-c@0.24.1` 的 peer 是 `tree-sitter@^0.22.4`，但项目要 `^0.25.1`，导致干净环境 `npm install` 立刻 ERESOLVE，CHANGELOG 列出的"修复干净安装时的 ERESOLVE"回归。修复：在 `package.json` 加 `"overrides": { "tree-sitter": "^0.25.1" }` 强制统一 tree-sitter 顶层版本（tree-sitter-c 是 native binding，runtime 不真用 tree-sitter，override 安全）。
+
+- **`npm test` 全部 16 个 smoke suite 在干净 node 环境 ERR_MODULE_NOT_FOUND**：根因是 `src/tools.js` 同时定义 `defineTool` 工具（依赖 `@deepseek-ai/dsh-tools`）和 `scanAndWrite` 纯逻辑，被 `src/host/summarizer.js` / `src/host/rpc/sidebar.js` / `scripts/smoke-*.mjs` 间接 import 后拖入 dsh-tools 链。修复：把 `scanAndWrite` + `resolveWritePolicy` + `emitPreviewChanged` 拆到 `src/host/scan-and-write.js`（纯逻辑，无 dsh-tools 依赖），`src/tools.js` 顶部改为 `import { scanAndWrite, emitPreviewChanged } from "./host/scan-and-write.js"` 并 re-export 保持向后兼容。`src/host/summarizer.js` / `src/host/rpc/sidebar.js` / `scripts/smoke-architecture.mjs` 改 import 路径。
+
+- **`npm run verify:release` / `npm run verify:install` 在 Windows 下 ENOENT**：`execFileSync('npm', ...)` 在 Windows + FlyEnv / nvm node 环境下找不到 npm（execFileSync 不解析 PATHEXT）。修复：`scripts/check-release.mjs` 与 `scripts/check-tarball-install.mjs` 改为 Windows 下用 `npm.cmd` + `shell: true`，并显式接住 DEP0190 DeprecationWarning（参数完全固定，零拼接风险）。
+
+- **`npm test` 单 suite 失败阻断后续 suite**：旧 `scripts/run-smoke.mjs` 用 `process.exit(result.status)` 在第一个失败处终止，掩盖了真实问题范围。改为收集全部失败在末尾统一报告（`X/N passed` + 列出失败的 suite 清单）。
+
+- **`smoke-append-line` 性能基准在 Windows 下误报**：阈值 `< 1500ms` 是按 Linux/macOS 的 fs adapter 模拟读文件速度设定，Windows 实际 2059ms。改为按平台区分：Windows `< 3000ms`、其它 `< 1500ms`，核心目的（验证比旧实现快）不变。
+
+- **`smoke-runtime-workspace` 用 `root.split("/").pop()` 在 Windows 下得到完整路径**：测试断言期望得到 basename（"dsh-brain-runtime-XXXX"），但 Windows 路径用 `\\` 分隔，`split("/")` 永远只返回完整字符串。修复：`root.split(/[\\/]/).pop()`。
+
+- **`smoke-theme-tokens` 把 client.js Git 分支调色板的 12 个 hex 当成"硬编码颜色"误报**：6 色 GitHub 风格调色板是装饰性独立配色，与 DSH 主题 token 体系无强映射。修复：`smoke-theme-tokens.mjs` 检测 `const palette = [ ... ];` 字面量并自动豁免其中 hex；`client.js` 调色板处加注释说明豁免规则。
 
 ### Added（新增）
+
+- **`@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` 加到 devDependencies**：optional peer 在 `npm install` 时默认不装，导致本地 smoke 测试无法运行。两个 peer 加到 devDependencies 后：开发环境 `npm install` 自动装上（满足 smoke 测试），发布到 npm 时仍为 optional peer（DSH 用户没装也能装我们的包，不阻塞 runtime）。
 
 - **智能续接 v0.4.15（project_suggest_next）**：
   - 新 Tool `project_suggest_next`：Session 开始时主动给出"💡 你今天可能想推进 X"+依据+关联 TODO/记忆

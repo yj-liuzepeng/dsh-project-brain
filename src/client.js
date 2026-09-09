@@ -1509,6 +1509,8 @@ window.__ModuleLoader__.load({
       }
 
       // ── 分支配色（按 branch name hash 到固定颜色，让用户视觉区分分支） ──
+      // 注意：这是 GitHub 风格的浅色装饰调色板，独立于 DSH 主题 token 体系。
+      // smoke-theme-tokens.mjs 检测到 `const palette = [ ... ]` 字面量会自动豁免其中的 hex。
       const palette = [
         { fg: "#1f6feb", bg: "#ddf4ff" },  // 蓝
         { fg: "#1a7f37", bg: "#dafbe1" },  // 绿

@@ -17,7 +17,7 @@
 import { brainPath, appendJsonl, readBrain } from "./store/brain-files.js";
 import { makeMemoryEntry } from "./store/brain-logic.js";
 import { detectChanges } from "./diff/detector.js";
-import { scanAndWrite } from "../tools.js";
+import { scanAndWrite } from "./scan-and-write.js";
 import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
 import { extractSessionMemories } from "./memory/session-extractor.js";
 

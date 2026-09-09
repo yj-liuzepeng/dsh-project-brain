@@ -372,482 +372,6 @@ async function scanProject(fs, projectPath) {
   return result;
 }
 
-// src/host/store/brain-files.js
-function assertSafeProjectPath(projectPath) {
-  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
-  if (!rawBase || rawBase === "." || rawBase.includes("\0") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase) || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
-    const error = new Error("Refusing Project Brain access without a concrete workspace root");
-    error.code = "E_UNSAFE_PROJECT_PATH";
-    throw error;
-  }
-  return rawBase.replace(/[\\/]+$/, "");
-}
-function brainPath(projectPath, file) {
-  const base = assertSafeProjectPath(projectPath);
-  const relativeFile = String(file || "").replace(/\\/g, "/");
-  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
-    const error = new Error("Refusing Project Brain path outside .project-brain");
-    error.code = "E_UNSAFE_BRAIN_FILE";
-    throw error;
-  }
-  return base + "/.project-brain/" + relativeFile;
-}
-async function readText2(fs, path2) {
-  try {
-    const target = await fs.resolve(path2);
-    return await fs.readText(target);
-  } catch (e) {
-    return null;
-  }
-}
-function resolveWritePolicy(fs, writePolicy) {
-  if (writePolicy) return writePolicy;
-  try {
-    const sp = fs && (fs.sandboxPolicy || fs.ctx && fs.ctx.sandboxPolicy);
-    if (sp && typeof sp.resolve === "function") {
-      try {
-        return sp.resolve({ mode: "danger-full-access" });
-      } catch (e) {
-      }
-    }
-  } catch (e) {
-  }
-  return null;
-}
-async function writeText(fs, path2, content, writePolicy) {
-  const policy = resolveWritePolicy(fs, writePolicy);
-  try {
-    try {
-      const idx = path2.lastIndexOf("/");
-      if (idx > 0 && typeof fs.mkdir === "function") {
-        const dirTarget = await fs.resolve(path2.slice(0, idx));
-        if (policy && fs.mkdir.length >= 2) {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true }, { sandboxPolicy: policy });
-          } catch (e) {
-          }
-        } else if (policy) {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true });
-          } catch (e) {
-          }
-        } else {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true });
-          } catch (e) {
-          }
-        }
-      }
-    } catch (e) {
-    }
-    const target = await fs.resolve(path2);
-    if (policy) {
-      try {
-        await fs.writeText(target, content, void 0, void 0, policy);
-        return true;
-      } catch (e) {
-      }
-    }
-    await fs.writeText(target, content);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-async function appendLine(fs, path2, line, writePolicy) {
-  if (line == null) return false;
-  const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
-  try {
-    const target = await fs.resolve(path2);
-    let existing = null;
-    try {
-      existing = await fs.readText(target);
-    } catch (e) {
-    }
-    let next;
-    if (existing == null || existing === "") {
-      next = normalizedLine;
-    } else if (existing.endsWith("\n")) {
-      next = existing + normalizedLine;
-    } else {
-      next = existing + "\n" + normalizedLine;
-    }
-    return writeText(fs, path2, next, writePolicy);
-  } catch (e) {
-    return false;
-  }
-}
-function parseJsonl(text) {
-  if (!text) return [];
-  let t = String(text);
-  if (t.charCodeAt(0) === 65279) t = t.slice(1);
-  const out = [];
-  for (const line of t.split("\n")) {
-    const s = line.trim();
-    if (!s) continue;
-    try {
-      out.push(JSON.parse(s));
-    } catch (e) {
-    }
-  }
-  return out;
-}
-function serializeJsonl(items) {
-  if (!items || items.length === 0) return "";
-  return items.map((i) => JSON.stringify(i)).join("\n") + "\n";
-}
-async function readJsonl(fs, path2) {
-  return parseJsonl(await readText2(fs, path2));
-}
-async function appendJsonl(fs, path2, entry, writePolicy) {
-  return appendLine(fs, path2, JSON.stringify(entry) + "\n", writePolicy);
-}
-async function writeJsonl(fs, path2, items, writePolicy) {
-  return writeText(fs, path2, serializeJsonl(items || []), writePolicy);
-}
-async function readJson(fs, path2) {
-  const text = await readText2(fs, path2);
-  if (text == null) return null;
-  let t = text;
-  if (typeof t === "string" && t.charCodeAt(0) === 65279) t = t.slice(1);
-  try {
-    return JSON.parse(t);
-  } catch (e) {
-    return { __error: String(e && e.message || e) };
-  }
-}
-async function writeJson(fs, path2, obj, writePolicy) {
-  return writeText(fs, path2, JSON.stringify(obj, null, 2), writePolicy);
-}
-async function readBrain(fs, projectPath) {
-  const [project, timeline, memories, todos] = await Promise.all([
-    readJson(fs, brainPath(projectPath, "project.json")),
-    readJsonl(fs, brainPath(projectPath, "timeline.jsonl")),
-    readJsonl(fs, brainPath(projectPath, "memory.jsonl")),
-    readJsonl(fs, brainPath(projectPath, "todo.jsonl"))
-  ]);
-  return { projectPath, project, timeline, memories, todos };
-}
-
-// src/host/store/brain-logic.js
-var MEMORY_TYPES = [
-  "decision",
-  "requirement",
-  "architecture",
-  "change",
-  "bug",
-  "lesson",
-  "issue",
-  "context"
-];
-var TODO_STATUSES = ["pending", "in_progress", "blocked", "done", "cancelled"];
-var TODO_PRIORITIES = ["low", "medium", "high", "urgent"];
-var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
-var HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true };
-function makeId(prefix, now, rand) {
-  const t = (now != null ? now : Date.now()).toString(36);
-  const r = rand != null ? rand : Math.random().toString(36).slice(2, 8);
-  return prefix + "-" + t + "-" + r;
-}
-function normalizeMemoryType(type) {
-  const s = String(type || "").toLowerCase().trim();
-  return MEMORY_TYPES.indexOf(s) >= 0 ? s : null;
-}
-function normalizePriority(priority) {
-  const s = String(priority || "").toLowerCase().trim();
-  return TODO_PRIORITIES.indexOf(s) >= 0 ? s : null;
-}
-function normalizeStatus(status) {
-  const s = String(status || "").toLowerCase().trim();
-  return TODO_STATUSES.indexOf(s) >= 0 ? s : null;
-}
-function makeMemoryEntry(input, now) {
-  const i = input || {};
-  const importance = Number(i.importance);
-  const confidence = Number(i.confidence);
-  const relatedFiles = Array.isArray(i.relatedFiles) ? i.relatedFiles.map(String).slice(0, 20) : null;
-  const tags = Array.isArray(i.tags) ? i.tags.map(String).slice(0, 10) : null;
-  return {
-    schemaVersion: 2,
-    id: i.id || makeId("mem", now),
-    type: normalizeMemoryType(i.type) || "context",
-    title: String(i.title || "").slice(0, 200),
-    content: String(i.content || ""),
-    importance: isNaN(importance) ? 0.5 : Math.min(1, Math.max(0, importance)),
-    confidence: isNaN(confidence) ? 0.7 : Math.min(1, Math.max(0, confidence)),
-    status: "active",
-    ...i.source && typeof i.source === "object" ? { source: i.source } : {},
-    ...relatedFiles && relatedFiles.length ? { relatedFiles } : {},
-    ...tags && tags.length ? { tags } : {},
-    createdAt: now,
-    updatedAt: now
-  };
-}
-function isActiveMemory(memory) {
-  return Boolean(memory) && memory.status !== "archived" && memory.status !== "superseded" && memory.status !== "deleted";
-}
-function makeTodoEntry(input, now) {
-  const i = input || {};
-  const relatedFiles = Array.isArray(i.relatedFiles) ? i.relatedFiles.map(String).slice(0, 20) : null;
-  return {
-    id: i.id || makeId("todo", now),
-    title: String(i.title || "").slice(0, 200),
-    description: String(i.description || ""),
-    status: "pending",
-    priority: normalizePriority(i.priority) || "medium",
-    ...relatedFiles && relatedFiles.length ? { relatedFiles } : {},
-    createdAt: now,
-    updatedAt: now
-  };
-}
-function activeTodos(todos) {
-  const list = (todos || []).filter(function(t) {
-    return t && t.status !== "done" && t.status !== "cancelled";
-  });
-  list.sort(function(a, b) {
-    const pa = PRIORITY_ORDER[a.priority] != null ? PRIORITY_ORDER[a.priority] : 2;
-    const pb = PRIORITY_ORDER[b.priority] != null ? PRIORITY_ORDER[b.priority] : 2;
-    if (pa !== pb) return pa - pb;
-    return (b.createdAt || 0) - (a.createdAt || 0);
-  });
-  return list;
-}
-function todoStats(todos) {
-  const list = todos || [];
-  const active = list.filter(function(t) {
-    return t && t.status !== "done" && t.status !== "cancelled";
-  });
-  const done = list.filter(function(t) {
-    return t && t.status === "done";
-  });
-  return { pendingTodos: active.length, completedTodos: done.length, total: list.length };
-}
-function memoryScore(m, now) {
-  const nowMs = now != null ? now : Date.now();
-  const importance = typeof m.importance === "number" ? m.importance : 0.5;
-  const created = m.createdAt || 0;
-  const ageDays = Math.max(0, (nowMs - created) / 864e5);
-  let recency = 1 - ageDays / 90;
-  if (recency < 0) recency = 0;
-  if (ageDays <= 7) recency = 1;
-  const typeBoost = HIGH_VALUE_MEMORY_TYPES[m.type] ? 1 : 0.5;
-  return importance * 0.5 + recency * 0.3 + typeBoost * 0.2;
-}
-function topMemories(memories, n, now) {
-  const list = (memories || []).filter(isActiveMemory);
-  list.sort(function(a, b) {
-    return memoryScore(b, now) - memoryScore(a, now);
-  });
-  return list.slice(0, n || 5);
-}
-function recentTimeline(timeline, n) {
-  const list = (timeline || []).slice();
-  list.sort(function(a, b) {
-    return (b.occurredAt || 0) - (a.occurredAt || 0);
-  });
-  return list.slice(0, n || 5);
-}
-function techStackToType(techStack) {
-  if (!techStack || typeof techStack !== "object") return "Untyped";
-  const parts = [];
-  for (const k of Object.keys(techStack)) {
-    const v = techStack[k];
-    if (Array.isArray(v)) {
-      for (const item of v) if (item) parts.push(String(item));
-    } else if (v) {
-      parts.push(String(v));
-    }
-  }
-  return parts.length > 0 ? parts.join(" \xB7 ") : "Untyped";
-}
-function buildContinueData(brain, now) {
-  const nowMs = now != null ? now : Date.now();
-  const p = brain && brain.project;
-  const memories = brain && brain.memories || [];
-  const todos = brain && brain.todos || [];
-  const timeline = brain && brain.timeline || [];
-  const activity = recentTimeline(timeline, 5).map(function(e) {
-    return { id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType };
-  });
-  const top = topMemories(memories, 5, nowMs).map(function(m) {
-    return {
-      id: m.id,
-      type: m.type,
-      title: m.title,
-      content: String(m.content || "").slice(0, 200),
-      importance: m.importance,
-      createdAt: m.createdAt
-    };
-  });
-  const active = activeTodos(todos);
-  const pending = active.slice(0, 10).map(function(t) {
-    return { id: t.id, title: t.title, status: t.status, priority: t.priority };
-  });
-  const stats = todoStats(todos);
-  const activeMemories2 = memories.filter(isActiveMemory);
-  const decisions = activeMemories2.filter(function(m) {
-    return m.type === "decision";
-  });
-  const inProgress = active.filter(function(t) {
-    return t.status === "in_progress";
-  })[0];
-  let suggestedNextStep;
-  if (inProgress) {
-    suggestedNextStep = "\u7EE7\u7EED\u8FDB\u884C\u4E2D\u4EFB\u52A1\uFF1A" + inProgress.title;
-  } else if (active.length > 0) {
-    suggestedNextStep = "\u5EFA\u8BAE\u5F00\u59CB\uFF1A" + active[0].title;
-  } else if (activity.length > 0) {
-    suggestedNextStep = "\u65E0\u5F85\u529E\uFF1B\u53EF\u53C2\u8003\u6700\u8FD1\u6D3B\u52A8\uFF1A" + activity[0].title;
-  } else {
-    suggestedNextStep = "\u6682\u65E0\u5F85\u529E\uFF1B\u5EFA\u8BAE\u7528 project_todo_add \u89C4\u5212\u4E0B\u4E00\u6B65";
-  }
-  return {
-    initialized: Boolean(p && !p.__error),
-    projectPath: brain ? brain.projectPath : null,
-    project: p && !p.__error ? {
-      id: p.id,
-      name: p.name,
-      type: techStackToType(p.techStack),
-      lastUpdateAt: p.updatedAt || p.lastScannedAt || nowMs
-    } : null,
-    recentActivity: activity,
-    topMemories: top,
-    pendingTodos: pending,
-    stats: {
-      pendingTodos: stats.pendingTodos,
-      completedTodos: stats.completedTodos,
-      decisions: decisions.length,
-      memories: activeMemories2.length
-    },
-    suggestedNextStep
-  };
-}
-function findTodo(todos, ref) {
-  const key = String(ref || "").trim();
-  if (!key) return null;
-  const active = activeTodos(todos);
-  for (const t of active) {
-    if (t.id === key || t.id.indexOf(key) === 0) return t;
-  }
-  const lower = key.toLowerCase();
-  for (const t of active) {
-    if (String(t.title || "").toLowerCase() === lower) return t;
-  }
-  return null;
-}
-function computeDreamActions(memories, opts) {
-  const o = opts || {};
-  const now = typeof o.now === "number" ? o.now : Date.now();
-  const mergeThreshold = typeof o.mergeThreshold === "number" ? o.mergeThreshold : 0.92;
-  const archiveImp = typeof o.archiveImportance === "number" ? o.archiveImportance : 0.15;
-  const archiveAgeDays = typeof o.archiveAgeDays === "number" ? o.archiveAgeDays : 30;
-  const list = memories || [];
-  const plannedActions = [];
-  const seen = /* @__PURE__ */ new Set();
-  const items = list.filter(isActiveMemory).map((m, i) => ({ m, i, bg: titleBigrams(m.title) }));
-  for (let i = 0; i < items.length; i++) {
-    if (seen.has(items[i].i)) continue;
-    const group = [items[i].i];
-    for (let j = i + 1; j < items.length; j++) {
-      if (seen.has(items[j].i)) continue;
-      if (items[i].m.type !== items[j].m.type) continue;
-      const sim = jaccard(items[i].bg, items[j].bg);
-      if (sim >= mergeThreshold) {
-        group.push(items[j].i);
-        seen.add(items[j].i);
-      }
-    }
-    if (group.length > 1) {
-      const sorted = group.map((idx) => items[idx].m).sort((a, b) => {
-        const ai = (a.importance || 0) * 100 + String(a.content || "").length;
-        const bi = (b.importance || 0) * 100 + String(b.content || "").length;
-        return bi - ai;
-      });
-      const keep = sorted[0];
-      const drop = sorted.slice(1);
-      plannedActions.push({
-        action: "merge",
-        keepId: keep.id,
-        keepTitle: keep.title,
-        dropIds: drop.map((m) => m.id),
-        dropTitles: drop.map((m) => m.title),
-        note: "Jaccard \u2265 " + mergeThreshold + "\uFF08title \u76F8\u4F3C\uFF09\uFF0C\u4FDD\u7559 importance \u9AD8 + content \u957F\u7684"
-      });
-    }
-    seen.add(items[i].i);
-  }
-  for (const m of list) {
-    if ((m.importance || 0) >= archiveImp) continue;
-    const age = now - (m.createdAt || 0);
-    if (age < archiveAgeDays * 864e5) continue;
-    if (m.status === "archived") continue;
-    plannedActions.push({
-      action: "archive_candidate",
-      id: m.id,
-      type: m.type,
-      title: m.title,
-      importance: m.importance,
-      ageDays: Math.round(age / 864e5),
-      note: "importance < " + archiveImp + " \u4E14\u5E74\u9F84 > " + archiveAgeDays + " \u5929"
-    });
-  }
-  return {
-    plannedActions,
-    mergeCount: plannedActions.filter((a) => a.action === "merge").length,
-    archiveCount: plannedActions.filter((a) => a.action === "archive_candidate").length
-  };
-}
-function applyDreamCommit(memories, plannedActions, now, mode) {
-  const list = (memories || []).slice();
-  const merges = (plannedActions || []).filter((a) => a.action === "merge");
-  const archives = (plannedActions || []).filter((a) => a.action === "archive_candidate");
-  const dropIds = /* @__PURE__ */ new Set();
-  const keepMap = /* @__PURE__ */ new Map();
-  for (const m of merges) {
-    for (const id of m.dropIds) dropIds.add(id);
-    keepMap.set(m.keepId, m);
-  }
-  let next = list.filter((mem) => !dropIds.has(mem.id)).map((mem) => {
-    const k = keepMap.get(mem.id);
-    if (!k) return mem;
-    const mergedRelated = (mem.relatedMemoryIds || []).concat(k.dropIds).filter((v, i, arr) => arr.indexOf(v) === i);
-    return Object.assign({}, mem, {
-      relatedMemoryIds: mergedRelated,
-      lastAccessedAt: now,
-      status: "reinforced",
-      importance: Math.min(1, (mem.importance || 0.5) + 0.05)
-    });
-  });
-  const archiveIds = new Set(archives.map((a) => a.id));
-  next = next.map((mem) => {
-    if (!archiveIds.has(mem.id)) return mem;
-    return Object.assign({}, mem, { status: "archived", lastAccessedAt: now });
-  });
-  if (mode === "full") {
-    next = next.filter((mem) => mem.status !== "archived");
-  }
-  next.sort((a, b) => {
-    const ai = (b.importance || 0) - (a.importance || 0);
-    if (ai !== 0) return ai;
-    return (b.createdAt || 0) - (a.createdAt || 0);
-  });
-  return next;
-}
-function titleBigrams(s) {
-  const t = String(s || "").toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, " ").trim();
-  if (t.length < 2) return /* @__PURE__ */ new Set([t]);
-  const out = /* @__PURE__ */ new Set();
-  for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
-  return out;
-}
-function jaccard(a, b) {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const x of a) if (b.has(x)) inter += 1;
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
 // src/host/store/path-resolver.js
 function readCwdFromSession(session) {
   if (!session) return null;
@@ -1449,16 +973,483 @@ function architectureRelevantFiles(files) {
   return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));
 }
 
-// src/tools.js
-function emitPreviewChanged(exec, projectPath) {
+// src/host/store/brain-files.js
+function assertSafeProjectPath(projectPath) {
+  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!rawBase || rawBase === "." || rawBase.includes("\0") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase) || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
+    const error = new Error("Refusing Project Brain access without a concrete workspace root");
+    error.code = "E_UNSAFE_PROJECT_PATH";
+    throw error;
+  }
+  return rawBase.replace(/[\\/]+$/, "");
+}
+function brainPath(projectPath, file) {
+  const base = assertSafeProjectPath(projectPath);
+  const relativeFile = String(file || "").replace(/\\/g, "/");
+  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
+    const error = new Error("Refusing Project Brain path outside .project-brain");
+    error.code = "E_UNSAFE_BRAIN_FILE";
+    throw error;
+  }
+  return base + "/.project-brain/" + relativeFile;
+}
+async function readText2(fs, path2) {
   try {
-    const executor = exec && exec.ctx || null;
-    if (executor && typeof executor.emit === "function") {
-      executor.emit("project_brain/preview.changed", { projectPath });
+    const target = await fs.resolve(path2);
+    return await fs.readText(target);
+  } catch (e) {
+    return null;
+  }
+}
+function resolveWritePolicy(fs, writePolicy) {
+  if (writePolicy) return writePolicy;
+  try {
+    const sp = fs && (fs.sandboxPolicy || fs.ctx && fs.ctx.sandboxPolicy);
+    if (sp && typeof sp.resolve === "function") {
+      try {
+        return sp.resolve({ mode: "danger-full-access" });
+      } catch (e) {
+      }
     }
   } catch (e) {
   }
+  return null;
 }
+async function writeText(fs, path2, content, writePolicy) {
+  const policy = resolveWritePolicy(fs, writePolicy);
+  try {
+    try {
+      const idx = path2.lastIndexOf("/");
+      if (idx > 0 && typeof fs.mkdir === "function") {
+        const dirTarget = await fs.resolve(path2.slice(0, idx));
+        if (policy && fs.mkdir.length >= 2) {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true }, { sandboxPolicy: policy });
+          } catch (e) {
+          }
+        } else if (policy) {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true });
+          } catch (e) {
+          }
+        } else {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true });
+          } catch (e) {
+          }
+        }
+      }
+    } catch (e) {
+    }
+    const target = await fs.resolve(path2);
+    if (policy) {
+      try {
+        await fs.writeText(target, content, void 0, void 0, policy);
+        return true;
+      } catch (e) {
+      }
+    }
+    await fs.writeText(target, content);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function appendLine(fs, path2, line, writePolicy) {
+  if (line == null) return false;
+  const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
+  try {
+    const target = await fs.resolve(path2);
+    let existing = null;
+    try {
+      existing = await fs.readText(target);
+    } catch (e) {
+    }
+    let next;
+    if (existing == null || existing === "") {
+      next = normalizedLine;
+    } else if (existing.endsWith("\n")) {
+      next = existing + normalizedLine;
+    } else {
+      next = existing + "\n" + normalizedLine;
+    }
+    return writeText(fs, path2, next, writePolicy);
+  } catch (e) {
+    return false;
+  }
+}
+function parseJsonl(text) {
+  if (!text) return [];
+  let t = String(text);
+  if (t.charCodeAt(0) === 65279) t = t.slice(1);
+  const out = [];
+  for (const line of t.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    try {
+      out.push(JSON.parse(s));
+    } catch (e) {
+    }
+  }
+  return out;
+}
+function serializeJsonl(items) {
+  if (!items || items.length === 0) return "";
+  return items.map((i) => JSON.stringify(i)).join("\n") + "\n";
+}
+async function readJsonl(fs, path2) {
+  return parseJsonl(await readText2(fs, path2));
+}
+async function appendJsonl(fs, path2, entry, writePolicy) {
+  return appendLine(fs, path2, JSON.stringify(entry) + "\n", writePolicy);
+}
+async function writeJsonl(fs, path2, items, writePolicy) {
+  return writeText(fs, path2, serializeJsonl(items || []), writePolicy);
+}
+async function readJson(fs, path2) {
+  const text = await readText2(fs, path2);
+  if (text == null) return null;
+  let t = text;
+  if (typeof t === "string" && t.charCodeAt(0) === 65279) t = t.slice(1);
+  try {
+    return JSON.parse(t);
+  } catch (e) {
+    return { __error: String(e && e.message || e) };
+  }
+}
+async function writeJson(fs, path2, obj, writePolicy) {
+  return writeText(fs, path2, JSON.stringify(obj, null, 2), writePolicy);
+}
+async function readBrain(fs, projectPath) {
+  const [project, timeline, memories, todos] = await Promise.all([
+    readJson(fs, brainPath(projectPath, "project.json")),
+    readJsonl(fs, brainPath(projectPath, "timeline.jsonl")),
+    readJsonl(fs, brainPath(projectPath, "memory.jsonl")),
+    readJsonl(fs, brainPath(projectPath, "todo.jsonl"))
+  ]);
+  return { projectPath, project, timeline, memories, todos };
+}
+
+// src/host/store/brain-logic.js
+var MEMORY_TYPES = [
+  "decision",
+  "requirement",
+  "architecture",
+  "change",
+  "bug",
+  "lesson",
+  "issue",
+  "context"
+];
+var TODO_STATUSES = ["pending", "in_progress", "blocked", "done", "cancelled"];
+var TODO_PRIORITIES = ["low", "medium", "high", "urgent"];
+var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
+var HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true };
+function makeId(prefix, now, rand) {
+  const t = (now != null ? now : Date.now()).toString(36);
+  const r = rand != null ? rand : Math.random().toString(36).slice(2, 8);
+  return prefix + "-" + t + "-" + r;
+}
+function normalizeMemoryType(type) {
+  const s = String(type || "").toLowerCase().trim();
+  return MEMORY_TYPES.indexOf(s) >= 0 ? s : null;
+}
+function normalizePriority(priority) {
+  const s = String(priority || "").toLowerCase().trim();
+  return TODO_PRIORITIES.indexOf(s) >= 0 ? s : null;
+}
+function normalizeStatus(status) {
+  const s = String(status || "").toLowerCase().trim();
+  return TODO_STATUSES.indexOf(s) >= 0 ? s : null;
+}
+function makeMemoryEntry(input, now) {
+  const i = input || {};
+  const importance = Number(i.importance);
+  const confidence = Number(i.confidence);
+  const relatedFiles = Array.isArray(i.relatedFiles) ? i.relatedFiles.map(String).slice(0, 20) : null;
+  const tags = Array.isArray(i.tags) ? i.tags.map(String).slice(0, 10) : null;
+  return {
+    schemaVersion: 2,
+    id: i.id || makeId("mem", now),
+    type: normalizeMemoryType(i.type) || "context",
+    title: String(i.title || "").slice(0, 200),
+    content: String(i.content || ""),
+    importance: isNaN(importance) ? 0.5 : Math.min(1, Math.max(0, importance)),
+    confidence: isNaN(confidence) ? 0.7 : Math.min(1, Math.max(0, confidence)),
+    status: "active",
+    ...i.source && typeof i.source === "object" ? { source: i.source } : {},
+    ...relatedFiles && relatedFiles.length ? { relatedFiles } : {},
+    ...tags && tags.length ? { tags } : {},
+    createdAt: now,
+    updatedAt: now
+  };
+}
+function isActiveMemory(memory) {
+  return Boolean(memory) && memory.status !== "archived" && memory.status !== "superseded" && memory.status !== "deleted";
+}
+function makeTodoEntry(input, now) {
+  const i = input || {};
+  const relatedFiles = Array.isArray(i.relatedFiles) ? i.relatedFiles.map(String).slice(0, 20) : null;
+  return {
+    id: i.id || makeId("todo", now),
+    title: String(i.title || "").slice(0, 200),
+    description: String(i.description || ""),
+    status: "pending",
+    priority: normalizePriority(i.priority) || "medium",
+    ...relatedFiles && relatedFiles.length ? { relatedFiles } : {},
+    createdAt: now,
+    updatedAt: now
+  };
+}
+function activeTodos(todos) {
+  const list = (todos || []).filter(function(t) {
+    return t && t.status !== "done" && t.status !== "cancelled";
+  });
+  list.sort(function(a, b) {
+    const pa = PRIORITY_ORDER[a.priority] != null ? PRIORITY_ORDER[a.priority] : 2;
+    const pb = PRIORITY_ORDER[b.priority] != null ? PRIORITY_ORDER[b.priority] : 2;
+    if (pa !== pb) return pa - pb;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+  return list;
+}
+function todoStats(todos) {
+  const list = todos || [];
+  const active = list.filter(function(t) {
+    return t && t.status !== "done" && t.status !== "cancelled";
+  });
+  const done = list.filter(function(t) {
+    return t && t.status === "done";
+  });
+  return { pendingTodos: active.length, completedTodos: done.length, total: list.length };
+}
+function memoryScore(m, now) {
+  const nowMs = now != null ? now : Date.now();
+  const importance = typeof m.importance === "number" ? m.importance : 0.5;
+  const created = m.createdAt || 0;
+  const ageDays = Math.max(0, (nowMs - created) / 864e5);
+  let recency = 1 - ageDays / 90;
+  if (recency < 0) recency = 0;
+  if (ageDays <= 7) recency = 1;
+  const typeBoost = HIGH_VALUE_MEMORY_TYPES[m.type] ? 1 : 0.5;
+  return importance * 0.5 + recency * 0.3 + typeBoost * 0.2;
+}
+function topMemories(memories, n, now) {
+  const list = (memories || []).filter(isActiveMemory);
+  list.sort(function(a, b) {
+    return memoryScore(b, now) - memoryScore(a, now);
+  });
+  return list.slice(0, n || 5);
+}
+function recentTimeline(timeline, n) {
+  const list = (timeline || []).slice();
+  list.sort(function(a, b) {
+    return (b.occurredAt || 0) - (a.occurredAt || 0);
+  });
+  return list.slice(0, n || 5);
+}
+function techStackToType(techStack) {
+  if (!techStack || typeof techStack !== "object") return "Untyped";
+  const parts = [];
+  for (const k of Object.keys(techStack)) {
+    const v = techStack[k];
+    if (Array.isArray(v)) {
+      for (const item of v) if (item) parts.push(String(item));
+    } else if (v) {
+      parts.push(String(v));
+    }
+  }
+  return parts.length > 0 ? parts.join(" \xB7 ") : "Untyped";
+}
+function buildContinueData(brain, now) {
+  const nowMs = now != null ? now : Date.now();
+  const p = brain && brain.project;
+  const memories = brain && brain.memories || [];
+  const todos = brain && brain.todos || [];
+  const timeline = brain && brain.timeline || [];
+  const activity = recentTimeline(timeline, 5).map(function(e) {
+    return { id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType };
+  });
+  const top = topMemories(memories, 5, nowMs).map(function(m) {
+    return {
+      id: m.id,
+      type: m.type,
+      title: m.title,
+      content: String(m.content || "").slice(0, 200),
+      importance: m.importance,
+      createdAt: m.createdAt
+    };
+  });
+  const active = activeTodos(todos);
+  const pending = active.slice(0, 10).map(function(t) {
+    return { id: t.id, title: t.title, status: t.status, priority: t.priority };
+  });
+  const stats = todoStats(todos);
+  const activeMemories2 = memories.filter(isActiveMemory);
+  const decisions = activeMemories2.filter(function(m) {
+    return m.type === "decision";
+  });
+  const inProgress = active.filter(function(t) {
+    return t.status === "in_progress";
+  })[0];
+  let suggestedNextStep;
+  if (inProgress) {
+    suggestedNextStep = "\u7EE7\u7EED\u8FDB\u884C\u4E2D\u4EFB\u52A1\uFF1A" + inProgress.title;
+  } else if (active.length > 0) {
+    suggestedNextStep = "\u5EFA\u8BAE\u5F00\u59CB\uFF1A" + active[0].title;
+  } else if (activity.length > 0) {
+    suggestedNextStep = "\u65E0\u5F85\u529E\uFF1B\u53EF\u53C2\u8003\u6700\u8FD1\u6D3B\u52A8\uFF1A" + activity[0].title;
+  } else {
+    suggestedNextStep = "\u6682\u65E0\u5F85\u529E\uFF1B\u5EFA\u8BAE\u7528 project_todo_add \u89C4\u5212\u4E0B\u4E00\u6B65";
+  }
+  return {
+    initialized: Boolean(p && !p.__error),
+    projectPath: brain ? brain.projectPath : null,
+    project: p && !p.__error ? {
+      id: p.id,
+      name: p.name,
+      type: techStackToType(p.techStack),
+      lastUpdateAt: p.updatedAt || p.lastScannedAt || nowMs
+    } : null,
+    recentActivity: activity,
+    topMemories: top,
+    pendingTodos: pending,
+    stats: {
+      pendingTodos: stats.pendingTodos,
+      completedTodos: stats.completedTodos,
+      decisions: decisions.length,
+      memories: activeMemories2.length
+    },
+    suggestedNextStep
+  };
+}
+function findTodo(todos, ref) {
+  const key = String(ref || "").trim();
+  if (!key) return null;
+  const active = activeTodos(todos);
+  for (const t of active) {
+    if (t.id === key || t.id.indexOf(key) === 0) return t;
+  }
+  const lower = key.toLowerCase();
+  for (const t of active) {
+    if (String(t.title || "").toLowerCase() === lower) return t;
+  }
+  return null;
+}
+function computeDreamActions(memories, opts) {
+  const o = opts || {};
+  const now = typeof o.now === "number" ? o.now : Date.now();
+  const mergeThreshold = typeof o.mergeThreshold === "number" ? o.mergeThreshold : 0.92;
+  const archiveImp = typeof o.archiveImportance === "number" ? o.archiveImportance : 0.15;
+  const archiveAgeDays = typeof o.archiveAgeDays === "number" ? o.archiveAgeDays : 30;
+  const list = memories || [];
+  const plannedActions = [];
+  const seen = /* @__PURE__ */ new Set();
+  const items = list.filter(isActiveMemory).map((m, i) => ({ m, i, bg: titleBigrams(m.title) }));
+  for (let i = 0; i < items.length; i++) {
+    if (seen.has(items[i].i)) continue;
+    const group = [items[i].i];
+    for (let j = i + 1; j < items.length; j++) {
+      if (seen.has(items[j].i)) continue;
+      if (items[i].m.type !== items[j].m.type) continue;
+      const sim = jaccard(items[i].bg, items[j].bg);
+      if (sim >= mergeThreshold) {
+        group.push(items[j].i);
+        seen.add(items[j].i);
+      }
+    }
+    if (group.length > 1) {
+      const sorted = group.map((idx) => items[idx].m).sort((a, b) => {
+        const ai = (a.importance || 0) * 100 + String(a.content || "").length;
+        const bi = (b.importance || 0) * 100 + String(b.content || "").length;
+        return bi - ai;
+      });
+      const keep = sorted[0];
+      const drop = sorted.slice(1);
+      plannedActions.push({
+        action: "merge",
+        keepId: keep.id,
+        keepTitle: keep.title,
+        dropIds: drop.map((m) => m.id),
+        dropTitles: drop.map((m) => m.title),
+        note: "Jaccard \u2265 " + mergeThreshold + "\uFF08title \u76F8\u4F3C\uFF09\uFF0C\u4FDD\u7559 importance \u9AD8 + content \u957F\u7684"
+      });
+    }
+    seen.add(items[i].i);
+  }
+  for (const m of list) {
+    if ((m.importance || 0) >= archiveImp) continue;
+    const age = now - (m.createdAt || 0);
+    if (age < archiveAgeDays * 864e5) continue;
+    if (m.status === "archived") continue;
+    plannedActions.push({
+      action: "archive_candidate",
+      id: m.id,
+      type: m.type,
+      title: m.title,
+      importance: m.importance,
+      ageDays: Math.round(age / 864e5),
+      note: "importance < " + archiveImp + " \u4E14\u5E74\u9F84 > " + archiveAgeDays + " \u5929"
+    });
+  }
+  return {
+    plannedActions,
+    mergeCount: plannedActions.filter((a) => a.action === "merge").length,
+    archiveCount: plannedActions.filter((a) => a.action === "archive_candidate").length
+  };
+}
+function applyDreamCommit(memories, plannedActions, now, mode) {
+  const list = (memories || []).slice();
+  const merges = (plannedActions || []).filter((a) => a.action === "merge");
+  const archives = (plannedActions || []).filter((a) => a.action === "archive_candidate");
+  const dropIds = /* @__PURE__ */ new Set();
+  const keepMap = /* @__PURE__ */ new Map();
+  for (const m of merges) {
+    for (const id of m.dropIds) dropIds.add(id);
+    keepMap.set(m.keepId, m);
+  }
+  let next = list.filter((mem) => !dropIds.has(mem.id)).map((mem) => {
+    const k = keepMap.get(mem.id);
+    if (!k) return mem;
+    const mergedRelated = (mem.relatedMemoryIds || []).concat(k.dropIds).filter((v, i, arr) => arr.indexOf(v) === i);
+    return Object.assign({}, mem, {
+      relatedMemoryIds: mergedRelated,
+      lastAccessedAt: now,
+      status: "reinforced",
+      importance: Math.min(1, (mem.importance || 0.5) + 0.05)
+    });
+  });
+  const archiveIds = new Set(archives.map((a) => a.id));
+  next = next.map((mem) => {
+    if (!archiveIds.has(mem.id)) return mem;
+    return Object.assign({}, mem, { status: "archived", lastAccessedAt: now });
+  });
+  if (mode === "full") {
+    next = next.filter((mem) => mem.status !== "archived");
+  }
+  next.sort((a, b) => {
+    const ai = (b.importance || 0) - (a.importance || 0);
+    if (ai !== 0) return ai;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+  return next;
+}
+function titleBigrams(s) {
+  const t = String(s || "").toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, " ").trim();
+  if (t.length < 2) return /* @__PURE__ */ new Set([t]);
+  const out = /* @__PURE__ */ new Set();
+  for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+  return out;
+}
+function jaccard(a, b) {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter += 1;
+  const union = a.size + b.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// src/host/scan-and-write.js
 function resolveWritePolicy2(sandboxPolicy) {
   if (!sandboxPolicy) return null;
   try {
@@ -1468,6 +1459,15 @@ function resolveWritePolicy2(sandboxPolicy) {
   } catch (e) {
   }
   return sandboxPolicy;
+}
+function emitPreviewChanged(exec, projectPath) {
+  try {
+    const executor = exec && exec.ctx || null;
+    if (executor && typeof executor.emit === "function") {
+      executor.emit("project_brain/preview.changed", { projectPath });
+    }
+  } catch (e) {
+  }
 }
 async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
   const startMs = Date.now();
@@ -1616,6 +1616,8 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
     }
   };
 }
+
+// src/tools.js
 var baseOutputSchema = {
   type: "object",
   additionalProperties: true,

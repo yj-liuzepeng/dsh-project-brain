@@ -9,7 +9,7 @@
 // ctx 用于可选探测 sessions service（按 sessionId 反查 cwd 拿到"当前 workspace"）。
 
 import { buildSidebarPreview, buildWorkspacePreview, invalidateAggregatorCache } from "../sidebar/aggregator.js";
-import { scanAndWrite } from "../../tools.js";
+import { scanAndWrite } from "../scan-and-write.js";
 import { buildSuggestTool } from "../../tools/suggest.js";
 import { publicMemoryConfig } from "../memory/config.js";
 import { resolveSessionRoute } from "../architecture/analyzer.js";
