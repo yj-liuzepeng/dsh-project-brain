@@ -1,0 +1,91 @@
+name: 🐛 Bug Report
+description: 报告一个让我们能复现的问题（host bundle 报错 / 命令执行失败 / 数据丢失等）
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的反馈！请尽量填写下面所有字段，能让我们快速复现并修复。
+        **敏感信息（API key / 凭据 / 私人项目内容）请勿贴到 issue。**
+
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      description: 可以在 DSH 中执行 `project_status` 查看，或 DSH Desktop "插件"页签看版本号
+      placeholder: "v1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: dsh_profile
+    attributes:
+      label: DSH profile 与客户端
+      description: 如 `web` / `desktop` / `headless`；客户端为 `dsh-web` / `DSH Desktop 0.1.1-rc.2` 等
+      placeholder: "web · DSH Desktop 0.1.1-rc.2"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统与 Node.js 版本
+      description: `node -v` 输出
+      placeholder: "macOS 15.6 · Node.js v22.22.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 一步步描述怎样触发这个 bug
+      placeholder: |
+        1. 进入 workspace `/path/to/proj`
+        2. 调 `project_init`
+        3. 看到报错 xxx
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你觉得应该发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么；请附报错原文（隐藏 key / 路径前缀）
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / 截图
+      description: DSH Desktop devtools console 输出 / 命令返回 / 截图
+    validations:
+      required: false
+
+  - type: input
+    id: workspace_type
+    attributes:
+      label: 项目类型
+      description: 单仓库 / monorepo / 多语言混合 / 大仓库（>10k 文件）等
+      placeholder: "monorepo · pnpm workspace · 3 个 sub-package"
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 自检清单
+      options:
+        - label: 已确认这是 v1.0.0+ 的最新代码（GitHub `main` 分支最新 commit）
+        - label: 已尝试 `project_rescan` 重新扫描
+        - label: 已查阅 [INSTALL.md](./INSTALL.md) 的"故障排查"段落
+        - label: 未在 issue 贴入任何 API key / token / 凭据

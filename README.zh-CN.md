@@ -13,7 +13,7 @@
 
 > 当前版本：`1.0.0` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（16 个 smoke suite + 23 个 host-acceptance 场景共 39 项 + DSH Desktop UI 实测）。
 
-[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.2) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.0.0) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## 界面预览
 

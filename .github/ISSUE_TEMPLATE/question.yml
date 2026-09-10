@@ -1,0 +1,27 @@
+name: ❓ Question
+description: 用法 / 配置问题（不是 bug 也不是 feature）
+title: "[question] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **常见问题先看**：
+        - [INSTALL.md](./INSTALL.md) 安装与故障排查
+        - [README.md](./README.md) 完整说明
+        - [Discussions](../../discussions) 历史问答
+        如果都看过仍未解决，欢迎在此提出。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 你的问题
+      description: 描述你想达成什么 / 已经试过什么 / 卡在哪里
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      placeholder: "v1.0.0"

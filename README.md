@@ -13,7 +13,7 @@ Instead of making every new conversation rediscover the repository, dsh-project-
 
 > Current release: `1.0.0`. The core workflows, release build, isolation checks, privacy checks, and end-to-end acceptance pass automatically across 39 assertions (16 smoke suites + 23 host-acceptance scenarios). DSH Desktop UI verified by user on 2026-09-09.
 
-[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v0.7.0-beta.2) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.0.0) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## Preview
 

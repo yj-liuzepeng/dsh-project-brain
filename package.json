@@ -13,9 +13,13 @@
   },
   "keywords": [
     "dsh",
+    "dsh-plugin",
+    "cordis",
+    "cordis-plugin",
     "project-memory",
     "developer-tools",
     "local-first",
+    "ai-coding",
     "ai-assistant"
   ],
   "engines": {

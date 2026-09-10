@@ -5,6 +5,43 @@
 
 ---
 
+## 升级到 v1.0.0（Migration Guide）
+
+从 `0.7.0-beta.x` / `0.6.x` 升级到 `v1.0.0`：
+
+**自动兼容**（无需任何动作）
+
+- 数据格式：`.project-brain/` 下所有 JSON / JSONL 文件结构与 `0.7.0-beta.2` 完全兼容，无需迁移
+- 工具 API：16 个 `project_*` 工具的名称、签名与返回值不变
+- 配置文件：`config.json` 字段兼容，新增字段都有默认值
+
+**安装命令变化**
+
+```bash
+# 旧（0.7.0-beta.2）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v0.7.0-beta.2
+
+# 新（v1.0.0 stable）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.0.0
+```
+
+升级后**必须完全退出并重新打开** DSH Desktop（hot reload 不支持 host bundle 改动）。
+
+**新增工具（v0.7.0+）**
+
+- `project_suggest_next`：Session 开始时给出"💡 你今天可能想推进 X"+依据（v0.4.15）
+- `project_memory_archive` / `project_memory_supersede`：取代直接删除（v0.7.0）
+- `project_todo_update`：可改优先级 / 描述 / 状态（v0.7.0）
+- 工具总数从 13 → 16
+
+**废弃工具**（暂无）。如有变化会提前在 README + Discussion 公告。
+
+**已知破坏性变更**（v1.0.0 内）
+
+- 无。
+
+---
+
 ## [v1.0.0] - 2026-09-09
 
 > **首个稳定版本。** 39/39 端到端验收全过 + 用户实测 DSH Desktop UI 通过。

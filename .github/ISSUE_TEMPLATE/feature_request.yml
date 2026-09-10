@@ -1,0 +1,44 @@
+name: ✨ Feature Request
+description: 提议一个新功能或工作流改进
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提议前请先搜索现有 issue / discussion，避免重复提议。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你在解决什么问题？
+      description: 描述当前痛点；什么场景下会遇到
+      placeholder: |
+        我经常在多个项目之间切换，每次都要重新解释仓库结构给 AI。
+        希望插件能"认得"我已经聊过的项目。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的能力 / 工作流
+      description: 描述理想中的解决方案；可以是文字描述或伪代码 / 命令草稿
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案
+      description: 考虑过哪些其它做法？各自的优劣
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充上下文
+      description: 项目类型 / 规模 / 工作流相关细节；截图 / 链接等
+    validations:
+      required: false

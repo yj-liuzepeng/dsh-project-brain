@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 文档
+    url: https://github.com/yj-liuzepeng/dsh-project-brain#readme
+    about: README / INSTALL / STORE_LISTING / DESIGN / SPEC
+  - name: 💬 社区问答
+    url: https://github.com/deepseek-ai/deepseek-harness/discussions/5121
+    about: DSH 官方社区展示帖，常见问题与用户交流
+  - name: 📦 商店
+    url: https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain
+    about: MyDSH 插件市场
+  - name: 🔐 安全问题
+    url: https://github.com/yj-liuzepeng/dsh-project-brain/security/advisories/new
+    about: **不要**在 issue 报告安全问题 — 请走 GitHub Security Advisories 私密渠道
