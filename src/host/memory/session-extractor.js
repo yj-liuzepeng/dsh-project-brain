@@ -59,6 +59,29 @@ function fingerprint(item) {
   return createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 24);
 }
 
+// Grounding check：模糊匹配 evidence 字符串是否真实存在于 transcript 里
+//   目的：阻止 LLM 把临时讨论幻觉成决策落盘
+//   实现：去掉空格/标点后做 substring 匹配（容忍少量字符差异），允许 evidence 截断到 80 字
+export function evidenceMatchesTranscript(evidence, transcript) {
+  if (!evidence || typeof evidence !== "string") return false;
+  const evidenceText = evidence.trim().slice(0, 200);
+  if (evidenceText.length < 6) return false;
+  const normalize = (s) => String(s || "").replace(/\s+/g, "").replace(/[\s\p{P}]/gu, "").toLowerCase();
+  const normEvidence = normalize(evidenceText);
+  const normTranscript = normalize(transcript);
+  if (normEvidence.length < 6) return false;
+  // 直接 substring 匹配（容忍标点和大小写差异）
+  if (normTranscript.includes(normEvidence)) return true;
+  // 滑动窗口：如果 evidence 较长，按 30 字符窗口部分匹配（容忍 LLM 轻微改写）
+  if (normEvidence.length > 30) {
+    const windowSize = 30;
+    for (let i = 0; i <= normEvidence.length - windowSize; i += 15) {
+      if (normTranscript.includes(normEvidence.slice(i, i + windowSize))) return true;
+    }
+  }
+  return false;
+}
+
 function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
   const parts = [
     "从下面的软件开发 Session 中提取值得跨会话长期保存的项目知识，并总结本次会话做了什么。",
@@ -66,7 +89,9 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     "忽略寒暄、临时步骤、命令输出、未确认猜测、个人信息、凭据；没有稳定知识时 memories 返回空数组。",
     "summary 用 2-4 句话客观概括本次会话的开发意图、主要动作与产出（作为下一个 Session 的续接上下文，不编造）。",
     `最多 ${maxItems} 条记忆。只输出严格 JSON 对象，不要 Markdown。`,
-    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "简洁标题", content: "自包含的事实与理由", importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"] }] }),
+    "每条记忆必须带 evidence：原文中能直接验证该记忆的连续片段（建议 8-60 字），用于 grounding 校验。",
+    "如果某条记忆无法在原文中找到对应证据，请降低 confidence 或不输出。",
+    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "简洁标题", content: "自包含的事实与理由", evidence: "原文片段（8-60 字）", importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"] }] }),
   ];
   if (diffEvidence && String(diffEvidence).trim()) {
     parts.push("【git diff 参考证据（仅辅助核对文件级事实，不要逐条复述为记忆）】\n" + String(diffEvidence).trim());
@@ -96,23 +121,54 @@ export async function extractSessionMemories({ session, llm, route, sessionId, e
     item && item.source && item.source.fingerprint ? String(item.source.fingerprint) : fingerprint(item || {})
   ));
   const memories = [];
+  let groundedCount = 0;
+  let ungroundedCount = 0;
   for (const item of raw.slice(0, maxItems)) {
     const type = normalizeMemoryType(item && item.type);
     const title = clean(item && item.title, 200);
     const content = redactSessionText(clean(item && item.content, 4000));
+    const evidence = clean(item && item.evidence, 200);
     if (!ALLOWED_TYPES.has(type) || !title || content.length < 20) continue;
     const candidate = { type, title, content };
     const hash = fingerprint(candidate);
     if (known.has(hash)) continue;
     known.add(hash);
+
+    // Grounding check：evidence 必须能在 transcript 里找到，否则降级 confidence
+    let groundingConfidence = typeof item.confidence === "number" ? item.confidence : 0.7;
+    let groundingPassed = true;
+    if (evidence && evidence.length >= 6) {
+      if (evidenceMatchesTranscript(evidence, transcript)) {
+        groundedCount += 1;
+      } else {
+        // evidence 给出但无法在 transcript 找到 → 高度疑似幻觉，confidence 大幅降级
+        groundingConfidence = Math.min(groundingConfidence, 0.4);
+        ungroundedCount += 1;
+        groundingPassed = false;
+      }
+    } else {
+      // 没给 evidence：无法校验，降级 confidence 但保留记忆（中等怀疑）
+      groundingConfidence = Math.min(groundingConfidence, 0.55);
+      ungroundedCount += 1;
+      groundingPassed = false;
+    }
+
     memories.push(makeMemoryEntry({
       ...candidate,
       importance: item.importance,
-      confidence: item.confidence,
+      confidence: groundingConfidence,
       relatedFiles: (Array.isArray(item.relatedFiles) ? item.relatedFiles : []).map(safeRelatedFile).filter(Boolean),
       tags: (Array.isArray(item.tags) ? item.tags : []).map((tag) => clean(tag, 50)).filter(Boolean),
-      source: { kind: "session_semantic", fingerprint: hash, sessionId: sessionId || null, provider: route.provider, model: route.model },
+      source: {
+        kind: "session_semantic",
+        fingerprint: hash,
+        sessionId: sessionId || null,
+        provider: route.provider,
+        model: route.model,
+        grounded: groundingPassed,
+        evidence: evidence || null,
+      },
     }, now));
   }
-  return { status: "completed", memories, summary, transcriptChars: transcript.length };
+  return { status: "completed", memories, summary, transcriptChars: transcript.length, grounded: groundedCount, ungrounded: ungroundedCount };
 }

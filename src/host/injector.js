@@ -110,8 +110,19 @@ function latestSessionSummary(timeline) {
   return summaries.length ? String(summaries[0].summary).trim() : null;
 }
 
+// 最近决策链：取最近 N 条 decision / architecture 类型的记忆（按 createdAt 倒序）
+//   目的：让 LLM 进入 session 时立刻看到「这个项目的核心决策是什么」，避免重复决策
+function recentDecisionChain(memories, n = 3) {
+  const chainTypes = new Set(["decision", "architecture"]);
+  return (memories || [])
+    .filter((m) => m && chainTypes.has(m.type) && m.status !== "archived" && m.status !== "superseded" && m.status !== "deleted")
+    .slice()
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, n);
+}
+
 // 渲染 markdown section
-function renderContext(projectData, memories, todos, recentEvents, activeTodo, lastSummary) {
+function renderContext(projectData, memories, todos, recentEvents, activeTodo, lastSummary, decisionChain) {
   const lines = [];
   lines.push("## Project Brain Context（自动注入 · v0.3.0）");
   lines.push("");
@@ -127,6 +138,21 @@ function renderContext(projectData, memories, todos, recentEvents, activeTodo, l
       if (ts) lines.push(`- 技术栈: ${ts}`);
     }
     if (projectData.description) lines.push(`- 简介: ${projectData.description}`);
+    lines.push("");
+  }
+
+  // 最近决策链（决策 3 增强：让 LLM 一进入 session 就知道「这个项目的核心决策是什么」，
+  //   避免重复决策 / 推翻已有方案）
+  if (decisionChain && decisionChain.length > 0) {
+    lines.push("### 最近决策链（按时间倒序）");
+    for (const m of decisionChain) {
+      const tag = m.type ? `[${m.type}] ` : "";
+      lines.push(`- ${tag}${m.title}`);
+      if (m.content) {
+        const snippet = String(m.content).slice(0, 180).replace(/\n+/g, " ");
+        lines.push(`  ${snippet}`);
+      }
+    }
     lines.push("");
   }
 
@@ -225,7 +251,8 @@ function getCachedSection(projectPath) {
   const recent = recentTimeline(timeline, 3);
   const inProgress = activeTodos.find((t) => t.status === "in_progress");
   const lastSummary = latestSessionSummary(timeline);
-  let md = renderContext(project, top, activeTodos, recent, inProgress, lastSummary);
+  const decisionChain = recentDecisionChain(memories, 3);
+  let md = renderContext(project, top, activeTodos, recent, inProgress, lastSummary, decisionChain);
   md = truncateToTokens(md, DEFAULT_MAX_TOKENS);
   return md;
 }

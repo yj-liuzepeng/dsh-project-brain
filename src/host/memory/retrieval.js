@@ -120,13 +120,16 @@ export function retrieveMemories({ memories, query = "", topK = 5, now = Date.no
   const vector = normalizeScoreMap(vectorRaw);
   const hasQuery = tokenizeMemoryText(query).length > 0;
   const hasVector = vector.size > 0;
+  // 重平衡：importance 主导（用户标记过重要的应该最相关），recency 跟上（"近期关注"），
+  // vector 兜底（语义相似），keyword 仅在明确查询时贡献少量信号，confidence 反映 LLM 可信度。
+  // 旧权重 keyword 0.45 / vector 0.35 / importance 0.1 导致关键词淹没真正重要的记忆。
   const weights = {
-    keyword: hasQuery ? Number(config.keywordWeight ?? 0.45) : 0,
-    vector: hasVector ? Number(config.vectorWeight ?? 0.35) : 0,
-    importance: hasQuery ? Number(config.importanceWeight ?? 0.1) : 0.55,
-    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.05) : 0.1,
-    recency: hasQuery ? Number(config.recencyWeight ?? 0.05) : 0.2,
-    type: hasQuery ? 0 : 0.15,
+    keyword: hasQuery ? Number(config.keywordWeight ?? 0.15) : 0,
+    vector: hasVector ? Number(config.vectorWeight ?? 0.25) : 0,
+    importance: hasQuery ? Number(config.importanceWeight ?? 0.30) : 0.45,
+    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.10) : 0.10,
+    recency: hasQuery ? Number(config.recencyWeight ?? 0.20) : 0.25,
+    type: hasQuery ? 0 : 0.20,
   };
   const ranked = candidates.map((memory) => {
     const importance = typeof memory.importance === "number" ? memory.importance : 0.5;

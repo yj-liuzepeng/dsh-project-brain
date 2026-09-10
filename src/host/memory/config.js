@@ -12,11 +12,11 @@ export const Config = z.object({
   embeddingBatchSize: z.number().step(1).min(1).max(128).default(16),
   embeddingMaxIndexPerRun: z.number().step(1).min(1).max(500).default(64),
   embeddingTimeoutMs: z.number().step(1).min(1000).max(120000).default(20000),
-  keywordWeight: z.number().min(0).max(1).default(0.45),
-  vectorWeight: z.number().min(0).max(1).default(0.35),
-  importanceWeight: z.number().min(0).max(1).default(0.1),
-  confidenceWeight: z.number().min(0).max(1).default(0.05),
-  recencyWeight: z.number().min(0).max(1).default(0.05),
+  keywordWeight: z.number().min(0).max(1).default(0.15),
+  vectorWeight: z.number().min(0).max(1).default(0.25),
+  importanceWeight: z.number().min(0).max(1).default(0.30),
+  confidenceWeight: z.number().min(0).max(1).default(0.10),
+  recencyWeight: z.number().min(0).max(1).default(0.20),
   sessionSemanticMemoryEnabled: z.boolean().default(true),
   sessionSemanticMaxChars: z.number().step(1).min(2000).max(40000).default(16000),
   sessionSemanticMaxItems: z.number().step(1).min(1).max(8).default(4),
@@ -47,11 +47,11 @@ export function normalizeMemoryConfig(value) {
     embeddingBatchSize: integer("embeddingBatchSize", 16, 1, 128),
     embeddingMaxIndexPerRun: integer("embeddingMaxIndexPerRun", 64, 1, 500),
     embeddingTimeoutMs: integer("embeddingTimeoutMs", 20000, 1000, 120000),
-    keywordWeight: num("keywordWeight", 0.45, 0, 1),
-    vectorWeight: num("vectorWeight", 0.35, 0, 1),
-    importanceWeight: num("importanceWeight", 0.1, 0, 1),
-    confidenceWeight: num("confidenceWeight", 0.05, 0, 1),
-    recencyWeight: num("recencyWeight", 0.05, 0, 1),
+    keywordWeight: num("keywordWeight", 0.15, 0, 1),
+    vectorWeight: num("vectorWeight", 0.25, 0, 1),
+    importanceWeight: num("importanceWeight", 0.30, 0, 1),
+    confidenceWeight: num("confidenceWeight", 0.10, 0, 1),
+    recencyWeight: num("recencyWeight", 0.20, 0, 1),
     sessionSemanticMemoryEnabled: input.sessionSemanticMemoryEnabled !== false,
     sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16000, 2000, 40000),
     sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
@@ -94,6 +94,8 @@ export function publicMemoryConfig(config) {
 export function createMemoryConfigRuntime(ctx, entryConfig) {
   let current = normalizeMemoryConfig(entryConfig);
   let credentials = null;
+  let settingsService = null;
+  let settingsScope = null;
 
   if (ctx && typeof ctx.inject === "function") {
     try {
@@ -101,10 +103,11 @@ export function createMemoryConfigRuntime(ctx, entryConfig) {
         let settings;
         try { settings = settingsCtx.get ? settingsCtx.get("settings") : settingsCtx.settings; } catch (e) { settings = null; }
         if (!settings || typeof settings.register !== "function") return;
-        const scope = settings.register(MEMORY_SETTINGS_NS, Config, { base: entryConfig || {} });
-        try { current = normalizeMemoryConfig(scope.get()); } catch (e) {}
-        if (scope && typeof scope.watch === "function") {
-          scope.watch((next) => { current = normalizeMemoryConfig(next); });
+        settingsService = settings;
+        settingsScope = settings.register(MEMORY_SETTINGS_NS, Config, { base: entryConfig || {} });
+        try { current = normalizeMemoryConfig(settingsScope.get()); } catch (e) {}
+        if (settingsScope && typeof settingsScope.watch === "function") {
+          settingsScope.watch((next) => { current = normalizeMemoryConfig(next); });
         }
       });
     } catch (e) {}
@@ -121,6 +124,31 @@ export function createMemoryConfigRuntime(ctx, entryConfig) {
 
   return {
     get: () => current,
+    getSettingsService: () => settingsService,
+    getSettingsScope: () => settingsScope,
+    settingsWritable: () => {
+      try {
+        return !!(settingsService && settingsService.writable !== false && typeof settingsService.update === "function");
+      } catch (e) {
+        return false;
+      }
+    },
+    async updateSettings(patch) {
+      if (!settingsService || typeof settingsService.update !== "function") {
+        const error = new Error("settings service unavailable; config is read-only in this runtime");
+        error.code = "SETTINGS_UNAVAILABLE";
+        throw error;
+      }
+      if (settingsService.writable === false) {
+        const error = new Error("settings provider is read-only");
+        error.code = "SETTINGS_READONLY";
+        throw error;
+      }
+      // update = merge patch into user layer, validate, persist, commit, emit.
+      // scope.watch 已在注册时挂上，commit 后会自动把 current 刷成新值。
+      await settingsService.update(MEMORY_SETTINGS_NS, patch);
+      return normalizeMemoryConfig(settingsService.get(MEMORY_SETTINGS_NS));
+    },
     async resolveCredential(ref) {
       if (!ref) return null;
       if (credentials && typeof credentials.resolve === "function") {

@@ -119,19 +119,26 @@ export function resolveProjectPath(args, exec, sandboxPolicy) {
   // 1) 从 exec 推断 live session cwd。发布版默认只操作当前会话项目，
   //    不能让模型通过 args.path 把读写重定向到另一个工作区。
   try {
-    // 1a) exec.session 直接有 cwd
+    // 1a) exec.agent.session —— dsh-tools ToolRunContext 的文档字段
+    //     （"the agent on whose behalf the call runs"）。这是工具执行上下文里
+    //     唯一可靠的 session 入口：ToolRunContext 只暴露 { callId, token, args,
+    //      agent?, parent?, signal, ... }，没有 exec.session / exec.ctx / exec.sessionId。
+    const agentSession = exec && exec.agent && exec.agent.session;
+    const agentCwd = safeCwd(readCwdFromSession(agentSession));
+    if (agentCwd) return agentCwd;
+    // 1b) exec.session 直接有 cwd（旧宿主 / 兼容把 Session 挂 exec 上）
     const direct = safeCwd(readCwdFromSession(exec && exec.session));
     if (direct) return direct;
-    // 1b) exec.ctx 上挂的 session
+    // 1c) exec.ctx 上挂的 session
     const ctxSession = exec && exec.ctx && (exec.ctx.session || (exec.ctx.agent && exec.ctx.agent.session));
     const ctxCwd = safeCwd(readCwdFromSession(ctxSession));
     if (ctxCwd) return ctxCwd;
-    // 1c) sessionId + sessions service
-    const sid = exec && (exec.sessionId || (exec.session && exec.session.id));
+    // 1d) sessionId + sessions service
+    const sid = exec && (exec.sessionId || (exec.session && exec.session.id) || (exec.agent && exec.agent.id));
     const ctx = exec && (exec.ctx || null);
     const svcCwd = safeCwd(readCwdFromSessionsService(ctx, sid));
     if (svcCwd) return svcCwd;
-    // 1d) 通过 agents.currentInitiator() 拿当前 session
+    // 1e) 通过 agents.currentInitiator() 拿当前 session
     const initiatorCwd = safeCwd(readCwdFromInitiator(ctx));
     if (initiatorCwd) return initiatorCwd;
   } catch (e) {}

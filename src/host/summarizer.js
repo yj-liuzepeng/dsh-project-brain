@@ -14,12 +14,13 @@
 //
 // 全部 try/catch + swallow：summarizer 抛错不能让 DSH 崩。
 
-import { brainPath, appendJsonl, readBrain } from "./store/brain-files.js";
+import { brainPath, appendJsonl, readBrain, readJsonl, writeJsonl } from "./store/brain-files.js";
 import { makeMemoryEntry } from "./store/brain-logic.js";
 import { detectChanges } from "./diff/detector.js";
 import { scanAndWrite } from "./scan-and-write.js";
 import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
 import { extractSessionMemories } from "./memory/session-extractor.js";
+import { computeDreamActions, applyDreamCommit } from "./store/brain-logic.js";
 
 // 从 session 反推 cwd（不依赖 sandboxPolicy）
 function sessionCwd(session) {
@@ -154,6 +155,48 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   // one another.
   for (const write of writes) await write();
 
+  // 4.5) Auto-Dream：memory.jsonl 超过阈值时自动跑 light dream，去重 + 归档低 importance
+  //      保证长期使用下记忆库不无限膨胀、不污染检索
+  const autoDreamThreshold = (config && Number(config.autoDreamThreshold)) || 30;
+  let autoDreamResult = null;
+  try {
+    const allMemories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+    if (Array.isArray(allMemories) && allMemories.length >= autoDreamThreshold) {
+      const before = allMemories.length;
+      const opts = {
+        now: Date.now(),
+        mergeThreshold: 0.92,
+        archiveImportance: 0.15,
+        archiveAgeDays: 30,
+      };
+      const computed = computeDreamActions(allMemories, opts);
+      const nextMemories = applyDreamCommit(allMemories, computed.plannedActions, opts.now, "light");
+      const wroteDream = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), nextMemories);
+      if (wroteDream) {
+        autoDreamResult = {
+          triggered: true,
+          beforeCount: before,
+          afterCount: nextMemories.length,
+          merged: computed.mergeCount,
+          archived: computed.archiveCount,
+          threshold: autoDreamThreshold,
+        };
+        log("info", `summarizer: auto-dream triggered (${before}→${nextMemories.length}, merge=${computed.mergeCount} archive=${computed.archiveCount})`);
+        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+          id: "evt-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+          title: "自动 Dream 完成（" + computed.mergeCount + " 合并 · " + computed.archiveCount + " 归档）",
+          eventType: "dream",
+          occurredAt: Date.now(),
+          detail: "trigger=auto_summary threshold=" + autoDreamThreshold + " before=" + before + " after=" + nextMemories.length,
+        });
+      }
+    } else {
+      autoDreamResult = { triggered: false, currentCount: Array.isArray(allMemories) ? allMemories.length : 0, threshold: autoDreamThreshold };
+    }
+  } catch (e) {
+    log("warn", "summarizer: auto-dream failed: " + String((e && e.message) || e));
+  }
+
   // 5) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
   try {
     if (typeof require !== "undefined") {
@@ -161,7 +204,7 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length, summary: semantic.summary || "" };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length, summary: semantic.summary || "", autoDream: autoDreamResult };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed

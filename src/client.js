@@ -97,6 +97,7 @@ window.__ModuleLoader__.load({
         "dash.tab.work": "任务动态",
         "dash.tab.knowledge": "项目记忆",
         "dash.tab.git": "Git 历史",
+        "dash.tab.settings": "设置",
         "dash.snapshot": "数据快照 · {time}",
         "dash.none": "（空）",
         "suggest.title": "💡 你今天可能想推进",
@@ -200,6 +201,7 @@ window.__ModuleLoader__.load({
         "dash.tab.work": "Work & activity",
         "dash.tab.knowledge": "Knowledge",
         "dash.tab.git": "Git history",
+        "dash.tab.settings": "Settings",
         "dash.snapshot": "Data snapshot · {time}",
         "dash.none": "(empty)",
         "suggest.title": "💡 Today you may want to continue",
@@ -1949,6 +1951,294 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ─── dsh-project-brain Settings Tab (v0.7.x) ────────────────────────────
+    // 把插件所需的全部配置（24 字段）暴露在 Dashboard 的「设置」tab，
+    // 不依赖 DSH 桌面设置面板是否渲染第三方插件 settings。
+    //   - 字段元数据与 config.js 的 Config schema 保持一致（手写）
+    //   - 读：rpc.call("/project-brain", "settings", { action: "get" })
+    //   - 写：rpc.call("/project-brain", "settings", { sessionId, action: "update", patch })
+    const BRAIN_SETTINGS_META = [
+      { group: "retrieval", icon: "🔎", title: { "zh-CN": "检索与向量", "en-US": "Retrieval & vectors" },
+        fields: [
+          { key: "retrievalMode", label: { "zh-CN": "检索模式", "en-US": "Retrieval mode" }, type: "enum",
+            options: [{ v: "keyword", l: { "zh-CN": "关键词 (BM25)", "en-US": "Keyword (BM25)" } }, { v: "hybrid", l: { "zh-CN": "混合 (关键词 + 向量)", "en-US": "Hybrid (keyword + vector)" } }],
+            hint: { "zh-CN": "hybrid 需要先配置下方 Embedding", "en-US": "hybrid requires Embedding configured below" } },
+          { key: "vectorEnabled", label: { "zh-CN": "启用向量检索", "en-US": "Vector retrieval" }, type: "boolean",
+            hint: { "zh-CN": "关闭时即使配了 embedding 也只用关键词", "en-US": "When off, retrieval is keyword-only even if embedding is configured" } },
+          { key: "embeddingBaseURL", label: { "zh-CN": "Embedding 地址", "en-US": "Embedding base URL" }, type: "string",
+            placeholder: "https://api.openai.com/v1",
+            hint: { "zh-CN": "OpenAI 兼容 /v1/embeddings 端点；留空 = 禁用向量", "en-US": "OpenAI-compatible /v1/embeddings endpoint; empty = no vectors" } },
+          { key: "embeddingModel", label: { "zh-CN": "Embedding 模型", "en-US": "Embedding model" }, type: "string",
+            placeholder: "text-embedding-3-small" },
+          { key: "embeddingApiKeyEnv", label: { "zh-CN": "API Key 环境变量", "en-US": "API Key env name" }, type: "string",
+            placeholder: "PROJECT_BRAIN_EMBEDDING_API_KEY",
+            hint: { "zh-CN": "环境变量名（不是 key 本身）", "en-US": "Environment variable name (not the key)" } },
+          { key: "embeddingDimensions", label: { "zh-CN": "向量维度", "en-US": "Vector dimensions" }, type: "number",
+            hint: { "zh-CN": "0 = 由服务自动推断", "en-US": "0 = auto from service" } },
+          { key: "embeddingBatchSize", label: { "zh-CN": "Embedding 批大小", "en-US": "Embedding batch size" }, type: "number", min: 1, max: 128 },
+          { key: "embeddingMaxIndexPerRun", label: { "zh-CN": "单次最大索引条目", "en-US": "Max items per indexing run" }, type: "number", min: 1, max: 500 },
+          { key: "embeddingTimeoutMs", label: { "zh-CN": "Embedding 超时 (ms)", "en-US": "Embedding timeout (ms)" }, type: "number", min: 1000, max: 120000, step: 1000 },
+        ],
+      },
+      { group: "weights", icon: "⚖️", title: { "zh-CN": "检索权重", "en-US": "Retrieval weights" },
+        hint: { "zh-CN": "检索混合打分各因子权重；总和不需要为 1，会自动归一化。", "en-US": "Weighted sum; not required to sum to 1 (auto-normalized)." },
+        fields: [
+          { key: "keywordWeight", label: { "zh-CN": "关键词权重", "en-US": "Keyword" }, type: "number", min: 0, max: 1, step: 0.05 },
+          { key: "vectorWeight", label: { "zh-CN": "向量权重", "en-US": "Vector" }, type: "number", min: 0, max: 1, step: 0.05 },
+          { key: "importanceWeight", label: { "zh-CN": "重要性权重", "en-US": "Importance" }, type: "number", min: 0, max: 1, step: 0.05 },
+          { key: "confidenceWeight", label: { "zh-CN": "可信度权重", "en-US": "Confidence" }, type: "number", min: 0, max: 1, step: 0.05 },
+          { key: "recencyWeight", label: { "zh-CN": "时新性权重", "en-US": "Recency" }, type: "number", min: 0, max: 1, step: 0.05 },
+        ],
+      },
+      { group: "summary", icon: "📝", title: { "zh-CN": "会话摘要 (LLM)", "en-US": "Session summary (LLM)" },
+        fields: [
+          { key: "sessionSemanticMemoryEnabled", label: { "zh-CN": "启用会话摘要", "en-US": "Enable session summary" }, type: "boolean",
+            hint: { "zh-CN": "session 结束自动调 LLM 抽取语义记忆 + 证据校验", "en-US": "Auto-extract semantic memories with grounding check on session end" } },
+          { key: "sessionSemanticMaxChars", label: { "zh-CN": "Transcript 截断 (chars)", "en-US": "Transcript truncate (chars)" }, type: "number", min: 2000, max: 40000, step: 1000 },
+          { key: "sessionSemanticMaxItems", label: { "zh-CN": "每次最多抽取", "en-US": "Max items per extraction" }, type: "number", min: 1, max: 8 },
+          { key: "sessionSemanticTimeoutMs", label: { "zh-CN": "LLM 超时 (ms)", "en-US": "LLM timeout (ms)" }, type: "number", min: 5000, max: 120000, step: 1000 },
+        ],
+      },
+      { group: "arch", icon: "🏗️", title: { "zh-CN": "架构分析", "en-US": "Architecture analysis" },
+        fields: [
+          { key: "architectureEnabled", label: { "zh-CN": "启用架构分析", "en-US": "Enable" }, type: "boolean" },
+          { key: "architectureLlmEnabled", label: { "zh-CN": "LLM 增强", "en-US": "LLM enrichment" }, type: "boolean" },
+          { key: "architectureLlmIncludeSource", label: { "zh-CN": "向 LLM 注入源码片段", "en-US": "Inject source snippets into LLM" }, type: "boolean" },
+          { key: "architectureMaxFiles", label: { "zh-CN": "最大扫描文件数", "en-US": "Max files scanned" }, type: "number", min: 20, max: 1000 },
+          { key: "architectureMaxNodes", label: { "zh-CN": "最大架构节点", "en-US": "Max architecture nodes" }, type: "number", min: 6, max: 60 },
+          { key: "architectureLlmTimeoutMs", label: { "zh-CN": "LLM 超时 (ms)", "en-US": "LLM timeout (ms)" }, type: "number", min: 5000, max: 120000, step: 1000 },
+        ],
+      },
+    ];
+
+    function settingsFieldLabel(field, localeCode) {
+      const label = field.label && typeof field.label === "object" ? field.label[localeCode] || field.label["zh-CN"] : field.label;
+      return label || field.key;
+    }
+    function settingsFieldHint(field, localeCode) {
+      if (!field.hint) return null;
+      return field.hint && typeof field.hint === "object" ? field.hint[localeCode] || field.hint["zh-CN"] : field.hint;
+    }
+    function settingsGroupTitle(group, localeCode) {
+      return group.title && typeof group.title === "object" ? group.title[localeCode] || group.title["zh-CN"] : group.title;
+    }
+    function settingsOptionLabel(opt, localeCode) {
+      return opt.l && typeof opt.l === "object" ? opt.l[localeCode] || opt.l["zh-CN"] : opt.l;
+    }
+
+    function SettingsTab({ rpc, sessionId, t, localeCode }) {
+      const locale = (localeCode === "en-US") ? "en-US" : "zh-CN";
+      const initial = { loaded: false, writable: false, config: {}, dirty: {}, saving: false, error: null, info: null };
+      const [state, setState] = React.useState(initial);
+
+      const loadSettings = React.useCallback(async () => {
+        if (!rpc || typeof rpc.call !== "function") {
+          setState(Object.assign({}, initial, { loaded: true, error: "DSH Runtime RPC unavailable" }));
+          return;
+        }
+        setState((s) => Object.assign({}, s, { error: null, info: null }));
+        try {
+          const res = await rpc.call("/project-brain", "settings", { sessionId, action: "get" });
+          if (res && res.ok && res.value) {
+            setState({ loaded: true, writable: !!res.value.writable, config: res.value.config || {}, dirty: {}, saving: false, error: null, info: null });
+          } else {
+            const code = (res && res.error && res.error.code) || "E_RPC";
+            const msg = (res && res.error && res.error.message) || "无法读取插件设置";
+            setState((s) => Object.assign({}, s, { loaded: true, error: msg + (code !== "E_RPC" ? " [" + code + "]" : "") }));
+          }
+        } catch (e) {
+          setState((s) => Object.assign({}, s, { loaded: true, error: String((e && e.message) || e) }));
+        }
+      }, [rpc, sessionId]);
+
+      React.useEffect(() => { loadSettings(); }, [loadSettings]);
+
+      function updateField(key, value) {
+        setState((s) => ({
+          loaded: s.loaded,
+          writable: s.writable,
+          config: Object.assign({}, s.config, { [key]: value }),
+          dirty: Object.assign({}, s.dirty, { [key]: value }),
+          saving: false,
+          error: null,
+          info: null,
+        }));
+      }
+
+      async function save() {
+        const dirtyKeys = Object.keys(state.dirty);
+        if (dirtyKeys.length === 0 || state.saving) return;
+        const patch = {};
+        for (const key of dirtyKeys) patch[key] = state.dirty[key];
+        setState((s) => Object.assign({}, s, { saving: true, error: null, info: null }));
+        try {
+          const res = await rpc.call("/project-brain", "settings", { sessionId, action: "update", patch });
+          if (res && res.ok && res.value) {
+            setState({ loaded: true, writable: !!res.value.writable, config: res.value.config || {}, dirty: {}, saving: false, error: null, info: "✓ 已保存" });
+          } else {
+            const code = (res && res.error && res.error.code) || "E_RPC";
+            const msg = (res && res.error && res.error.message) || "保存失败";
+            setState((s) => Object.assign({}, s, { saving: false, error: msg + (code !== "E_RPC" ? " [" + code + "]" : "") }));
+          }
+        } catch (e) {
+          setState((s) => Object.assign({}, s, { saving: false, error: String((e && e.message) || e) }));
+        }
+      }
+
+      function discard() {
+        setState((s) => Object.assign({}, s, { dirty: {}, error: null, info: "已丢弃本地修改（点击「重新读取」会刷新服务器值）" }));
+      }
+
+      function renderField(field, value) {
+        const fieldLabel = settingsFieldLabel(field, locale);
+        const hint = settingsFieldHint(field, locale);
+        const inputId = "brain-set-" + field.key;
+        const labelStyle = { display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px", color: "var(--dsw-alias-label-primary)" };
+        const inputBase = {
+          width: "100%", boxSizing: "border-box", padding: "6px 9px",
+          background: "var(--dsw-alias-bg-layer-1)", color: "var(--dsw-alias-label-primary)",
+          border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "6px",
+          fontFamily: "inherit", fontSize: "12px",
+        };
+
+        if (field.type === "boolean") {
+          const checked = value === true;
+          return React.createElement("div", { key: field.key, style: { marginBottom: "10px" } },
+            React.createElement("label", { htmlFor: inputId, style: { display: "flex", alignItems: "center", gap: "8px", cursor: state.writable ? "pointer" : "not-allowed" } },
+              React.createElement("input", {
+                id: inputId, type: "checkbox",
+                checked: checked, disabled: !state.writable || state.saving,
+                onChange: (e) => updateField(field.key, e.target.checked === true),
+                style: { cursor: state.writable ? "pointer" : "not-allowed" },
+              }),
+              React.createElement("span", { style: labelStyle }, fieldLabel),
+            ),
+            hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px", marginLeft: "24px" } }, hint) : null,
+          );
+        }
+
+        if (field.type === "enum") {
+          return React.createElement("div", { key: field.key, style: { marginBottom: "10px" } },
+            React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+            React.createElement("select", {
+              id: inputId, disabled: !state.writable || state.saving,
+              value: value == null ? "" : String(value),
+              onChange: (e) => updateField(field.key, e.target.value),
+              style: Object.assign({}, inputBase),
+            }, (field.options || []).map((opt) =>
+              React.createElement("option", { key: opt.v, value: opt.v }, settingsOptionLabel(opt, locale)),
+            )),
+            hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null,
+          );
+        }
+
+        // number / string 共享一个 input
+        const isNumber = field.type === "number";
+        const inputProps = {
+          id: inputId, disabled: !state.writable || state.saving,
+          onChange: (e) => {
+            const raw = e.target.value;
+            if (isNumber) {
+              if (raw === "" || raw === "-") { updateField(field.key, raw); return; }
+              const num = Number(raw);
+              updateField(field.key, Number.isFinite(num) ? num : raw);
+            } else {
+              updateField(field.key, raw);
+            }
+          },
+          style: Object.assign({}, inputBase, isNumber ? { fontFamily: "ui-monospace, monospace" } : {}),
+          placeholder: field.placeholder || "",
+        };
+        if (isNumber) {
+          if (typeof field.min === "number") inputProps.min = field.min;
+          if (typeof field.max === "number") inputProps.max = field.max;
+          if (typeof field.step === "number") inputProps.step = field.step;
+          inputProps.type = "number";
+          inputProps.value = value == null ? "" : String(value);
+        } else {
+          inputProps.type = "text";
+          inputProps.value = value == null ? "" : String(value);
+        }
+        return React.createElement("div", { key: field.key, style: { marginBottom: "10px" } },
+          React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+          React.createElement("input", inputProps),
+          hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null,
+        );
+      }
+
+      if (!state.loaded) {
+        return React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } }, "加载设置中…");
+      }
+
+      const dirtyCount = Object.keys(state.dirty).length;
+
+      return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
+        React.createElement("div", { style: {
+          padding: "9px 12px", borderRadius: "8px",
+          border: "1px solid " + (state.writable ? "var(--dsw-alias-state-success-primary, var(--dsw-alias-border-l1))" : "var(--dsw-alias-state-warn-primary)"),
+          background: "var(--dsw-alias-bg-layer-1)",
+          display: "flex", alignItems: "center", gap: "8px", fontSize: "12px",
+          color: state.writable ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
+        } },
+          React.createElement("span", null, state.writable ? "✅" : "⚠️"),
+          React.createElement("span", null, state.writable
+            ? (locale === "en-US" ? "Settings writable. Changes persist immediately." : "配置可写，保存后即时生效。")
+            : (locale === "en-US" ? "Settings read-only in this runtime (DSH settings service unavailable). Configure via DSH settings panel or env vars." : "当前运行时配置为只读（DSH settings 服务不可用）。请通过 DSH 设置面板或环境变量配置。")),
+          React.createElement("span", { style: { marginLeft: "auto", cursor: "pointer", opacity: 0.85 } , onClick: loadSettings, title: locale === "en-US" ? "Reload" : "重新读取"},
+            "⟳"),
+        ),
+        BRAIN_SETTINGS_META.map((group) =>
+          React.createElement("section", {
+            key: group.group, style: {
+              padding: "12px 14px", background: "var(--dsw-alias-bg-layer-2)",
+              borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)",
+            },
+          },
+            React.createElement("h3", { style: { fontSize: "13px", fontWeight: "700", margin: "0 0 4px", display: "flex", alignItems: "center", gap: "6px", color: "var(--dsw-alias-label-primary)" } },
+              React.createElement("span", null, group.icon),
+              React.createElement("span", null, settingsGroupTitle(group, locale)),
+            ),
+            group.hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginBottom: "10px" } }, settingsFieldHint(group, locale)) : null,
+            group.fields.map((field) => renderField(field, state.config[field.key])),
+          ),
+        ),
+        React.createElement("div", { style: {
+          position: "sticky", bottom: "0", marginTop: "6px",
+          padding: "10px 12px", background: "var(--dsw-alias-bg-layer-2)",
+          borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)",
+          display: "flex", alignItems: "center", gap: "10px",
+        } },
+          state.error ? React.createElement("span", { style: { color: "var(--dsw-alias-state-error-primary)", fontSize: "11px", flex: "1 1 auto" } }, "❌ " + state.error) : null,
+          !state.error && state.info ? React.createElement("span", { style: { color: "var(--dsw-alias-state-success-primary)", fontSize: "11px", flex: "1 1 auto" } }, state.info) : null,
+          !state.error && !state.info ? React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)", fontSize: "11px", flex: "1 1 auto" } },
+            dirtyCount > 0 ? (dirtyCount + (locale === "en-US" ? " unsaved field(s)" : " 项未保存")) : (locale === "en-US" ? "No changes" : "无修改")) : null,
+          React.createElement("button", {
+            type: "button", onClick: discard,
+            disabled: dirtyCount === 0 || state.saving,
+            style: {
+              padding: "6px 12px", borderRadius: "6px",
+              border: "1px solid var(--dsw-alias-border-l1)", background: "transparent",
+              color: "var(--dsw-alias-label-primary)", cursor: dirtyCount === 0 ? "not-allowed" : "pointer",
+              fontSize: "11px", opacity: dirtyCount === 0 ? 0.5 : 1, fontFamily: "inherit",
+            },
+          }, locale === "en-US" ? "Discard" : "放弃修改"),
+          React.createElement("button", {
+            type: "button", onClick: save,
+            disabled: dirtyCount === 0 || state.saving || !state.writable,
+            "data-settings-save": "1",
+            style: {
+              padding: "6px 14px", borderRadius: "6px",
+              border: "none",
+              background: (dirtyCount === 0 || !state.writable) ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-brand-primary)",
+              color: (dirtyCount === 0 || !state.writable) ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-label-on-brand, var(--dsw-alias-bg-base))",
+              cursor: (dirtyCount === 0 || !state.writable || state.saving) ? "not-allowed" : "pointer",
+              fontSize: "12px", fontWeight: "600", fontFamily: "inherit",
+            },
+          }, state.saving ? "保存中…" : (locale === "en-US" ? "Save" : "保存")),
+        ),
+      );
+    }
+
     function DashboardSection({ data, t, localeCode, sessionId, connection, onPreviewUpdate }) {
       const p = data.project || {};
       const todos = data.todos || [];
@@ -2116,6 +2406,7 @@ window.__ModuleLoader__.load({
         { id: "architecture", icon: "⌘", label: t("dash.tab.architecture") },
         { id: "work", icon: "✓", label: t("dash.tab.work") },
         { id: "knowledge", icon: "◇", label: t("dash.tab.knowledge") },
+        { id: "settings", icon: "⚙", label: t("dash.tab.settings") },
       ];
       // v0.4.x: 仅当项目是 git 仓库时才显示 Git Tab
       if (gitInfo && gitInfo.available === true) {
@@ -2242,6 +2533,7 @@ window.__ModuleLoader__.load({
           ) : null,
           activeTab === "knowledge" ? dashSection("🧠", "dash.memory", memoryNode) : null,
           activeTab === "git" ? React.createElement(GitTab, { gitInfo, t, onRefresh: refreshGit, autoRefresh: gitAutoRefresh, onToggleAutoRefresh: (v) => { try { localStorage.setItem("dsh-brain-git-auto-refresh", v ? "1" : "0"); } catch (e) {} setGitAutoRefresh(v); } }) : null,
+          activeTab === "settings" ? React.createElement(SettingsTab, { rpc, sessionId, t, localeCode }) : null,
         ),
         React.createElement("div", { style: { padding: "8px 16px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "4px" } },
           React.createElement("span", null, "🕒"),

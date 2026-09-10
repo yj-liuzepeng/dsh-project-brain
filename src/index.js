@@ -2,7 +2,7 @@
 // 导出 name / inject / apply 三个 named export（cordis 4 标准）
 
 import { buildProjectInitTool, buildProjectRescanTool } from "./tools.js";
-import { buildMemoryAddTool, buildMemoryListTool } from "./tools/memory.js";
+import { buildMemoryAddTool, buildMemoryListTool, buildMemoryArchiveTool, buildMemorySupersedeTool } from "./tools/memory.js";
 import { buildTodoAddTool, buildTodoListTool, buildTodoDoneTool } from "./tools/todo.js";
 import { buildTodoUpdateTool } from "./tools/todo-update.js";
 import { buildContinueTool } from "./tools/continue.js";
@@ -78,9 +78,9 @@ function applyImpl(ctx, config) {
     return;
   }
 
-  // 1) 注册工具（P0.4.x + P0.5 + P0.7 + v0.4.1：13 个工具，含 v0.4.1 project_diff）
+  // 1) 注册工具（P0.4.x + P0.5 + P0.7 + v0.4.1：16 个工具，含 v0.7.x memory_archive/supersede）
   //   init/rescan（项目扫描）/ continue（续接）/ status（状态快照）
-  //   memory_add / memory_list（记忆 CRUD-lite）
+  //   memory_add / memory_list / memory_archive / memory_supersede（记忆 CRUD 全套）
   //   todo_add / todo_list / todo_done / todo_update（待办 CRUD）
   //   ask（自然语言查询）/ dream（轻量整合）/ diff（v0.4.1 LLM 架构 diff）
   const toolBuilders = [
@@ -91,6 +91,8 @@ function applyImpl(ctx, config) {
     buildStatusTool,
     buildMemoryAddTool,
     buildMemoryListTool,
+    buildMemoryArchiveTool,
+    buildMemorySupersedeTool,
     buildTodoAddTool,
     buildTodoListTool,
     buildTodoDoneTool,
@@ -158,6 +160,8 @@ function applyImpl(ctx, config) {
       tools,
       logger: ctx.logger,
       getMemoryConfig: memoryRuntime.get,
+      updateSettings: memoryRuntime.updateSettings,
+      settingsWritable: memoryRuntime.settingsWritable,
       getLlm: llmRuntime.get,
     });
   } catch (e) {

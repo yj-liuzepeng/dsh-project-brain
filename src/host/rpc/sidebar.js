@@ -11,9 +11,41 @@
 import { buildSidebarPreview, buildWorkspacePreview, invalidateAggregatorCache } from "../sidebar/aggregator.js";
 import { scanAndWrite } from "../scan-and-write.js";
 import { buildSuggestTool } from "../../tools/suggest.js";
-import { publicMemoryConfig } from "../memory/config.js";
+import { publicMemoryConfig, normalizeMemoryConfig } from "../memory/config.js";
 import { resolveSessionRoute } from "../architecture/analyzer.js";
 import { getGitHistory, getGitBranches, getWorkTreeChanges } from "../git/history.js";
+
+// 把 normalizeMemoryConfig 的冻结对象转成可 JSON 序列化的普通对象（供 RPC 传回 Client）。
+// embeddingApiKeyEnv 只存环境变量名（非密钥本身），无需脱敏；但这里仍打包成纯数据对象。
+function sanitizeSettings(config) {
+  const source = normalizeMemoryConfig(config);
+  return {
+    retrievalMode: source.retrievalMode,
+    vectorEnabled: source.vectorEnabled,
+    embeddingBaseURL: source.embeddingBaseURL,
+    embeddingModel: source.embeddingModel,
+    embeddingApiKeyEnv: source.embeddingApiKeyEnv,
+    embeddingDimensions: source.embeddingDimensions == null ? 0 : source.embeddingDimensions,
+    embeddingBatchSize: source.embeddingBatchSize,
+    embeddingMaxIndexPerRun: source.embeddingMaxIndexPerRun,
+    embeddingTimeoutMs: source.embeddingTimeoutMs,
+    keywordWeight: source.keywordWeight,
+    vectorWeight: source.vectorWeight,
+    importanceWeight: source.importanceWeight,
+    confidenceWeight: source.confidenceWeight,
+    recencyWeight: source.recencyWeight,
+    sessionSemanticMemoryEnabled: source.sessionSemanticMemoryEnabled,
+    sessionSemanticMaxChars: source.sessionSemanticMaxChars,
+    sessionSemanticMaxItems: source.sessionSemanticMaxItems,
+    sessionSemanticTimeoutMs: source.sessionSemanticTimeoutMs,
+    architectureEnabled: source.architectureEnabled,
+    architectureLlmEnabled: source.architectureLlmEnabled,
+    architectureLlmIncludeSource: source.architectureLlmIncludeSource,
+    architectureMaxFiles: source.architectureMaxFiles,
+    architectureMaxNodes: source.architectureMaxNodes,
+    architectureLlmTimeoutMs: source.architectureLlmTimeoutMs,
+  };
+}
 
 export const PROJECT_BRAIN_RPC_CHANNEL = "/project-brain";
 
@@ -66,7 +98,7 @@ function resolveRpcProjectPath(ctx, payload) {
  * every request, so Sessions created after the bundle was built work without a
  * rebuild or a Desktop restart.
  */
-export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, getLlm }) {
+export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, updateSettings, settingsWritable, getLlm }) {
   if (!connection || !connection.rpc || typeof connection.rpc.handle !== "function") {
     if (logger && typeof logger.warn === "function") {
       logger.warn("[dsh-project-brain] connection.rpc unavailable; runtime preview disabled");
@@ -86,6 +118,46 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
         getLlmRoute: () => resolveSessionRoute(getSession(ctx, payload && payload.sessionId)),
         sessionId: payload && payload.sessionId,
       };
+
+      // 插件级设置：不依赖 session workspace，放在此处在 workspace 校验之前处理。
+      if (endpoint === "settings") {
+        const action = payload && payload.action === "update" ? "update" : "get";
+        const config = getMemoryConfig ? getMemoryConfig() : normalizeMemoryConfig({});
+        const writable = settingsWritable ? settingsWritable() : false;
+        if (action === "get") {
+          return rpcOk({
+            writable,
+            config: sanitizeSettings(config),
+            retrieval: publicMemoryConfig(config),
+          });
+        }
+        // action === "update"
+        const patch = payload && payload.patch && typeof payload.patch === "object" ? payload.patch : null;
+        if (!patch || Object.keys(patch).length === 0) {
+          return rpcError("EMPTY_PATCH", "没有可保存的字段", {});
+        }
+        if (!updateSettings || typeof updateSettings !== "function") {
+          return rpcError("SETTINGS_UNAVAILABLE", "当前运行时 settings 服务不可用，配置为只读", { writable: false });
+        }
+        if (!writable) {
+          return rpcError("SETTINGS_READONLY", "settings provider 只读，无法保存", { writable: false });
+        }
+        try {
+          const next = await updateSettings(patch);
+          return rpcOk({
+            writable,
+            config: sanitizeSettings(next),
+            retrieval: publicMemoryConfig(next),
+          });
+        } catch (error) {
+          return rpcError(
+            (error && error.code) || "SETTINGS_UPDATE_FAILED",
+            String((error && error.message) || error),
+            { writable },
+          );
+        }
+      }
+
       if (!projectPath) {
         return rpcError(
           "WORKSPACE_NOT_FOUND",

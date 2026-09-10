@@ -88,6 +88,7 @@
           "dash.tab.work": "\u4EFB\u52A1\u52A8\u6001",
           "dash.tab.knowledge": "\u9879\u76EE\u8BB0\u5FC6",
           "dash.tab.git": "Git \u5386\u53F2",
+          "dash.tab.settings": "\u8BBE\u7F6E",
           "dash.snapshot": "\u6570\u636E\u5FEB\u7167 \xB7 {time}",
           "dash.none": "\uFF08\u7A7A\uFF09",
           "suggest.title": "\u{1F4A1} \u4F60\u4ECA\u5929\u53EF\u80FD\u60F3\u63A8\u8FDB",
@@ -191,6 +192,7 @@
           "dash.tab.work": "Work & activity",
           "dash.tab.knowledge": "Knowledge",
           "dash.tab.git": "Git history",
+          "dash.tab.settings": "Settings",
           "dash.snapshot": "Data snapshot \xB7 {time}",
           "dash.none": "(empty)",
           "suggest.title": "\u{1F4A1} Today you may want to continue",
@@ -1983,6 +1985,371 @@
           renderWorkTreeSection(gitInfo.workTree)
         );
       }
+      const BRAIN_SETTINGS_META = [
+        {
+          group: "retrieval",
+          icon: "\u{1F50E}",
+          title: { "zh-CN": "\u68C0\u7D22\u4E0E\u5411\u91CF", "en-US": "Retrieval & vectors" },
+          fields: [
+            {
+              key: "retrievalMode",
+              label: { "zh-CN": "\u68C0\u7D22\u6A21\u5F0F", "en-US": "Retrieval mode" },
+              type: "enum",
+              options: [{ v: "keyword", l: { "zh-CN": "\u5173\u952E\u8BCD (BM25)", "en-US": "Keyword (BM25)" } }, { v: "hybrid", l: { "zh-CN": "\u6DF7\u5408 (\u5173\u952E\u8BCD + \u5411\u91CF)", "en-US": "Hybrid (keyword + vector)" } }],
+              hint: { "zh-CN": "hybrid \u9700\u8981\u5148\u914D\u7F6E\u4E0B\u65B9 Embedding", "en-US": "hybrid requires Embedding configured below" }
+            },
+            {
+              key: "vectorEnabled",
+              label: { "zh-CN": "\u542F\u7528\u5411\u91CF\u68C0\u7D22", "en-US": "Vector retrieval" },
+              type: "boolean",
+              hint: { "zh-CN": "\u5173\u95ED\u65F6\u5373\u4F7F\u914D\u4E86 embedding \u4E5F\u53EA\u7528\u5173\u952E\u8BCD", "en-US": "When off, retrieval is keyword-only even if embedding is configured" }
+            },
+            {
+              key: "embeddingBaseURL",
+              label: { "zh-CN": "Embedding \u5730\u5740", "en-US": "Embedding base URL" },
+              type: "string",
+              placeholder: "https://api.openai.com/v1",
+              hint: { "zh-CN": "OpenAI \u517C\u5BB9 /v1/embeddings \u7AEF\u70B9\uFF1B\u7559\u7A7A = \u7981\u7528\u5411\u91CF", "en-US": "OpenAI-compatible /v1/embeddings endpoint; empty = no vectors" }
+            },
+            {
+              key: "embeddingModel",
+              label: { "zh-CN": "Embedding \u6A21\u578B", "en-US": "Embedding model" },
+              type: "string",
+              placeholder: "text-embedding-3-small"
+            },
+            {
+              key: "embeddingApiKeyEnv",
+              label: { "zh-CN": "API Key \u73AF\u5883\u53D8\u91CF", "en-US": "API Key env name" },
+              type: "string",
+              placeholder: "PROJECT_BRAIN_EMBEDDING_API_KEY",
+              hint: { "zh-CN": "\u73AF\u5883\u53D8\u91CF\u540D\uFF08\u4E0D\u662F key \u672C\u8EAB\uFF09", "en-US": "Environment variable name (not the key)" }
+            },
+            {
+              key: "embeddingDimensions",
+              label: { "zh-CN": "\u5411\u91CF\u7EF4\u5EA6", "en-US": "Vector dimensions" },
+              type: "number",
+              hint: { "zh-CN": "0 = \u7531\u670D\u52A1\u81EA\u52A8\u63A8\u65AD", "en-US": "0 = auto from service" }
+            },
+            { key: "embeddingBatchSize", label: { "zh-CN": "Embedding \u6279\u5927\u5C0F", "en-US": "Embedding batch size" }, type: "number", min: 1, max: 128 },
+            { key: "embeddingMaxIndexPerRun", label: { "zh-CN": "\u5355\u6B21\u6700\u5927\u7D22\u5F15\u6761\u76EE", "en-US": "Max items per indexing run" }, type: "number", min: 1, max: 500 },
+            { key: "embeddingTimeoutMs", label: { "zh-CN": "Embedding \u8D85\u65F6 (ms)", "en-US": "Embedding timeout (ms)" }, type: "number", min: 1e3, max: 12e4, step: 1e3 }
+          ]
+        },
+        {
+          group: "weights",
+          icon: "\u2696\uFE0F",
+          title: { "zh-CN": "\u68C0\u7D22\u6743\u91CD", "en-US": "Retrieval weights" },
+          hint: { "zh-CN": "\u68C0\u7D22\u6DF7\u5408\u6253\u5206\u5404\u56E0\u5B50\u6743\u91CD\uFF1B\u603B\u548C\u4E0D\u9700\u8981\u4E3A 1\uFF0C\u4F1A\u81EA\u52A8\u5F52\u4E00\u5316\u3002", "en-US": "Weighted sum; not required to sum to 1 (auto-normalized)." },
+          fields: [
+            { key: "keywordWeight", label: { "zh-CN": "\u5173\u952E\u8BCD\u6743\u91CD", "en-US": "Keyword" }, type: "number", min: 0, max: 1, step: 0.05 },
+            { key: "vectorWeight", label: { "zh-CN": "\u5411\u91CF\u6743\u91CD", "en-US": "Vector" }, type: "number", min: 0, max: 1, step: 0.05 },
+            { key: "importanceWeight", label: { "zh-CN": "\u91CD\u8981\u6027\u6743\u91CD", "en-US": "Importance" }, type: "number", min: 0, max: 1, step: 0.05 },
+            { key: "confidenceWeight", label: { "zh-CN": "\u53EF\u4FE1\u5EA6\u6743\u91CD", "en-US": "Confidence" }, type: "number", min: 0, max: 1, step: 0.05 },
+            { key: "recencyWeight", label: { "zh-CN": "\u65F6\u65B0\u6027\u6743\u91CD", "en-US": "Recency" }, type: "number", min: 0, max: 1, step: 0.05 }
+          ]
+        },
+        {
+          group: "summary",
+          icon: "\u{1F4DD}",
+          title: { "zh-CN": "\u4F1A\u8BDD\u6458\u8981 (LLM)", "en-US": "Session summary (LLM)" },
+          fields: [
+            {
+              key: "sessionSemanticMemoryEnabled",
+              label: { "zh-CN": "\u542F\u7528\u4F1A\u8BDD\u6458\u8981", "en-US": "Enable session summary" },
+              type: "boolean",
+              hint: { "zh-CN": "session \u7ED3\u675F\u81EA\u52A8\u8C03 LLM \u62BD\u53D6\u8BED\u4E49\u8BB0\u5FC6 + \u8BC1\u636E\u6821\u9A8C", "en-US": "Auto-extract semantic memories with grounding check on session end" }
+            },
+            { key: "sessionSemanticMaxChars", label: { "zh-CN": "Transcript \u622A\u65AD (chars)", "en-US": "Transcript truncate (chars)" }, type: "number", min: 2e3, max: 4e4, step: 1e3 },
+            { key: "sessionSemanticMaxItems", label: { "zh-CN": "\u6BCF\u6B21\u6700\u591A\u62BD\u53D6", "en-US": "Max items per extraction" }, type: "number", min: 1, max: 8 },
+            { key: "sessionSemanticTimeoutMs", label: { "zh-CN": "LLM \u8D85\u65F6 (ms)", "en-US": "LLM timeout (ms)" }, type: "number", min: 5e3, max: 12e4, step: 1e3 }
+          ]
+        },
+        {
+          group: "arch",
+          icon: "\u{1F3D7}\uFE0F",
+          title: { "zh-CN": "\u67B6\u6784\u5206\u6790", "en-US": "Architecture analysis" },
+          fields: [
+            { key: "architectureEnabled", label: { "zh-CN": "\u542F\u7528\u67B6\u6784\u5206\u6790", "en-US": "Enable" }, type: "boolean" },
+            { key: "architectureLlmEnabled", label: { "zh-CN": "LLM \u589E\u5F3A", "en-US": "LLM enrichment" }, type: "boolean" },
+            { key: "architectureLlmIncludeSource", label: { "zh-CN": "\u5411 LLM \u6CE8\u5165\u6E90\u7801\u7247\u6BB5", "en-US": "Inject source snippets into LLM" }, type: "boolean" },
+            { key: "architectureMaxFiles", label: { "zh-CN": "\u6700\u5927\u626B\u63CF\u6587\u4EF6\u6570", "en-US": "Max files scanned" }, type: "number", min: 20, max: 1e3 },
+            { key: "architectureMaxNodes", label: { "zh-CN": "\u6700\u5927\u67B6\u6784\u8282\u70B9", "en-US": "Max architecture nodes" }, type: "number", min: 6, max: 60 },
+            { key: "architectureLlmTimeoutMs", label: { "zh-CN": "LLM \u8D85\u65F6 (ms)", "en-US": "LLM timeout (ms)" }, type: "number", min: 5e3, max: 12e4, step: 1e3 }
+          ]
+        }
+      ];
+      function settingsFieldLabel(field, localeCode) {
+        const label = field.label && typeof field.label === "object" ? field.label[localeCode] || field.label["zh-CN"] : field.label;
+        return label || field.key;
+      }
+      function settingsFieldHint(field, localeCode) {
+        if (!field.hint) return null;
+        return field.hint && typeof field.hint === "object" ? field.hint[localeCode] || field.hint["zh-CN"] : field.hint;
+      }
+      function settingsGroupTitle(group, localeCode) {
+        return group.title && typeof group.title === "object" ? group.title[localeCode] || group.title["zh-CN"] : group.title;
+      }
+      function settingsOptionLabel(opt, localeCode) {
+        return opt.l && typeof opt.l === "object" ? opt.l[localeCode] || opt.l["zh-CN"] : opt.l;
+      }
+      function SettingsTab({ rpc, sessionId, t, localeCode }) {
+        const locale = localeCode === "en-US" ? "en-US" : "zh-CN";
+        const initial = { loaded: false, writable: false, config: {}, dirty: {}, saving: false, error: null, info: null };
+        const [state, setState] = React.useState(initial);
+        const loadSettings = React.useCallback(async () => {
+          if (!rpc || typeof rpc.call !== "function") {
+            setState(Object.assign({}, initial, { loaded: true, error: "DSH Runtime RPC unavailable" }));
+            return;
+          }
+          setState((s) => Object.assign({}, s, { error: null, info: null }));
+          try {
+            const res = await rpc.call("/project-brain", "settings", { sessionId, action: "get" });
+            if (res && res.ok && res.value) {
+              setState({ loaded: true, writable: !!res.value.writable, config: res.value.config || {}, dirty: {}, saving: false, error: null, info: null });
+            } else {
+              const code = res && res.error && res.error.code || "E_RPC";
+              const msg = res && res.error && res.error.message || "\u65E0\u6CD5\u8BFB\u53D6\u63D2\u4EF6\u8BBE\u7F6E";
+              setState((s) => Object.assign({}, s, { loaded: true, error: msg + (code !== "E_RPC" ? " [" + code + "]" : "") }));
+            }
+          } catch (e) {
+            setState((s) => Object.assign({}, s, { loaded: true, error: String(e && e.message || e) }));
+          }
+        }, [rpc, sessionId]);
+        React.useEffect(() => {
+          loadSettings();
+        }, [loadSettings]);
+        function updateField(key, value) {
+          setState((s) => ({
+            loaded: s.loaded,
+            writable: s.writable,
+            config: Object.assign({}, s.config, { [key]: value }),
+            dirty: Object.assign({}, s.dirty, { [key]: value }),
+            saving: false,
+            error: null,
+            info: null
+          }));
+        }
+        async function save() {
+          const dirtyKeys = Object.keys(state.dirty);
+          if (dirtyKeys.length === 0 || state.saving) return;
+          const patch = {};
+          for (const key of dirtyKeys) patch[key] = state.dirty[key];
+          setState((s) => Object.assign({}, s, { saving: true, error: null, info: null }));
+          try {
+            const res = await rpc.call("/project-brain", "settings", { sessionId, action: "update", patch });
+            if (res && res.ok && res.value) {
+              setState({ loaded: true, writable: !!res.value.writable, config: res.value.config || {}, dirty: {}, saving: false, error: null, info: "\u2713 \u5DF2\u4FDD\u5B58" });
+            } else {
+              const code = res && res.error && res.error.code || "E_RPC";
+              const msg = res && res.error && res.error.message || "\u4FDD\u5B58\u5931\u8D25";
+              setState((s) => Object.assign({}, s, { saving: false, error: msg + (code !== "E_RPC" ? " [" + code + "]" : "") }));
+            }
+          } catch (e) {
+            setState((s) => Object.assign({}, s, { saving: false, error: String(e && e.message || e) }));
+          }
+        }
+        function discard() {
+          setState((s) => Object.assign({}, s, { dirty: {}, error: null, info: "\u5DF2\u4E22\u5F03\u672C\u5730\u4FEE\u6539\uFF08\u70B9\u51FB\u300C\u91CD\u65B0\u8BFB\u53D6\u300D\u4F1A\u5237\u65B0\u670D\u52A1\u5668\u503C\uFF09" }));
+        }
+        function renderField(field, value) {
+          const fieldLabel = settingsFieldLabel(field, locale);
+          const hint = settingsFieldHint(field, locale);
+          const inputId = "brain-set-" + field.key;
+          const labelStyle = { display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px", color: "var(--dsw-alias-label-primary)" };
+          const inputBase = {
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "6px 9px",
+            background: "var(--dsw-alias-bg-layer-1)",
+            color: "var(--dsw-alias-label-primary)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderRadius: "6px",
+            fontFamily: "inherit",
+            fontSize: "12px"
+          };
+          if (field.type === "boolean") {
+            const checked = value === true;
+            return React.createElement(
+              "div",
+              { key: field.key, style: { marginBottom: "10px" } },
+              React.createElement(
+                "label",
+                { htmlFor: inputId, style: { display: "flex", alignItems: "center", gap: "8px", cursor: state.writable ? "pointer" : "not-allowed" } },
+                React.createElement("input", {
+                  id: inputId,
+                  type: "checkbox",
+                  checked,
+                  disabled: !state.writable || state.saving,
+                  onChange: (e) => updateField(field.key, e.target.checked === true),
+                  style: { cursor: state.writable ? "pointer" : "not-allowed" }
+                }),
+                React.createElement("span", { style: labelStyle }, fieldLabel)
+              ),
+              hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px", marginLeft: "24px" } }, hint) : null
+            );
+          }
+          if (field.type === "enum") {
+            return React.createElement(
+              "div",
+              { key: field.key, style: { marginBottom: "10px" } },
+              React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+              React.createElement("select", {
+                id: inputId,
+                disabled: !state.writable || state.saving,
+                value: value == null ? "" : String(value),
+                onChange: (e) => updateField(field.key, e.target.value),
+                style: Object.assign({}, inputBase)
+              }, (field.options || []).map(
+                (opt) => React.createElement("option", { key: opt.v, value: opt.v }, settingsOptionLabel(opt, locale))
+              )),
+              hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null
+            );
+          }
+          const isNumber = field.type === "number";
+          const inputProps = {
+            id: inputId,
+            disabled: !state.writable || state.saving,
+            onChange: (e) => {
+              const raw = e.target.value;
+              if (isNumber) {
+                if (raw === "" || raw === "-") {
+                  updateField(field.key, raw);
+                  return;
+                }
+                const num = Number(raw);
+                updateField(field.key, Number.isFinite(num) ? num : raw);
+              } else {
+                updateField(field.key, raw);
+              }
+            },
+            style: Object.assign({}, inputBase, isNumber ? { fontFamily: "ui-monospace, monospace" } : {}),
+            placeholder: field.placeholder || ""
+          };
+          if (isNumber) {
+            if (typeof field.min === "number") inputProps.min = field.min;
+            if (typeof field.max === "number") inputProps.max = field.max;
+            if (typeof field.step === "number") inputProps.step = field.step;
+            inputProps.type = "number";
+            inputProps.value = value == null ? "" : String(value);
+          } else {
+            inputProps.type = "text";
+            inputProps.value = value == null ? "" : String(value);
+          }
+          return React.createElement(
+            "div",
+            { key: field.key, style: { marginBottom: "10px" } },
+            React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+            React.createElement("input", inputProps),
+            hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null
+          );
+        }
+        if (!state.loaded) {
+          return React.createElement("div", { style: { padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } }, "\u52A0\u8F7D\u8BBE\u7F6E\u4E2D\u2026");
+        }
+        const dirtyCount = Object.keys(state.dirty).length;
+        return React.createElement(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "14px" } },
+          React.createElement(
+            "div",
+            { style: {
+              padding: "9px 12px",
+              borderRadius: "8px",
+              border: "1px solid " + (state.writable ? "var(--dsw-alias-state-success-primary, var(--dsw-alias-border-l1))" : "var(--dsw-alias-state-warn-primary)"),
+              background: "var(--dsw-alias-bg-layer-1)",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "12px",
+              color: state.writable ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)"
+            } },
+            React.createElement("span", null, state.writable ? "\u2705" : "\u26A0\uFE0F"),
+            React.createElement("span", null, state.writable ? locale === "en-US" ? "Settings writable. Changes persist immediately." : "\u914D\u7F6E\u53EF\u5199\uFF0C\u4FDD\u5B58\u540E\u5373\u65F6\u751F\u6548\u3002" : locale === "en-US" ? "Settings read-only in this runtime (DSH settings service unavailable). Configure via DSH settings panel or env vars." : "\u5F53\u524D\u8FD0\u884C\u65F6\u914D\u7F6E\u4E3A\u53EA\u8BFB\uFF08DSH settings \u670D\u52A1\u4E0D\u53EF\u7528\uFF09\u3002\u8BF7\u901A\u8FC7 DSH \u8BBE\u7F6E\u9762\u677F\u6216\u73AF\u5883\u53D8\u91CF\u914D\u7F6E\u3002"),
+            React.createElement(
+              "span",
+              { style: { marginLeft: "auto", cursor: "pointer", opacity: 0.85 }, onClick: loadSettings, title: locale === "en-US" ? "Reload" : "\u91CD\u65B0\u8BFB\u53D6" },
+              "\u27F3"
+            )
+          ),
+          BRAIN_SETTINGS_META.map(
+            (group) => React.createElement(
+              "section",
+              {
+                key: group.group,
+                style: {
+                  padding: "12px 14px",
+                  background: "var(--dsw-alias-bg-layer-2)",
+                  borderRadius: "10px",
+                  border: "1px solid var(--dsw-alias-border-l1)"
+                }
+              },
+              React.createElement(
+                "h3",
+                { style: { fontSize: "13px", fontWeight: "700", margin: "0 0 4px", display: "flex", alignItems: "center", gap: "6px", color: "var(--dsw-alias-label-primary)" } },
+                React.createElement("span", null, group.icon),
+                React.createElement("span", null, settingsGroupTitle(group, locale))
+              ),
+              group.hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginBottom: "10px" } }, settingsFieldHint(group, locale)) : null,
+              group.fields.map((field) => renderField(field, state.config[field.key]))
+            )
+          ),
+          React.createElement(
+            "div",
+            { style: {
+              position: "sticky",
+              bottom: "0",
+              marginTop: "6px",
+              padding: "10px 12px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              borderRadius: "10px",
+              border: "1px solid var(--dsw-alias-border-l1)",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px"
+            } },
+            state.error ? React.createElement("span", { style: { color: "var(--dsw-alias-state-error-primary)", fontSize: "11px", flex: "1 1 auto" } }, "\u274C " + state.error) : null,
+            !state.error && state.info ? React.createElement("span", { style: { color: "var(--dsw-alias-state-success-primary)", fontSize: "11px", flex: "1 1 auto" } }, state.info) : null,
+            !state.error && !state.info ? React.createElement(
+              "span",
+              { style: { color: "var(--dsw-alias-label-secondary)", fontSize: "11px", flex: "1 1 auto" } },
+              dirtyCount > 0 ? dirtyCount + (locale === "en-US" ? " unsaved field(s)" : " \u9879\u672A\u4FDD\u5B58") : locale === "en-US" ? "No changes" : "\u65E0\u4FEE\u6539"
+            ) : null,
+            React.createElement("button", {
+              type: "button",
+              onClick: discard,
+              disabled: dirtyCount === 0 || state.saving,
+              style: {
+                padding: "6px 12px",
+                borderRadius: "6px",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                background: "transparent",
+                color: "var(--dsw-alias-label-primary)",
+                cursor: dirtyCount === 0 ? "not-allowed" : "pointer",
+                fontSize: "11px",
+                opacity: dirtyCount === 0 ? 0.5 : 1,
+                fontFamily: "inherit"
+              }
+            }, locale === "en-US" ? "Discard" : "\u653E\u5F03\u4FEE\u6539"),
+            React.createElement("button", {
+              type: "button",
+              onClick: save,
+              disabled: dirtyCount === 0 || state.saving || !state.writable,
+              "data-settings-save": "1",
+              style: {
+                padding: "6px 14px",
+                borderRadius: "6px",
+                border: "none",
+                background: dirtyCount === 0 || !state.writable ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-brand-primary)",
+                color: dirtyCount === 0 || !state.writable ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-label-on-brand, var(--dsw-alias-bg-base))",
+                cursor: dirtyCount === 0 || !state.writable || state.saving ? "not-allowed" : "pointer",
+                fontSize: "12px",
+                fontWeight: "600",
+                fontFamily: "inherit"
+              }
+            }, state.saving ? "\u4FDD\u5B58\u4E2D\u2026" : locale === "en-US" ? "Save" : "\u4FDD\u5B58")
+          )
+        );
+      }
       function DashboardSection({ data, t, localeCode, sessionId, connection, onPreviewUpdate }) {
         const p = data.project || {};
         const todos = data.todos || [];
@@ -2158,7 +2525,8 @@
           { id: "overview", icon: "\u25EB", label: t("dash.tab.overview") },
           { id: "architecture", icon: "\u2318", label: t("dash.tab.architecture") },
           { id: "work", icon: "\u2713", label: t("dash.tab.work") },
-          { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") }
+          { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") },
+          { id: "settings", icon: "\u2699", label: t("dash.tab.settings") }
         ];
         if (gitInfo && gitInfo.available === true) {
           tabDefs.push({ id: "git", icon: "\u2387", label: t("dash.tab.git") });
@@ -2318,7 +2686,8 @@
               } catch (e) {
               }
               setGitAutoRefresh(v);
-            } }) : null
+            } }) : null,
+            activeTab === "settings" ? React.createElement(SettingsTab, { rpc, sessionId, t, localeCode }) : null
           ),
           React.createElement(
             "div",

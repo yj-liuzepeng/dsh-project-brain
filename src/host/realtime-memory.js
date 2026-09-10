@@ -19,8 +19,8 @@ import { createHash } from "node:crypto";
 import { brainPath, appendJsonl } from "./store/brain-files.js";
 import { makeMemoryEntry } from "./store/brain-logic.js";
 
-// 强意图信号正则（中文 + 英文）
-const SIGNAL_PATTERNS = [
+// 强意图信号正则（中文 + 英文）—— 明确"记住X/以后要..." 类强长期指令
+const STRONG_SIGNAL_PATTERNS = [
   // 中文强信号
   /(?:记住|记一下|备忘|别忘了|长期记住)\s*[:：]?\s*([^。\n]{4,200})/,
   // "以后...要..." 或 "以后...不要..." 长期指令
@@ -31,29 +31,52 @@ const SIGNAL_PATTERNS = [
   /\b(always|never)\s+([a-z][^.\n]{4,150})/i,
 ];
 
+// 弱意图信号正则（中文 + 英文）—— 时间指示词 + 重要内容
+//   置信度比强信号低，落盘时 confidence 自动降到 0.5
+//   模式："以后都..."/"下次记得..."/"约定..."/"规则是..."/"从今往后..."/"going forward..."/"henceforth..."
+const WEAK_SIGNAL_PATTERNS = [
+  // 中文弱信号
+  /(?:以后都|以后请|以后记得|下次记得|下次注意|约定|规则是|从今往后|今后)\s*[:：,，]?\s*([^。\n]{4,150})/,
+  /(?:记住这个|注意这个|留意一下|请注意)\s*[:：,，]?\s*([^。\n]{4,150})/,
+  // 英文弱信号
+  /\b(going forward|from now on|henceforth|note this|bear in mind|keep in mind)\b\s*[:：,，]?\s*([^.]{4,150})/i,
+  /\b(let'?s (?:always|never))\b\s+([^.]{4,150})/i,
+];
+
 // 不应触发的"假阳性"上下文（包含这些词就跳过，避免误报开发指令）
+//   全文匹配，不限于开头：用户可能说"记住：commit 时不要 force push"，这是 git 开发指令，
+//   不是真正的"记住 X"。
 const NEGATIVE_CONTEXTS = [
   /\b(?:eslint|prettier|type:|noqa|tsconfig|build\s*error|报错|编译|运行)\b/i,
-  /\b(?:commit|push|pr|merge|git|分支)\s*(?:不要|别|不要用)/i,
+  /\b(?:commit|push|pr|merge|git|分支)\b/i,  // 任何地方出现 git/commit 关键字 → 可能是开发指令
 ];
 
 function fingerprint(text) {
   return createHash("sha256").update(text.trim().toLowerCase(), "utf8").digest("hex").slice(0, 16);
 }
 
-function detectSignal(messageText) {
+export function detectSignal(messageText) {
   const text = String(messageText || "").trim();
   if (text.length < 6 || text.length > 2000) return null;
   // 黑名单词过滤
   if (NEGATIVE_CONTEXTS.some((re) => re.test(text))) return null;
-  for (const re of SIGNAL_PATTERNS) {
+  // 先匹配强信号（高优先级）
+  for (const re of STRONG_SIGNAL_PATTERNS) {
     const m = text.match(re);
     if (!m) continue;
-    // 提取信号内容（去掉前后空白）
     let content = (m[1] || m[2] || m[0]).toString().trim();
     content = content.replace(/^[:：\s"']+|[:：\s"']+$/g, "");
     if (content.length < 4 || content.length > 500) continue;
-    return { kind: "explicit_intent", content, fullText: text };
+    return { kind: "explicit_intent", strength: "strong", content, fullText: text };
+  }
+  // 再匹配弱信号（落盘时 confidence 降权）
+  for (const re of WEAK_SIGNAL_PATTERNS) {
+    const m = text.match(re);
+    if (!m) continue;
+    let content = (m[1] || m[2] || m[0]).toString().trim();
+    content = content.replace(/^[:：\s"']+|[:：\s"']+$/g, "");
+    if (content.length < 4 || content.length > 500) continue;
+    return { kind: "explicit_intent", strength: "weak", content, fullText: text };
   }
   return null;
 }
@@ -131,14 +154,22 @@ async function handleOne({ fs, projectPath, sessionId, signal, logger }) {
 
   const now = Date.now();
   const title = "实时记忆：" + (signal.content.length > 40 ? signal.content.slice(0, 40) + "…" : signal.content);
+  // 弱信号（"以后都.../下次记得..."）confidence 自动降到 0.5，避免弱信号污染强信号检索排序
+  const isWeak = signal.strength === "weak";
   const entry = makeMemoryEntry({
     type: "context",
     title,
     content: signal.content,
-    importance: 0.6,
-    confidence: 0.7,
-    tags: ["realtime", "user_intent"],
-    source: { kind: "realtime_memory", fingerprint: fp, sessionId: sessionId || null, signalKind: signal.kind },
+    importance: isWeak ? 0.5 : 0.6,
+    confidence: isWeak ? 0.5 : 0.7,
+    tags: ["realtime", "user_intent", isWeak ? "weak_signal" : "strong_signal"],
+    source: {
+      kind: "realtime_memory",
+      fingerprint: fp,
+      sessionId: sessionId || null,
+      signalKind: signal.kind,
+      signalStrength: signal.strength || "strong",
+    },
   }, now);
 
   try {
