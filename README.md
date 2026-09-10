@@ -17,17 +17,33 @@ Instead of making every new conversation rediscover the repository, dsh-project-
 
 ## Preview
 
-### Project dashboard and architecture report
+### Live dashboard with intelligent suggestions and quick actions
 
-![Project dashboard showing live status, quick actions, tabs, and an LLM-enhanced architecture summary](./docs/screenshots/dashboard-architecture.png)
+![Dashboard overview with live status, SuggestionCard, four quick actions, and tabs to architecture / timeline / memories / settings / Git history](./docs/screenshots/01.png)
 
-### Conceptual architecture layers
+### Tech stack detection across 6 languages
 
-![Conceptual architecture layer view with responsibilities, components, and relationships](./docs/screenshots/architecture-layers.png)
+![Overview tab showing detected tech stack (Monorepo, GitHub Actions), languages (JS / C / Go / Java / Python / Rust), and dev entry points](./docs/screenshots/02.png)
 
-### Work, TODOs, and project timeline
+### Conceptual architecture layers and runtime flow
 
-![Work activity view showing project TODOs and the development timeline](./docs/screenshots/work-activity.png)
+![Architecture tab showing project positioning, architectural style, and a layered architecture diagram (interface / host injection / scan & analysis / memory & retrieval)](./docs/screenshots/03.png)
+
+### TODOs and project timeline
+
+![Activity tab showing empty TODO list and the development timeline with project_init / project_rescan events](./docs/screenshots/04.png)
+
+### Project memories with type badges
+
+![Memories tab showing a persisted change-type memory entry with full content and reasoning](./docs/screenshots/05.png)
+
+### In-Dashboard settings (BM25 default + optional Embedding)
+
+![Settings tab showing retrieval mode, Embedding URL / model / API key environment variable name, vector dimension, batch size, and max items per call](./docs/screenshots/06.png)
+
+### Git history view (VSCode-style)
+
+![Git history tab showing branch switcher, commit timeline with messages, hashes, authors, timestamps, and changed file counts](./docs/screenshots/07.png)
 
 ## Why use it?
 
