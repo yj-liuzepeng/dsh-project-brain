@@ -355,7 +355,7 @@ async function main() {
   writeFixtureProject(singleRoot);
   const { ctx: ctx2, tools: tools2, systemPrompt: sp2, connection: conn2 } = makeCtx({ rootDir: singleRoot });
   apply(ctx2, {});
-  record("2a", "14 个工具全部注册（init/rescan/continue/suggest/status/memory×2/todo×4/ask/dream/diff）", tools2.list().length === 14, "actual: " + tools2.list().length);
+  record("2a", "16 个工具全部注册（init/rescan/continue/suggest/status/memory×4/todo×4/ask/dream/diff）", tools2.list().length === 16, "actual: " + tools2.list().length);
 
   const initRes = await tools2.execute({ name: "project_init", args: { path: singleRoot } });
   record("2b", "project_init 成功", initRes.ok === true, initRes.data && initRes.data.error ? JSON.stringify(initRes.data.error) : "ok");
