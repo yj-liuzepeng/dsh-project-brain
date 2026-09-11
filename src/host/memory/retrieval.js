@@ -107,43 +107,70 @@ function tokenJaccard(a, b) {
   return intersection / (aa.size + bb.size - intersection);
 }
 
-export function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), vectors, queryVector, config = {} } = {}) {
-  const candidates = activeMemories(memories);
-  const keyword = normalizeScoreMap(bm25Scores(candidates, query));
-  const vectorRaw = new Map();
-  if (queryVector && vectors) {
-    for (const memory of candidates) {
-      const vector = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
-      if (vector) vectorRaw.set(memory.id, Math.max(0, cosineSimilarity(queryVector, vector)));
-    }
-  }
-  const vector = normalizeScoreMap(vectorRaw);
-  const hasQuery = tokenizeMemoryText(query).length > 0;
-  const hasVector = vector.size > 0;
-  // 重平衡：importance 主导（用户标记过重要的应该最相关），recency 跟上（"近期关注"），
-  // vector 兜底（语义相似），keyword 仅在明确查询时贡献少量信号，confidence 反映 LLM 可信度。
-  // 旧权重 keyword 0.45 / vector 0.35 / importance 0.1 导致关键词淹没真正重要的记忆。
-  const weights = {
-    keyword: hasQuery ? Number(config.keywordWeight ?? 0.15) : 0,
-    vector: hasVector ? Number(config.vectorWeight ?? 0.25) : 0,
-    importance: hasQuery ? Number(config.importanceWeight ?? 0.30) : 0.45,
-    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.10) : 0.10,
-    recency: hasQuery ? Number(config.recencyWeight ?? 0.20) : 0.25,
-    type: hasQuery ? 0 : 0.20,
-  };
-  const ranked = candidates.map((memory) => {
-    const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
-    const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
-    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
-    const relevance = (keyword.get(memory.id) || 0) * weights.keyword
-      + (vector.get(memory.id) || 0) * weights.vector
-      + importance * weights.importance
-      + confidence * weights.confidence
-      + recencyScore(memory, now) * weights.recency
-      + stableType * weights.type;
-    return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
-  }).sort((a, b) => b.relevance - a.relevance);
+// ─── 召回层（v0.7.x 拆出）：单路打分 → 排序后的候选 ─────────────────────────
 
+// BM25 召回：返回按 BM25 归一化分降序的候选列表 [{memory, score}]
+export function bm25Recall(memories, query, options = {}) {
+  const candidates = activeMemories(memories);
+  const scores = normalizeScoreMap(bm25Scores(candidates, query, options));
+  return candidates
+    .map((memory) => ({ memory, score: scores.get(memory.id) || 0 }))
+    .filter((hit) => hit.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
+
+// Vector 召回：返回按余弦相似度降序的候选列表 [{memory, score}]
+export function vectorRecall(memories, vectors, queryVector) {
+  const candidates = activeMemories(memories);
+  if (!queryVector || !vectors) return [];
+  const out = [];
+  for (const memory of candidates) {
+    const vector = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
+    if (!vector) continue;
+    const sim = cosineSimilarity(queryVector, vector);
+    if (sim > 0) out.push({ memory, score: sim });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+// ─── 融合层（v0.7.x 新增）：RRF (Reciprocal Rank Fusion) ─────────────────────
+//   公式: rrf(mem) = Σ_i  1 / (k + rank_i(mem))
+//   k 默认 60（Cormack 等 2009 论文标准值），两路贡献对称。
+//   任一路未命中 → 该路贡献 0（不计入分母 / 分子）。
+//   输出 {memory, relevance, keywordScore, vectorScore}，与旧字段兼容。
+
+export const DEFAULT_RRF_K = 60;
+
+export function rrfMerge(rankedLists, options = {}) {
+  const k = typeof options.k === "number" ? options.k : DEFAULT_RRF_K;
+  const acc = new Map(); // memoryId -> {memory, rrf, bm25Score, vecScore}
+  for (const list of rankedLists) {
+    list.forEach((hit, index) => {
+      const rank = index + 1; // 1-based rank
+      let entry = acc.get(hit.memory.id);
+      if (!entry) {
+        entry = { memory: hit.memory, rrf: 0, bm25Score: 0, vecScore: 0 };
+        acc.set(hit.memory.id, entry);
+      }
+      entry.rrf += 1 / (k + rank);
+      // 按列表顺序填回原分（第一个列表视为 BM25，第二个视为 vector）
+      if (entry.bm25Score === 0 && hit.score > 0) entry.bm25Score = hit.score;
+      else if (entry.vecScore === 0 && hit.score > 0) entry.vecScore = hit.score;
+    });
+  }
+  return [...acc.values()]
+    .map((entry) => ({
+      memory: entry.memory,
+      relevance: entry.rrf,
+      keywordScore: entry.bm25Score,
+      vectorScore: entry.vecScore,
+    }))
+    .sort((a, b) => b.relevance - a.relevance);
+}
+
+// ─── 多样性选择（MMR 风格）：保留旧行为，复用到 RRF / 加权两种模式 ─────────────
+
+function diverseSelect(ranked, topK) {
   const selected = [];
   const remaining = ranked.slice();
   while (selected.length < Math.max(1, topK) && remaining.length > 0) {
@@ -167,6 +194,69 @@ export function retrieveMemories({ memories, query = "", topK = 5, now = Date.no
     selected.push({ ...picked, score: bestScore });
   }
   return selected;
+}
+
+// ─── 主入口（v0.7.x 双路召回 + 自动 fallback） ─────────────────────────────
+//
+// 策略自动判定：
+//   当 query 非空 AND queryVector != null AND vectors.size > 0 时
+//     → 双路并行召回（BM25 + Vector） + RRF 融合
+//   否则（未配 embedding / 维度不一致 / 无 query）
+//     → 退回加权融合（v0.7.0 原有 5 因子权重，向后兼容）
+//
+// 返回 hit 形状：{memory, relevance, score, keywordScore, vectorScore}
+//   - score: 多样性惩罚后的最终输出分（兼容 ask.js: hit.score）
+//   - relevance: 融合前分（RRF 值 或 加权和）
+//   - keywordScore / vectorScore: 各路原始分（RRF 模式下保留，余弦 / 归一 BM25）
+
+export function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), vectors, queryVector, config = {} } = {}) {
+  const candidates = activeMemories(memories);
+  const hasQuery = tokenizeMemoryText(query).length > 0;
+  const hasVector = Boolean(queryVector) && Boolean(vectors) && (vectors instanceof Map ? vectors.size > 0 : Object.keys(vectors).length > 0);
+
+  // ── 路径 1：双路召回 + RRF 融合（仅在 query + embedding 同时可用时启动） ──
+  if (hasQuery && hasVector) {
+    const bm25List = bm25Recall(candidates, query);
+    const vecList = vectorRecall(candidates, vectors, queryVector);
+    const fused = rrfMerge([bm25List, vecList], { k: config.rrfK ?? DEFAULT_RRF_K });
+    return diverseSelect(fused, topK);
+  }
+
+  // ── 路径 2（fallback）：v0.7.0 加权融合（保持旧行为） ──────────────────────
+  const keyword = normalizeScoreMap(bm25Scores(candidates, query));
+  const vectorRaw = new Map();
+  if (queryVector && vectors) {
+    for (const memory of candidates) {
+      const vector = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
+      if (vector) vectorRaw.set(memory.id, Math.max(0, cosineSimilarity(queryVector, vector)));
+    }
+  }
+  const vector = normalizeScoreMap(vectorRaw);
+  // 重平衡：importance 主导（用户标记过重要的应该最相关），recency 跟上（"近期关注"），
+  // vector 兜底（语义相似），keyword 仅在明确查询时贡献少量信号，confidence 反映 LLM 可信度。
+  // 旧权重 keyword 0.45 / vector 0.35 / importance 0.1 导致关键词淹没真正重要的记忆。
+  const weights = {
+    keyword: hasQuery ? Number(config.keywordWeight ?? 0.15) : 0,
+    vector: vector.size > 0 ? Number(config.vectorWeight ?? 0.25) : 0,
+    importance: hasQuery ? Number(config.importanceWeight ?? 0.30) : 0.45,
+    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.10) : 0.10,
+    recency: hasQuery ? Number(config.recencyWeight ?? 0.20) : 0.25,
+    type: hasQuery ? 0 : 0.20,
+  };
+  const ranked = candidates.map((memory) => {
+    const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
+    const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
+    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
+    const relevance = (keyword.get(memory.id) || 0) * weights.keyword
+      + (vector.get(memory.id) || 0) * weights.vector
+      + importance * weights.importance
+      + confidence * weights.confidence
+      + recencyScore(memory, now) * weights.recency
+      + stableType * weights.type;
+    return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
+  }).sort((a, b) => b.relevance - a.relevance);
+
+  return diverseSelect(ranked, topK);
 }
 
 export function legacyTopMemories(memories, n, now) {
