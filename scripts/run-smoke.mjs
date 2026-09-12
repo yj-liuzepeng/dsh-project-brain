@@ -21,6 +21,7 @@ const tests = [
   "smoke-multi-lang.mjs",
   "smoke-scanner-techstack.mjs",
   "smoke-suggest.mjs",
+  "smoke-retrieval-rrf.mjs",
 ];
 
 // v0.7.0-beta.3 release-fix：单 suite 失败不应阻断其他 suite 验证。
