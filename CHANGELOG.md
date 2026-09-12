@@ -40,6 +40,33 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.1.0
 
 ---
 
+## 升级到 v1.1.1（Migration Guide）
+
+从 `v1.0.0` / `v1.1.0` 升级到 `v1.1.1`：
+
+**自动兼容**（无需任何动作）
+
+- 数据格式、工具 API、配置文件全部与 v1.1.0 一致
+- **本版本仅修复 README 渲染**，代码零改动
+
+**修复内容**
+
+- **README 截图引用从相对路径改为 SHA 锁定绝对 URL**：npm 渲染器不解析 markdown 相对路径（GitHub 会自动转 raw），导致 v1.0.0 / v1.1.0 在 npm 网站商店页面 7 张图全部损坏（显示红 alt 文本）。本版本改为 `https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/<sha>/docs/screenshots/0X.png` 形式
+- **`v1.0.0` 历史页面无法修复**（npm 把 README 与 tarball 绑定），但升级到 `latest` 后主页面将显示 v1.1.1 的修复后 README
+
+**安装命令变化**
+
+```bash
+# 旧
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.0.0
+# 或 v1.1.0
+
+# 新
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.1.1
+```
+
+---
+
 ## 升级到 v1.0.0（Migration Guide，历史）
 
 从 `0.7.0-beta.x` / `0.6.x` 升级到 `v1.0.0`：
@@ -74,6 +101,21 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.0.0
 **已知破坏性变更**（v1.0.0 内）
 
 - 无。
+
+---
+
+## [v1.1.1] - 2026-09-12
+
+> **Patch 版本。** 修复 npm 商店页面 README 截图渲染（不修则 7 张图全部损坏）。
+> 与 `v1.1.0` 代码完全一致，仅文档层修复。
+
+### Fixed（修复）
+
+- **README 截图引用从相对路径改为 SHA 锁定绝对 URL**：npm 渲染器不解析 markdown 相对路径（GitHub 会自动转 `raw.githubusercontent.com`），导致 `v1.0.0` 与 `v1.1.0` 在 npm 商店页面 7 张图全部损坏（显示红 alt 文本）。本版本改为 `https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/<sha>/docs/screenshots/0X.png` 形式，锁定到 `fd62eb4`（v1.1.0 发布 commit）。
+
+### Known limitations（已知限制）
+
+- **`v1.0.0` 与 `v1.1.0` 的 npm 历史页面无法修复**（npm 把 README 与发布 tarball 绑定，发布后不可变）。升级 `latest` 到 `v1.1.1` 后主页面将显示修复后 README。
 
 ---
 

@@ -2,7 +2,7 @@
 
 [English](./README.md) · **简体中文**
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
@@ -11,9 +11,9 @@
 
 它的目标不是让每个新对话重新理解仓库，而是把重要知识沉淀在项目内部，随着持续开发越来越熟悉项目。
 
-> 当前版本：`1.1.0` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（17 个 smoke suite + 39 个 host-acceptance 场景共 56 项 + DSH Desktop UI 实测）。
+> 当前版本：`1.1.1` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（17 个 smoke suite + 39 个 host-acceptance 场景共 56 项 + DSH Desktop UI 实测）。
 
-[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.1.0) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.1.1) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## 界面预览
 
