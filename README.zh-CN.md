@@ -19,31 +19,31 @@
 
 ### 实时 Dashboard + 智能续接建议 + 快捷操作
 
-![Dashboard 总览、项目状态卡、SuggestionCard「你今天可能想推进」、四个 Quick Action、页签导航到架构 / 任务 / 记忆 / 设置 / Git 历史](./docs/screenshots/01.png)
+![Dashboard 总览、项目状态卡、SuggestionCard「你今天可能想推进」、四个 Quick Action、页签导航到架构 / 任务 / 记忆 / 设置 / Git 历史](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/01.png)
 
 ### 跨 6 语言技术栈识别
 
-![概览 tab：自动识别结构（Monorepo / GitHub Actions）、语言清单（JS / C / Go / Java / Python / Rust）、开发入口（npm run build / src/index.js）](./docs/screenshots/02.png)
+![概览 tab：自动识别结构（Monorepo / GitHub Actions）、语言清单（JS / C / Go / Java / Python / Rust）、开发入口（npm run build / src/index.js）](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/02.png)
 
 ### 项目定位 + 架构风格 + 分层架构图
 
-![架构 tab：项目定位、架构风格说明、概念分层图（接口层 / 宿主注入层 / 扫描与分析层 / 记忆与检索层），右下角标记 DSH LLM 增强](./docs/screenshots/03.png)
+![架构 tab：项目定位、架构风格说明、概念分层图（接口层 / 宿主注入层 / 扫描与分析层 / 记忆与检索层），右下角标记 DSH LLM 增强](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/03.png)
 
 ### 项目待办与开发时间线
 
-![任务动态 tab：待办列表为空时显示空状态，时间线展示 project_init / project_rescan 事件](./docs/screenshots/04.png)
+![任务动态 tab：待办列表为空时显示空状态，时间线展示 project_init / project_rescan 事件](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/04.png)
 
 ### 项目记忆（含类型徽章）
 
-![项目记忆 tab：一条 type=change 记忆，含完整内容与切换说明](./docs/screenshots/05.png)
+![项目记忆 tab：一条 type=change 记忆，含完整内容与切换说明](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/05.png)
 
 ### Dashboard 自建设置（默认本地检索 + 可选 Embedding）
 
-![设置 tab：检索模式混合、启用向量检索开关、Embedding 地址 / 模型 / API Key 环境变量名、向量维度、批大小、单次最大索引条目，顶部绿色提示"配置可写，保存后即时生效"](./docs/screenshots/06.png)
+![设置 tab：检索模式混合、启用向量检索开关、Embedding 地址 / 模型 / API Key 环境变量名、向量维度、批大小、单次最大索引条目，顶部绿色提示"配置可写，保存后即时生效"](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/06.png)
 
 ### Git 历史视图（VSCode 风格时间线）
 
-![Git 历史 tab：分支切换器（public-main，HEAD 4d5fd15）、自动刷新开关、commit 时间线（提交信息 / hash / 作者 / 时间 / 改动文件数）](./docs/screenshots/07.png)
+![Git 历史 tab：分支切换器（public-main，HEAD 4d5fd15）、自动刷新开关、commit 时间线（提交信息 / hash / 作者 / 时间 / 改动文件数）](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/07.png)
 
 ## 为什么需要它
 
