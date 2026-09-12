@@ -2850,34 +2850,48 @@ function tokenJaccard(a, b) {
   for (const token of aa) if (bb.has(token)) intersection += 1;
   return intersection / (aa.size + bb.size - intersection);
 }
-function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), vectors, queryVector, config = {} } = {}) {
+function bm25Recall(memories, query, options = {}) {
   const candidates = activeMemories(memories);
-  const keyword = normalizeScoreMap(bm25Scores(candidates, query));
-  const vectorRaw = /* @__PURE__ */ new Map();
-  if (queryVector && vectors) {
-    for (const memory of candidates) {
-      const vector2 = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
-      if (vector2) vectorRaw.set(memory.id, Math.max(0, cosineSimilarity(queryVector, vector2)));
-    }
+  const scores = normalizeScoreMap(bm25Scores(candidates, query, options));
+  return candidates.map((memory) => ({ memory, score: scores.get(memory.id) || 0 })).filter((hit) => hit.score > 0).sort((a, b) => b.score - a.score);
+}
+function vectorRecall(memories, vectors, queryVector) {
+  const candidates = activeMemories(memories);
+  if (!queryVector || !vectors) return [];
+  const out = [];
+  for (const memory of candidates) {
+    const vector = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
+    if (!vector) continue;
+    const sim = cosineSimilarity(queryVector, vector);
+    if (sim > 0) out.push({ memory, score: sim });
   }
-  const vector = normalizeScoreMap(vectorRaw);
-  const hasQuery = tokenizeMemoryText(query).length > 0;
-  const hasVector = vector.size > 0;
-  const weights = {
-    keyword: hasQuery ? Number(config.keywordWeight ?? 0.15) : 0,
-    vector: hasVector ? Number(config.vectorWeight ?? 0.25) : 0,
-    importance: hasQuery ? Number(config.importanceWeight ?? 0.3) : 0.45,
-    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.1) : 0.1,
-    recency: hasQuery ? Number(config.recencyWeight ?? 0.2) : 0.25,
-    type: hasQuery ? 0 : 0.2
-  };
-  const ranked = candidates.map((memory) => {
-    const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
-    const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
-    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
-    const relevance = (keyword.get(memory.id) || 0) * weights.keyword + (vector.get(memory.id) || 0) * weights.vector + importance * weights.importance + confidence * weights.confidence + recencyScore(memory, now) * weights.recency + stableType * weights.type;
-    return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
-  }).sort((a, b) => b.relevance - a.relevance);
+  return out.sort((a, b) => b.score - a.score);
+}
+var DEFAULT_RRF_K = 60;
+function rrfMerge(rankedLists, options = {}) {
+  const k = typeof options.k === "number" ? options.k : DEFAULT_RRF_K;
+  const acc = /* @__PURE__ */ new Map();
+  for (const list of rankedLists) {
+    list.forEach((hit, index) => {
+      const rank = index + 1;
+      let entry = acc.get(hit.memory.id);
+      if (!entry) {
+        entry = { memory: hit.memory, rrf: 0, bm25Score: 0, vecScore: 0 };
+        acc.set(hit.memory.id, entry);
+      }
+      entry.rrf += 1 / (k + rank);
+      if (entry.bm25Score === 0 && hit.score > 0) entry.bm25Score = hit.score;
+      else if (entry.vecScore === 0 && hit.score > 0) entry.vecScore = hit.score;
+    });
+  }
+  return [...acc.values()].map((entry) => ({
+    memory: entry.memory,
+    relevance: entry.rrf,
+    keywordScore: entry.bm25Score,
+    vectorScore: entry.vecScore
+  })).sort((a, b) => b.relevance - a.relevance);
+}
+function diverseSelect(ranked, topK) {
   const selected = [];
   const remaining = ranked.slice();
   while (selected.length < Math.max(1, topK) && remaining.length > 0) {
@@ -2901,6 +2915,42 @@ function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), ve
     selected.push({ ...picked, score: bestScore });
   }
   return selected;
+}
+function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), vectors, queryVector, config = {} } = {}) {
+  const candidates = activeMemories(memories);
+  const hasQuery = tokenizeMemoryText(query).length > 0;
+  const hasVector = Boolean(queryVector) && Boolean(vectors) && (vectors instanceof Map ? vectors.size > 0 : Object.keys(vectors).length > 0);
+  if (hasQuery && hasVector) {
+    const bm25List = bm25Recall(candidates, query);
+    const vecList = vectorRecall(candidates, vectors, queryVector);
+    const fused = rrfMerge([bm25List, vecList], { k: config.rrfK ?? DEFAULT_RRF_K });
+    return diverseSelect(fused, topK);
+  }
+  const keyword = normalizeScoreMap(bm25Scores(candidates, query));
+  const vectorRaw = /* @__PURE__ */ new Map();
+  if (queryVector && vectors) {
+    for (const memory of candidates) {
+      const vector2 = vectors instanceof Map ? vectors.get(memory.id) : vectors[memory.id];
+      if (vector2) vectorRaw.set(memory.id, Math.max(0, cosineSimilarity(queryVector, vector2)));
+    }
+  }
+  const vector = normalizeScoreMap(vectorRaw);
+  const weights = {
+    keyword: hasQuery ? Number(config.keywordWeight ?? 0.15) : 0,
+    vector: vector.size > 0 ? Number(config.vectorWeight ?? 0.25) : 0,
+    importance: hasQuery ? Number(config.importanceWeight ?? 0.3) : 0.45,
+    confidence: hasQuery ? Number(config.confidenceWeight ?? 0.1) : 0.1,
+    recency: hasQuery ? Number(config.recencyWeight ?? 0.2) : 0.25,
+    type: hasQuery ? 0 : 0.2
+  };
+  const ranked = candidates.map((memory) => {
+    const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
+    const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
+    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
+    const relevance = (keyword.get(memory.id) || 0) * weights.keyword + (vector.get(memory.id) || 0) * weights.vector + importance * weights.importance + confidence * weights.confidence + recencyScore(memory, now) * weights.recency + stableType * weights.type;
+    return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
+  }).sort((a, b) => b.relevance - a.relevance);
+  return diverseSelect(ranked, topK);
 }
 
 // src/host/memory/config.js

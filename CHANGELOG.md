@@ -5,7 +5,42 @@
 
 ---
 
-## 升级到 v1.0.0（Migration Guide）
+## 升级到 v1.1.0（Migration Guide）
+
+从 `v1.0.0` 升级到 `v1.1.0`：
+
+**自动兼容**（无需任何动作）
+
+- 数据格式：`.project-brain/` 全部数据与 `v1.0.0` 完全兼容
+- 工具 API：16 个 `project_*` 工具签名不变
+- 配置文件：`config.json` 字段不变
+- 检索行为：`retrieval` 函数对 `queryVector` 不存在 / 为空 / 向量为空 3 种情况自动退回 5 因子加权（详见新增的 `scripts/smoke-retrieval-rrf.mjs`）
+
+**安装命令变化**
+
+```bash
+# 旧（v1.0.0）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.0.0
+
+# 新（v1.1.0）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.1.0
+```
+
+升级后**必须完全退出并重新打开** DSH Desktop（host bundle 改动）。
+
+**新增能力**
+
+- **双路召回 + RRF 融合策略**（v1.1.0）：当 `queryVector`（embedding）配置且非空时，自动启用关键词 + 向量双路召回，用 Reciprocal Rank Fusion（k=60）融合双路相关性分数；任一路为空则安全退回 5 因子加权
+- **`scripts/embedding-smoke.mjs`** + **`scripts/embedding-e2e.mjs`**：embedding 集成 smoke + 端到端验证脚本
+- **`scripts/smoke-retrieval-rrf.mjs`**：15 项 RRF + 双路召回断言（rrfMerge 边界值 / 顺序无关 / 单路缺失 / 5 因子加权退回 / hit 字段兼容 / diverseSelect 在 RRF 模式仍生效）
+
+**已知破坏性变更**（v1.1.0 内）
+
+- 无。
+
+---
+
+## 升级到 v1.0.0（Migration Guide，历史）
 
 从 `0.7.0-beta.x` / `0.6.x` 升级到 `v1.0.0`：
 
@@ -42,7 +77,53 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.0.0
 
 ---
 
-## [v1.0.0] - 2026-09-09
+## [v1.1.0] - 2026-09-12
+
+> **次要版本：双路召回 + RRF 融合策略。** 56/56 端到端自动化（17 smoke suites + 39 host-acceptance）。
+> 与 `v1.0.0` 数据完全兼容，工具 API 不变，纯增量增强。
+
+### Added（新增）
+
+- **双路召回 + RRF 融合策略（核心新功能）**：`src/host/memory/retrieval.js` 在 `queryVector`（embedding）已配置且非空时，自动启用**关键词 + 向量双路召回**，用经典 Reciprocal Rank Fusion（k=60）融合双路相关性分数。具体行为：
+  - **关键词命中且向量命中** → 走 RRF：`relevance = Σ 1/(k + rank_i)`，双路都命中的文档天然靠前
+  - **任一路未命中** → 该路贡献 0，对应路不影响最终打分
+  - **`queryVector` 不存在 / `query` 为空 / `vectors` 为空** → 安全退回 5 因子加权（重要性 × 可信度 × 时效性 × 多样性 × 类型稳定）
+  - **顺序无关**：rrfMerge 对调关键词路与向量路顺序，分数不变
+  - **diverseSelect 在 RRF 模式下仍生效**：同 type 记忆会被降权，避免结果单一化
+  - **hit 字段向后兼容**：同时包含 BM25 与向量命中的所有原始字段（`bm25Score` / `vectorScore` / `rrfScore`）
+
+- **`scripts/smoke-retrieval-rrf.mjs`**：15 项 RRF + 双路召回断言，覆盖 rrfMerge 边界值、顺序无关、单路未命中、5 因子加权退回、hit 字段兼容、diverseSelect 在 RRF 模式下仍生效
+
+- **`scripts/embedding-smoke.mjs`**：embedding 服务可达性 + 维度一致性 smoke（轻量，无网络依赖 mock）
+
+- **`scripts/embedding-e2e.mjs`**：embedding 端到端验证脚本（可被 `verify:install` 与 CI 调度）
+
+- **`scripts/run-smoke.mjs`** 调度更新：把 `smoke-retrieval-rrf` / `embedding-smoke` / `embedding-e2e` 加入默认 smoke 列表
+
+### Fixed（修复）
+
+- **`fix(acceptance)` 双向同步**：本地 `public-main` 与远程 `origin/main` 各做了独立的 `host-acceptance.mjs` AC-2a 工具数量硬编码修复（v0.7.0 新增 `memory_archive` + `memory_supersede` 后从 14 → 16）。merge 时 git ort 策略自动识别为相同修改，无冲突
+
+### Changed（变更）
+
+- **`src/host/memory/retrieval.js`**：`retrieveMemories` 函数签名与返回值不变，新增的 RRF 路径仅在配置 embedding 且 `queryVector` 有效时启用
+- **`smoke` 套件总数**：16 → 17（新增 `smoke-retrieval-rrf`）
+- **acceptance assertion 总数**：39 → 39（无新增；AC-2a 工具数量与 v1.0.0 一致）
+- **README / README.zh-CN**：版本 badge 与"当前版本"说明同步到 `1.1.0`，引用新的 GitHub release URL
+
+### 验证
+
+```
+npm test                # 17 / 17 smoke suites（含 smoke-retrieval-rrf 15 assertions）
+npm run test:acceptance # 39 / 39 host-acceptance
+npm run verify:release  # 14 / 14
+npm run verify:install  # CLEAN_TARBALL_INSTALL_PASS
+npm audit               # 0 vulnerabilities
+```
+
+合并方式：`git merge origin/main --no-ff`（merge commit `52b5776`，保留双向独立 commit 历史）
+
+---
 
 > **首个稳定版本。** 39/39 端到端验收全过 + 用户实测 DSH Desktop UI 通过。
 > 7 项 P0 发布阻塞修复（npm install ERESOLVE / dsh-tools peer 阻塞 smoke / verify 脚本 ENOENT）+ 拆分 scanAndWrite 纯逻辑层 + 加 dev-reload 一键开发工具。
