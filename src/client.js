@@ -70,8 +70,8 @@ window.__ModuleLoader__.load({
         "todostrip.close": "收起",
         "todostrip.empty": "🎉 暂无活跃待办",
         "onboarding.title": "项目大脑未启动",
-        "onboarding.body": "启动后将自动生成项目结构、技术栈、架构图，持续记录开发历史与决策，跨 Session 自动恢复上下文。",
-        "onboarding.cta": "启动项目大脑 /project_init",
+        "onboarding.body": "把这个项目的「长期记忆」交给 DSH，每次开新 Session 不用再重复介绍背景。",
+        "onboarding.cta": "一键启动 /project_init",
         "onboarding.copyPrompt": "请扫描本项目：调用 project_init 工具生成项目大脑",
         "onboarding.copied": "已复制启动指令，粘贴发送即可",
         "loading": "加载中…",
@@ -180,8 +180,8 @@ window.__ModuleLoader__.load({
         "todostrip.close": "Collapse",
         "todostrip.empty": "🎉 No active TODOs",
         "onboarding.title": "Project Brain not started",
-        "onboarding.body": "After startup, it will auto-generate structure, tech stack, architecture, keep recording history & decisions, and restore context across sessions.",
-        "onboarding.cta": "Start Project Brain /project_init",
+        "onboarding.body": "Hand this project's \"long-term memory\" to DSH — no more re-explaining the background when you open a new session.",
+        "onboarding.cta": "Start /project_init",
         "onboarding.copyPrompt": "Please scan this project: call the project_init tool to build the project brain",
         "onboarding.copied": "Command copied, paste & send",
         "loading": "Loading…",
@@ -992,6 +992,20 @@ window.__ModuleLoader__.load({
       { key: "done", icon: "✅", label: "架构与项目脑已生成" },
     ];
 
+    // v1.1.x：项目大脑 8 项核心能力清单（按用户感知价值排序）
+    //   替换原"3 步骤"展示：原列表只提了 project_init/memory_add/todo_add 三个命令，
+    //   容易让用户低估项目脑真实能力范围。
+    const ONBOARDING_FEATURES = [
+      { icon: "📁", title: "项目结构", desc: "自动识别技术栈、入口文件、依赖、目录布局" },
+      { icon: "🗺️", title: "代码图谱", desc: "模块依赖关系图，支持 JS / TS / Python / Go / Java / Rust / C/C++" },
+      { icon: "🏛️", title: "架构图", desc: "语义分层 + 关键流程 + 设计要点（DSH LLM 可选增强）" },
+      { icon: "🧠", title: "项目记忆", desc: "沉淀决策 / Bug / 教训 / 需求 / 变更，手动 + 自动捕获" },
+      { icon: "📋", title: "待办管理", desc: "活跃任务跨 Session 跟踪，优先级与状态一目了然" },
+      { icon: "✨", title: "智能续接", desc: "基于活跃待办 + 近期记忆 + Git 变化，AI 推荐今天最该推进什么" },
+      { icon: "🔄", title: "跨 Session 上下文", desc: "项目信息、记忆、待办跨会话自动恢复，不丢上下文" },
+      { icon: "📜", title: "Git 时间线", desc: "提交历史、分支、工作树状态可视化" },
+    ];
+
     function OnboardingBlock({ t, path, sessionId, onComplete, connection }) {
       // 三态机：idle / loading / error
       const [phase, setPhase] = React.useState("idle");   // "idle" | "loading" | "error"
@@ -1045,6 +1059,7 @@ window.__ModuleLoader__.load({
       function advancePhase(stepIdx) {
         setPhaseStep(stepIdx);
       }
+      // 注：stepStyle 函数保留兼容（内部不再使用），外部若引用不破坏构建。
 
       async function startScan() {
         if (phase === "loading") return;
@@ -1243,12 +1258,23 @@ window.__ModuleLoader__.load({
             React.createElement("p", { style: { margin: "2px 0 0", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.5" } }, t("onboarding.body")),
           ),
         ),
+        // 核心能力清单（v1.1.x-fix：原"3 步骤"太简化，让用户误以为只能记决策/管理待办）
+        //   现在列出项目大脑真实能做的 8 件事，让用户建立正确预期。
         React.createElement(
           "div",
-          { style: { margin: "12px 0 4px", padding: "12px 16px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" } },
-          stepStyle("1", "🚀 扫描项目", "调用 /project_init 生成项目大脑（自动识别技术栈、入口、依赖）"),
-          stepStyle("2", "🧠 记录决策", "调用 /project_memory_add 沉淀架构决策与关键变更"),
-          stepStyle("3", "📋 管理待办", "调用 /project_todo_add 跟踪活跃任务"),
+          {
+            "data-block": "onboarding-features",
+            style: { margin: "12px 0 4px", padding: "12px 16px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" },
+          },
+          ...ONBOARDING_FEATURES.map((f, idx) => React.createElement(
+            "div",
+            { key: idx, style: { display: "flex", gap: "10px", padding: "5px 0", alignItems: "flex-start" } },
+            React.createElement("span", { style: { fontSize: "16px", flex: "0 0 auto", lineHeight: "1.35", width: "20px", textAlign: "center" } }, f.icon),
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.4" } }, f.title),
+              React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.45", marginTop: "1px" } }, f.desc),
+            ),
+          )),
         ),
         // path 提示（让用户知道会扫哪个目录）
         // v0.5.1：即使 build-time map miss，只要 sessionId 存在，host 端 initProject RPC

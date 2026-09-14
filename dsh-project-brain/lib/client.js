@@ -61,8 +61,8 @@
           "todostrip.close": "\u6536\u8D77",
           "todostrip.empty": "\u{1F389} \u6682\u65E0\u6D3B\u8DC3\u5F85\u529E",
           "onboarding.title": "\u9879\u76EE\u5927\u8111\u672A\u542F\u52A8",
-          "onboarding.body": "\u542F\u52A8\u540E\u5C06\u81EA\u52A8\u751F\u6210\u9879\u76EE\u7ED3\u6784\u3001\u6280\u672F\u6808\u3001\u67B6\u6784\u56FE\uFF0C\u6301\u7EED\u8BB0\u5F55\u5F00\u53D1\u5386\u53F2\u4E0E\u51B3\u7B56\uFF0C\u8DE8 Session \u81EA\u52A8\u6062\u590D\u4E0A\u4E0B\u6587\u3002",
-          "onboarding.cta": "\u542F\u52A8\u9879\u76EE\u5927\u8111 /project_init",
+          "onboarding.body": "\u628A\u8FD9\u4E2A\u9879\u76EE\u7684\u300C\u957F\u671F\u8BB0\u5FC6\u300D\u4EA4\u7ED9 DSH\uFF0C\u6BCF\u6B21\u5F00\u65B0 Session \u4E0D\u7528\u518D\u91CD\u590D\u4ECB\u7ECD\u80CC\u666F\u3002",
+          "onboarding.cta": "\u4E00\u952E\u542F\u52A8 /project_init",
           "onboarding.copyPrompt": "\u8BF7\u626B\u63CF\u672C\u9879\u76EE\uFF1A\u8C03\u7528 project_init \u5DE5\u5177\u751F\u6210\u9879\u76EE\u5927\u8111",
           "onboarding.copied": "\u5DF2\u590D\u5236\u542F\u52A8\u6307\u4EE4\uFF0C\u7C98\u8D34\u53D1\u9001\u5373\u53EF",
           "loading": "\u52A0\u8F7D\u4E2D\u2026",
@@ -171,8 +171,8 @@
           "todostrip.close": "Collapse",
           "todostrip.empty": "\u{1F389} No active TODOs",
           "onboarding.title": "Project Brain not started",
-          "onboarding.body": "After startup, it will auto-generate structure, tech stack, architecture, keep recording history & decisions, and restore context across sessions.",
-          "onboarding.cta": "Start Project Brain /project_init",
+          "onboarding.body": `Hand this project's "long-term memory" to DSH \u2014 no more re-explaining the background when you open a new session.`,
+          "onboarding.cta": "Start /project_init",
           "onboarding.copyPrompt": "Please scan this project: call the project_init tool to build the project brain",
           "onboarding.copied": "Command copied, paste & send",
           "loading": "Loading\u2026",
@@ -1041,6 +1041,16 @@
         { key: "analyzing", icon: "\u{1F9E0}", label: "DSH LLM \u8BED\u4E49\u5206\u6790\u2026" },
         { key: "done", icon: "\u2705", label: "\u67B6\u6784\u4E0E\u9879\u76EE\u8111\u5DF2\u751F\u6210" }
       ];
+      const ONBOARDING_FEATURES = [
+        { icon: "\u{1F4C1}", title: "\u9879\u76EE\u7ED3\u6784", desc: "\u81EA\u52A8\u8BC6\u522B\u6280\u672F\u6808\u3001\u5165\u53E3\u6587\u4EF6\u3001\u4F9D\u8D56\u3001\u76EE\u5F55\u5E03\u5C40" },
+        { icon: "\u{1F5FA}\uFE0F", title: "\u4EE3\u7801\u56FE\u8C31", desc: "\u6A21\u5757\u4F9D\u8D56\u5173\u7CFB\u56FE\uFF0C\u652F\u6301 JS / TS / Python / Go / Java / Rust / C/C++" },
+        { icon: "\u{1F3DB}\uFE0F", title: "\u67B6\u6784\u56FE", desc: "\u8BED\u4E49\u5206\u5C42 + \u5173\u952E\u6D41\u7A0B + \u8BBE\u8BA1\u8981\u70B9\uFF08DSH LLM \u53EF\u9009\u589E\u5F3A\uFF09" },
+        { icon: "\u{1F9E0}", title: "\u9879\u76EE\u8BB0\u5FC6", desc: "\u6C89\u6DC0\u51B3\u7B56 / Bug / \u6559\u8BAD / \u9700\u6C42 / \u53D8\u66F4\uFF0C\u624B\u52A8 + \u81EA\u52A8\u6355\u83B7" },
+        { icon: "\u{1F4CB}", title: "\u5F85\u529E\u7BA1\u7406", desc: "\u6D3B\u8DC3\u4EFB\u52A1\u8DE8 Session \u8DDF\u8E2A\uFF0C\u4F18\u5148\u7EA7\u4E0E\u72B6\u6001\u4E00\u76EE\u4E86\u7136" },
+        { icon: "\u2728", title: "\u667A\u80FD\u7EED\u63A5", desc: "\u57FA\u4E8E\u6D3B\u8DC3\u5F85\u529E + \u8FD1\u671F\u8BB0\u5FC6 + Git \u53D8\u5316\uFF0CAI \u63A8\u8350\u4ECA\u5929\u6700\u8BE5\u63A8\u8FDB\u4EC0\u4E48" },
+        { icon: "\u{1F504}", title: "\u8DE8 Session \u4E0A\u4E0B\u6587", desc: "\u9879\u76EE\u4FE1\u606F\u3001\u8BB0\u5FC6\u3001\u5F85\u529E\u8DE8\u4F1A\u8BDD\u81EA\u52A8\u6062\u590D\uFF0C\u4E0D\u4E22\u4E0A\u4E0B\u6587" },
+        { icon: "\u{1F4DC}", title: "Git \u65F6\u95F4\u7EBF", desc: "\u63D0\u4EA4\u5386\u53F2\u3001\u5206\u652F\u3001\u5DE5\u4F5C\u6811\u72B6\u6001\u53EF\u89C6\u5316" }
+      ];
       function OnboardingBlock({ t, path, sessionId, onComplete, connection }) {
         const [phase, setPhase] = React.useState("idle");
         const [phaseStep, setPhaseStep] = React.useState(0);
@@ -1278,12 +1288,25 @@
               React.createElement("p", { style: { margin: "2px 0 0", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.5" } }, t("onboarding.body"))
             )
           ),
+          // 核心能力清单（v1.1.x-fix：原"3 步骤"太简化，让用户误以为只能记决策/管理待办）
+          //   现在列出项目大脑真实能做的 8 件事，让用户建立正确预期。
           React.createElement(
             "div",
-            { style: { margin: "12px 0 4px", padding: "12px 16px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" } },
-            stepStyle("1", "\u{1F680} \u626B\u63CF\u9879\u76EE", "\u8C03\u7528 /project_init \u751F\u6210\u9879\u76EE\u5927\u8111\uFF08\u81EA\u52A8\u8BC6\u522B\u6280\u672F\u6808\u3001\u5165\u53E3\u3001\u4F9D\u8D56\uFF09"),
-            stepStyle("2", "\u{1F9E0} \u8BB0\u5F55\u51B3\u7B56", "\u8C03\u7528 /project_memory_add \u6C89\u6DC0\u67B6\u6784\u51B3\u7B56\u4E0E\u5173\u952E\u53D8\u66F4"),
-            stepStyle("3", "\u{1F4CB} \u7BA1\u7406\u5F85\u529E", "\u8C03\u7528 /project_todo_add \u8DDF\u8E2A\u6D3B\u8DC3\u4EFB\u52A1")
+            {
+              "data-block": "onboarding-features",
+              style: { margin: "12px 0 4px", padding: "12px 16px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" }
+            },
+            ...ONBOARDING_FEATURES.map((f, idx) => React.createElement(
+              "div",
+              { key: idx, style: { display: "flex", gap: "10px", padding: "5px 0", alignItems: "flex-start" } },
+              React.createElement("span", { style: { fontSize: "16px", flex: "0 0 auto", lineHeight: "1.35", width: "20px", textAlign: "center" } }, f.icon),
+              React.createElement(
+                "div",
+                null,
+                React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.4" } }, f.title),
+                React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.45", marginTop: "1px" } }, f.desc)
+              )
+            ))
           ),
           // path 提示（让用户知道会扫哪个目录）
           // v0.5.1：即使 build-time map miss，只要 sessionId 存在，host 端 initProject RPC
