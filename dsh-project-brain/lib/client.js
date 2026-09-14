@@ -243,6 +243,25 @@
           return "";
         }
       }
+      function formatLanguagesUsage(languages, opts) {
+        const obj = languages && typeof languages === "object" ? languages : {};
+        const entries = Object.entries(obj).filter(([, c]) => Number(c) > 0).map(([lang, count]) => ({ lang: String(lang), count: Number(count) || 0 })).sort((a, b) => b.count - a.count || a.lang.localeCompare(b.lang));
+        const total = entries.reduce((s, e) => s + e.count, 0);
+        const topN = opts && Number.isFinite(opts.topN) ? Math.max(1, opts.topN | 0) : 8;
+        const mergeTail = opts && opts.mergeTail === false ? false : true;
+        const head = entries.slice(0, topN);
+        const tailList = entries.slice(topN);
+        const withPct = (e) => Object.assign({}, e, { percent: total > 0 ? e.count / total * 100 : 0 });
+        const top = head.map(withPct);
+        let tail = null;
+        if (mergeTail && tailList.length > 0) {
+          const tailCount = tailList.reduce((s, e) => s + e.count, 0);
+          tail = { count: tailCount, percent: total > 0 ? tailCount / total * 100 : 0, languages: tailList.length };
+        } else if (!mergeTail && tailList.length > 0) {
+          for (const e of tailList) top.push(withPct(e));
+        }
+        return { top, tail, total, distinctCount: entries.length };
+      }
       function copyPrompt(text, ev, okLabel, failLabel) {
         let ok = false;
         try {
@@ -723,15 +742,34 @@
           React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", lineHeight: "1.1", fontVariantNumeric: "tabular-nums" } }, value),
           React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px", letterSpacing: "0.3px" } }, label)
         );
-        const langItems = Object.entries(cg.stats.languages || {}).map(
-          ([lang, count]) => React.createElement(
+        const langUsage = formatLanguagesUsage(cg.stats.languages);
+        const langItems = [];
+        for (const item of langUsage.top) {
+          const pctLabel = langUsage.total > 0 ? Math.round(item.percent) + "%" : "";
+          langItems.push(React.createElement(
             "span",
-            { key: lang, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
+            {
+              key: "lang-" + item.lang,
+              title: item.lang + " \xB7 " + item.count + " \u4E2A\u6587\u4EF6",
+              style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" }
+            },
             React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
-            React.createElement("span", null, lang),
-            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, " \xB7 " + count)
-          )
-        );
+            React.createElement("span", null, item.lang),
+            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, pctLabel ? " \xB7 " + pctLabel : "")
+          ));
+        }
+        if (langUsage.tail) {
+          langItems.push(React.createElement(
+            "span",
+            {
+              key: "lang-tail",
+              title: langUsage.tail.languages + " \u79CD\u8BED\u8A00\u5171 " + langUsage.tail.count + " \u4E2A\u6587\u4EF6",
+              style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 8px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)", color: "var(--dsw-alias-label-secondary)" }
+            },
+            React.createElement("span", null, "\u5176\u5B83 " + langUsage.tail.languages + " \u79CD"),
+            React.createElement("span", null, " \xB7 " + Math.round(langUsage.tail.percent) + "%")
+          ));
+        }
         return React.createElement(
           "section",
           { style: sectionStyle, "data-block": "codegraph" },
@@ -2495,15 +2533,34 @@
             React.createElement("span", null, String(tool))
           )
         );
-        const langChips = Object.entries(p.languages || {}).map(
-          ([lang, count]) => React.createElement(
+        const langUsage = formatLanguagesUsage(p.languages);
+        const langChips = [];
+        for (const item of langUsage.top) {
+          const pctLabel = langUsage.total > 0 ? Math.round(item.percent) + "%" : "";
+          langChips.push(React.createElement(
             "span",
-            { key: lang, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
+            {
+              key: "lang-" + item.lang,
+              title: item.lang + " \xB7 " + item.count + " \u4E2A\u6587\u4EF6",
+              style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" }
+            },
             React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-state-warn-primary)" } }),
-            React.createElement("span", null, lang),
-            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, "\xB7" + count)
-          )
-        );
+            React.createElement("span", null, item.lang),
+            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, pctLabel ? " \xB7 " + pctLabel : "")
+          ));
+        }
+        if (langUsage.tail) {
+          langChips.push(React.createElement(
+            "span",
+            {
+              key: "lang-tail",
+              title: langUsage.tail.languages + " \u79CD\u8BED\u8A00\u5171 " + langUsage.tail.count + " \u4E2A\u6587\u4EF6",
+              style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)", color: "var(--dsw-alias-label-secondary)" }
+            },
+            React.createElement("span", null, "\u5176\u5B83 " + langUsage.tail.languages + " \u79CD"),
+            React.createElement("span", null, " \xB7 " + Math.round(langUsage.tail.percent) + "%")
+          ));
+        }
         const entryItems = (p.entrypoints || []).map(
           (e, i) => React.createElement(
             "div",
