@@ -2472,6 +2472,13 @@
         const retrieval = data.retrieval || {};
         const [quickActionState, setQuickActionState] = React.useState({});
         const [activeTab, setActiveTab] = React.useState("overview");
+        const [memoryModal, setMemoryModal] = React.useState(null);
+        const openMemoryModal = React.useCallback((m) => {
+          setMemoryModal(m);
+        }, []);
+        const closeMemoryModal = React.useCallback(() => {
+          setMemoryModal(null);
+        }, []);
         const rpc = connection && connection.rpc;
         const runArchRescan = React.useCallback(async () => {
           if (!sessionId || !rpc || typeof rpc.call !== "function") throw new Error(t("arch.retryFailed"));
@@ -2699,21 +2706,181 @@
             React.createElement("span", { style: { minWidth: 0, lineHeight: 1.45 } }, e.title)
           ))
         ) : emptyNode;
+        const formatMemTime = (ts) => {
+          if (!ts) return "";
+          try {
+            const d = new Date(ts);
+            const p2 = (n) => n < 10 ? "0" + n : "" + n;
+            return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+          } catch (e) {
+            return "";
+          }
+        };
+        const importanceStars = (imp) => {
+          const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
+          return "\u2605".repeat(stars) + "\u2606".repeat(5 - stars);
+        };
         const memoryNode = memoriesAll.length > 0 ? React.createElement(
           "div",
-          { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px" } },
-          memoriesAll.slice(0, 20).map((m) => React.createElement(
-            "article",
-            { key: m.id, style: { padding: "10px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", minWidth: 0 } },
+          { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } },
+          memoriesAll.slice(0, 20).map((m) => {
+            const contentStr = m.content ? String(m.content) : "";
+            const hasLongContent = contentStr.length > 200;
+            const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
+            return React.createElement(
+              "article",
+              {
+                key: m.id,
+                "data-mem-id": m.id,
+                onClick: () => openMemoryModal(m),
+                title: "\u70B9\u51FB\u67E5\u770B\u5B8C\u6574\u5185\u5BB9",
+                style: {
+                  padding: "12px 14px",
+                  background: "var(--dsw-alias-bg-layer-1)",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  borderLeft: "3px solid var(--dsw-alias-border-l1)",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s ease, transform 0.1s ease",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                  minWidth: 0,
+                  minHeight: "120px"
+                },
+                onMouseEnter: (e) => {
+                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
+                  e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
+                },
+                onMouseLeave: (e) => {
+                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-border-l1)";
+                  e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
+                }
+              },
+              // 顶部：type chip + title（标题允许多行，不再 ellipsis）
+              React.createElement(
+                "div",
+                { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
+                React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
+                React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title)
+              ),
+              // 内容区：3 行摘要（不可展开，避免撑爆页面）
+              contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "\u2026" : "")) : null,
+              // 底部：importance + 时间 + tags + 查看按钮
+              React.createElement(
+                "div",
+                { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+                React.createElement(
+                  "div",
+                  { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
+                  m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
+                  m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
+                  Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null
+                ),
+                contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "\u25B8 \u67E5\u770B\u8BE6\u60C5") : null
+              )
+            );
+          })
+        ) : emptyNode;
+        const memoryModalNode = memoryModal ? React.createElement(
+          "div",
+          {
+            "data-block": "memory-modal-overlay",
+            onClick: (e) => {
+              if (e.target === e.currentTarget) closeMemoryModal();
+            },
+            style: {
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 9999,
+              padding: "20px"
+            }
+          },
+          React.createElement(
+            "div",
+            {
+              "data-block": "memory-modal",
+              role: "dialog",
+              "aria-modal": "true",
+              style: {
+                background: "var(--dsw-alias-bg-layer-1)",
+                color: "var(--dsw-alias-label-primary)",
+                borderRadius: "12px",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+                width: "min(720px, 100%)",
+                maxHeight: "80vh",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden"
+              },
+              onClick: (e) => e.stopPropagation()
+            },
+            // 头部：type chip + title + close
             React.createElement(
               "div",
-              { style: { display: "flex", gap: "8px", alignItems: "center" } },
-              React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
-              React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, fontSize: "12px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title)
+              { style: { padding: "14px 18px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "flex-start", gap: "10px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
+              React.createElement("span", { style: typeChipStyle }, typeLabel(memoryModal.type)),
+              React.createElement("span", { style: { fontSize: "15px", fontWeight: "600", flex: "1 1 auto", minWidth: 0, wordBreak: "break-word", lineHeight: 1.45 } }, memoryModal.title || "(\u65E0\u6807\u9898)"),
+              React.createElement("button", {
+                type: "button",
+                "data-action": "memory-modal-close",
+                onClick: closeMemoryModal,
+                title: "\u5173\u95ED",
+                style: {
+                  background: "transparent",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  lineHeight: 1,
+                  width: "28px",
+                  height: "28px",
+                  flex: "0 0 auto",
+                  color: "var(--dsw-alias-label-secondary)",
+                  fontFamily: "inherit"
+                }
+              }, "\xD7")
             ),
-            m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "7px", lineHeight: "1.55", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" } }, String(m.content).slice(0, 360)) : null
-          ))
-        ) : emptyNode;
+            // 主体：完整内容（pre-wrap + 滚动）
+            React.createElement("div", { style: { padding: "16px 18px", overflowY: "auto", flex: "1 1 auto", fontSize: "13px", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--dsw-alias-label-primary)" } }, memoryModal.content ? String(memoryModal.content) : "\uFF08\u65E0\u5185\u5BB9\uFF09"),
+            // 底部：importance + 时间 + tags + 复制
+            React.createElement(
+              "div",
+              { style: { padding: "10px 18px", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-2)" } },
+              memoryModal.importance ? React.createElement("span", { title: "importance " + memoryModal.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(memoryModal.importance)) : null,
+              memoryModal.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(memoryModal.createdAt)) : null,
+              Array.isArray(memoryModal.tags) && memoryModal.tags.length > 0 ? React.createElement("span", null, memoryModal.tags.map((tag) => "#" + tag).join(" ")) : null,
+              React.createElement("span", { style: { flex: "1 1 auto" } }),
+              React.createElement("button", {
+                type: "button",
+                "data-action": "memory-modal-copy",
+                onClick: (e) => {
+                  const text = "[" + typeLabel(memoryModal.type) + "] " + memoryModal.title + "\n\n" + (memoryModal.content || "");
+                  copyPrompt(text, e, "\u2713 \u5DF2\u590D\u5236", "\u590D\u5236\u5931\u8D25");
+                },
+                style: {
+                  fontSize: "11px",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  background: "transparent",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  color: "var(--dsw-alias-label-primary)",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: "500"
+                }
+              }, "\u{1F4CB} \u590D\u5236\u5168\u6587")
+            )
+          )
+        ) : null;
         return React.createElement(
           "div",
           { id: "dsh-brain-dashboard", style: { display: "block", background: "var(--dsw-alias-bg-layer-1)", borderRadius: "10px", margin: "8px 12px", border: "1px solid var(--dsw-alias-border-l2)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }, "data-block": "dashboard" },
@@ -2840,7 +3007,9 @@
             { style: { padding: "8px 16px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "4px" } },
             React.createElement("span", null, "\u{1F552}"),
             React.createElement("span", null, t("dash.snapshot", { time: formatDate(data.generatedAt || Date.now()) }))
-          )
+          ),
+          // v1.1.x-fix：项目记忆详情弹框（fixed 定位，挂在 dashboard 末尾不影响布局）
+          memoryModalNode
         );
       }
       function SnapshotBadge({ data, t, source }) {

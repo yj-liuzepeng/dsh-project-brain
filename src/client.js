@@ -2369,6 +2369,10 @@ window.__ModuleLoader__.load({
       const retrieval = data.retrieval || {};
       const [quickActionState, setQuickActionState] = React.useState({});
       const [activeTab, setActiveTab] = React.useState("overview");
+      // v1.1.x-fix：项目记忆卡片点击 → 弹框展示完整内容（避免 inline 展开撑爆页面）
+      const [memoryModal, setMemoryModal] = React.useState(null);
+      const openMemoryModal = React.useCallback((m) => { setMemoryModal(m); }, []);
+      const closeMemoryModal = React.useCallback(() => { setMemoryModal(null); }, []);
       const rpc = connection && connection.rpc;
       // 架构兜底条专用重试：独立 promise-based（避开 quickActionState 的 stale 闭包）
       const runArchRescan = React.useCallback(async () => {
@@ -2578,16 +2582,165 @@ window.__ModuleLoader__.load({
               React.createElement("span", { style: { minWidth: 0, lineHeight: 1.45 } }, e.title),
             )))
           : emptyNode;
+      // v1.1.x-fix：记忆卡片支持点击展开/收起，hover 高亮，expanded 态左边框 brand-primary 标记
+      //   旧版标题用 ellipsis 截断看不到全名，内容用 line-clamp + slice 截断看不到完整——用户痛点
+      const formatMemTime = (ts) => {
+        if (!ts) return "";
+        try {
+          const d = new Date(ts);
+          const p = (n) => (n < 10 ? "0" + n : "" + n);
+          return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+        } catch (e) { return ""; }
+      };
+      const importanceStars = (imp) => {
+        const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
+        return "★".repeat(stars) + "☆".repeat(5 - stars);
+      };
       const memoryNode = memoriesAll.length > 0
-        ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "8px" } },
-            memoriesAll.slice(0, 20).map((m) => React.createElement("article", { key: m.id, style: { padding: "10px 12px", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", minWidth: 0 } },
-              React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
-                React.createElement("span", { style: typeChipStyle }, typeLabel(m.type)),
-                React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0, fontSize: "12px", fontWeight: "600", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title),
-              ),
-              m.content ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "7px", lineHeight: "1.55", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" } }, String(m.content).slice(0, 360)) : null,
-            )))
+        ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } },
+            memoriesAll.slice(0, 20).map((m) => {
+              const contentStr = m.content ? String(m.content) : "";
+              const hasLongContent = contentStr.length > 200;
+              const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
+              return React.createElement("article", {
+                key: m.id,
+                "data-mem-id": m.id,
+                onClick: () => openMemoryModal(m),
+                title: "点击查看完整内容",
+                style: {
+                  padding: "12px 14px",
+                  background: "var(--dsw-alias-bg-layer-1)",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  borderLeft: "3px solid var(--dsw-alias-border-l1)",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s ease, transform 0.1s ease",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                  minWidth: 0,
+                  minHeight: "120px",
+                },
+                onMouseEnter: (e) => {
+                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
+                  e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
+                },
+                onMouseLeave: (e) => {
+                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-border-l1)";
+                  e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
+                },
+              },
+                // 顶部：type chip + title（标题允许多行，不再 ellipsis）
+                React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
+                  React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
+                  React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title),
+                ),
+                // 内容区：3 行摘要（不可展开，避免撑爆页面）
+                contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "…" : "")) : null,
+                // 底部：importance + 时间 + tags + 查看按钮
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+                  React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
+                    m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
+                    m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
+                    Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null,
+                  ),
+                  contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "▸ 查看详情") : null,
+                ),
+              );
+            }))
           : emptyNode;
+
+      // v1.1.x-fix：项目记忆详情弹框（避免 inline 展开撑爆网格）
+      const memoryModalNode = memoryModal ? React.createElement(
+        "div",
+        {
+          "data-block": "memory-modal-overlay",
+          onClick: (e) => { if (e.target === e.currentTarget) closeMemoryModal(); },
+          style: {
+            position: "fixed",
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px",
+          },
+        },
+        React.createElement(
+          "div",
+          {
+            "data-block": "memory-modal",
+            role: "dialog",
+            "aria-modal": "true",
+            style: {
+              background: "var(--dsw-alias-bg-layer-1)",
+              color: "var(--dsw-alias-label-primary)",
+              borderRadius: "12px",
+              border: "1px solid var(--dsw-alias-border-l1)",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              width: "min(720px, 100%)",
+              maxHeight: "80vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            },
+            onClick: (e) => e.stopPropagation(),
+          },
+          // 头部：type chip + title + close
+          React.createElement("div", { style: { padding: "14px 18px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "flex-start", gap: "10px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
+            React.createElement("span", { style: typeChipStyle }, typeLabel(memoryModal.type)),
+            React.createElement("span", { style: { fontSize: "15px", fontWeight: "600", flex: "1 1 auto", minWidth: 0, wordBreak: "break-word", lineHeight: 1.45 } }, memoryModal.title || "(无标题)"),
+            React.createElement("button", {
+              type: "button",
+              "data-action": "memory-modal-close",
+              onClick: closeMemoryModal,
+              title: "关闭",
+              style: {
+                background: "transparent",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontSize: "16px",
+                lineHeight: 1,
+                width: "28px",
+                height: "28px",
+                flex: "0 0 auto",
+                color: "var(--dsw-alias-label-secondary)",
+                fontFamily: "inherit",
+              },
+            }, "×"),
+          ),
+          // 主体：完整内容（pre-wrap + 滚动）
+          React.createElement("div", { style: { padding: "16px 18px", overflowY: "auto", flex: "1 1 auto", fontSize: "13px", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--dsw-alias-label-primary)" } }, memoryModal.content ? String(memoryModal.content) : "（无内容）"),
+          // 底部：importance + 时间 + tags + 复制
+          React.createElement("div", { style: { padding: "10px 18px", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-2)" } },
+            memoryModal.importance ? React.createElement("span", { title: "importance " + memoryModal.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(memoryModal.importance)) : null,
+            memoryModal.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(memoryModal.createdAt)) : null,
+            Array.isArray(memoryModal.tags) && memoryModal.tags.length > 0 ? React.createElement("span", null, memoryModal.tags.map((tag) => "#" + tag).join(" ")) : null,
+            React.createElement("span", { style: { flex: "1 1 auto" } }),
+            React.createElement("button", {
+              type: "button",
+              "data-action": "memory-modal-copy",
+              onClick: (e) => {
+                const text = "[" + typeLabel(memoryModal.type) + "] " + memoryModal.title + "\n\n" + (memoryModal.content || "");
+                copyPrompt(text, e, "✓ 已复制", "复制失败");
+              },
+              style: {
+                fontSize: "11px",
+                padding: "4px 10px",
+                borderRadius: "6px",
+                background: "transparent",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                color: "var(--dsw-alias-label-primary)",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: "500",
+              },
+            }, "📋 复制全文"),
+          ),
+        ),
+      ) : null;
       return React.createElement("div", { id: "dsh-brain-dashboard", style: { display: "block", background: "var(--dsw-alias-bg-layer-1)", borderRadius: "10px", margin: "8px 12px", border: "1px solid var(--dsw-alias-border-l2)", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }, "data-block": "dashboard" },
         React.createElement("div", { style: { padding: "12px 16px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "8px", fontWeight: "700", fontSize: "15px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
           React.createElement("span", { style: { fontSize: "18px" } }, "🎯"),
@@ -2689,6 +2842,8 @@ window.__ModuleLoader__.load({
           React.createElement("span", null, "🕒"),
           React.createElement("span", null, t("dash.snapshot", { time: formatDate(data.generatedAt || Date.now()) })),
         ),
+        // v1.1.x-fix：项目记忆详情弹框（fixed 定位，挂在 dashboard 末尾不影响布局）
+        memoryModalNode,
       );
     }
 
