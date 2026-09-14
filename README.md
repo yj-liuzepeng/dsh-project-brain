@@ -2,7 +2,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
@@ -11,9 +11,9 @@
 
 Instead of making every new conversation rediscover the repository, dsh-project-brain stores structured knowledge inside the project itself and keeps getting more useful as the project evolves.
 
-> Current release: `1.1.1`. The core workflows, release build, isolation checks, privacy checks, and end-to-end acceptance pass automatically across 56 assertions (17 smoke suites + 39 host-acceptance scenarios). DSH Desktop UI verified by user on 2026-09-09.
+> Current release: `1.2.0`. The core workflows, release build, isolation checks, privacy checks, and end-to-end acceptance pass automatically across 156 assertions (17 smoke suites + 30 runtime-workspace + 56 project-memory + 39 host-acceptance + 14 release-verify). DSH Desktop UI verified by user on 2026-09-09.
 
-[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.1.1) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.2.0) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## Preview
 

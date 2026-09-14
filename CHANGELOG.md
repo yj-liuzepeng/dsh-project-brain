@@ -5,6 +5,85 @@
 
 ---
 
+## 升级到 v1.2.0（Migration Guide）
+
+从 `v1.1.0` / `v1.1.1` 升级到 `v1.2.0`：
+
+**自动兼容**（无需任何动作）
+
+- 数据格式：`.project-brain/` 全部数据与 v1.1.x 完全兼容
+- 工具 API：16 个 `project_*` 工具签名不变
+- 配置文件：`config.json` 字段不变
+- 检索行为：保留 v1.1.0 引入的双路召回 + RRF 融合（无变更）
+
+**安装命令变化**
+
+```bash
+# 旧（v1.1.1）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.1.1
+
+# 新（v1.2.0）
+dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.2.0
+```
+
+升级后**必须完全退出并重新打开** DSH Desktop（host bundle 与 client bundle 都有改动）。
+
+**新增能力**
+
+- **Onboarding 内容升级**：从「3 步骤引导」改为「8 项能力清单」，首次进入时更直观地展示插件能做什么
+- **记忆卡片查看改弹框模式**：点击记忆卡片不再原地展开，改为弹框显示完整内容（避免长内容撑破 Dashboard 布局）
+- **架构兜底条人话化 + 内联重试按钮**：当架构分析失败时，兜底条文案从技术错误转为业务语言（如「架构分析暂时没拿到结果，点这里重试」），并直接在条上提供重试按钮
+
+**修复内容**
+
+- **语言 chip 按使用率排序 + 百分比 + 长尾聚合**：Dashboard 的语言分布从字典序改为按使用率降序，每个 chip 显示百分比，长尾语言自动聚合到「其他」
+- **切项目时显示 loading 占位**：避免在数据加载完成前显示「空状态 + Onboarding」造成误导
+- **切项目/切 session 时 banner 闪退修复**：解决 RPC banner 在切换瞬间崩溃的问题
+
+**已知破坏性变更**（v1.2.0 内）
+
+- 无。
+
+---
+
+## [v1.2.0] - 2026-09-14
+
+> **次要版本：6 项客户端/Host 修复 + 功能。** 156/156 端到端自动化通过（17 smoke + 30 runtime-workspace + 56 project-memory + 39 host-acceptance + 14 release-verify）。
+> 与 `v1.1.x` 数据完全兼容，工具 API 不变，纯增量增强。
+
+### Added（新增）
+
+- **Onboarding 内容升级**：从「3 步骤引导」改为「8 项能力清单」（commit `12c2844`）。首次进入 DSH 项目时，新版 Onboarding 直接列出插件能做的 8 项能力（架构分析、记忆续接、Quick Actions、Git 联动等），比旧的「Step 1: X, Step 2: Y, Step 3: Z」更直观
+- **记忆卡片查看改弹框模式**（commit `8ac441a`）：点击 Dashboard 上的记忆卡片不再原地展开完整内容，改为弹框（Modal）显示。解决长记忆内容撑破 Dashboard 布局的问题，同时让用户能 focus 在单条记忆上
+- **架构兜底条人话化 + 内联重试按钮**（commit `378224d`）：架构分析失败时，Dashboard 上的兜底条文案从技术错误（如「Analyzer exited with code 1」）转为业务语言（如「架构分析暂时没拿到结果」），并直接在条上提供一个重试按钮，无需跳到 Quick Actions
+
+### Fixed（修复）
+
+- **语言 chip 按使用率排序 + 百分比 + 长尾聚合**（commit `37f695c`）：Dashboard 的语言分布从「按字典序展示」改为「按使用率降序展示」，每个 chip 后面标注百分比（如 `TypeScript 65.2%`），长尾语言自动聚合到「其他 N 种」避免面板被冷门语言撑爆
+- **切项目时显示 loading 占位**（commit `7d2894c`）：从项目 A 切到项目 B 时，旧 UI 会瞬间显示项目 B 的「空状态 + Onboarding」，造成「项目 B 真的空」的误导。新版改为显示 loading spinner，直到新项目数据 ready 才切到 Dashboard
+- **切项目/切 session banner 闪退修复**（commit `54fa048`）：修复 `src/host/rpc/sidebar.js` 中切换瞬间 `registerConnectionRpc` 与 `registerSidebarRpc` 状态不一致导致的 banner crash。根因是旧的 `sessionId` map 异步清理时序问题，现在改为基于 `connection.session()` 的实时解析
+
+### Changed（变更）
+
+- **`src/client.js`**：新增 8 项能力清单的国际化文案；新增 Modal 组件；语言 chip 改用实时排序函数
+- **`src/host/rpc/sidebar.js`**：连接 RPC 改为基于 `connection.session()` 而非本地 `Map` 缓存
+- **`src/host/architecture/analyzer.js`**：兜底条改为可重试，业务文案与按钮注入
+
+### 验证
+
+```
+npm test                    # 17 / 17 smoke suites
+npm run test:runtime-workspace  # 30 / 30 runtime workspace RPC
+npm run test:project-memory # 56 / 56 project memory isolation
+npm run test:acceptance     # 39 / 39 host-acceptance
+npm run verify:release      # 14 / 14（20 packaged files）
+npm run verify:install      # CLEAN_TARBALL_INSTALL_PASS
+npm publish --dry-run       # OK（registry reach + auth valid）
+npm audit                   # 0 vulnerabilities
+```
+
+---
+
 ## 升级到 v1.1.0（Migration Guide）
 
 从 `v1.0.0` 升级到 `v1.1.0`：
