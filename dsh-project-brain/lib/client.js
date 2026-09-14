@@ -2794,13 +2794,28 @@
         const embedded = DEMO_ONBOARDING ? { data: { initialized: false, project: null, phase: null, recentActivity: [], stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 }, _generatedAt: __PROJECT_DATA__ && __PROJECT_DATA__.generatedAt }, workspaceId: null, workspacePath: null, sessionId: null, hint: "", source: "snapshot" } : resolvePreview(props);
         const sid = props && props.sessionId || null;
         const [runtime, setRuntime] = React.useState(null);
+        const [runtimeResolved, setRuntimeResolved] = React.useState(DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc);
         React.useEffect(() => {
           setRuntime(null);
-          if (DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc) return void 0;
+          const offlineMode = DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc;
+          if (offlineMode) {
+            setRuntimeResolved(true);
+            return void 0;
+          }
+          setRuntimeResolved(false);
           let active = true;
+          let timeoutId = null;
+          const finish = () => {
+            if (!active) return;
+            setRuntimeResolved(true);
+          };
+          timeoutId = setTimeout(finish, 4e3);
           const refresh = () => {
             __DSH_CONNECTION__.rpc.call("/project-brain", "preview", { sessionId: sid }).then((result) => {
-              if (!active || !result || !result.ok || !result.value) return;
+              if (!active || !result || !result.ok || !result.value) {
+                finish();
+                return;
+              }
               const value = result.value;
               setRuntime({
                 data: value.preview,
@@ -2810,23 +2825,26 @@
                 hint: "",
                 source: "runtime"
               });
+              finish();
             }).catch((error) => {
               console.warn("[dsh-project-brain] runtime preview unavailable:", error);
+              finish();
             });
           };
           refresh();
           const timer = setInterval(refresh, 5e3);
           return () => {
             active = false;
+            clearTimeout(timeoutId);
             clearInterval(timer);
           };
         }, [sid]);
-        return [runtime || embedded, setRuntime];
+        return [runtime || embedded, setRuntime, runtimeResolved];
       }
       function SidebarPreviewRoot(props) {
         const localeCode = resolveLocaleCode(props);
         const t = makeT(localeCode);
-        const [r, setRuntimePreview] = useResolvedPreview(props);
+        const [r, setRuntimePreview, runtimeResolved] = useResolvedPreview(props);
         const data = r.data;
         const handleOnboardingComplete = React.useCallback((value) => {
           if (!value || !value.preview) return;
@@ -2866,6 +2884,23 @@
           )
         );
         if (!dataWithLocale.initialized) {
+          if (!runtimeResolved) {
+            return React.createElement(
+              "div",
+              containerProps,
+              React.createElement("style", null, "@keyframes dsh-brain-loading-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}.dsh-brain-loading-dot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--dsw-alias-brand-primary);border-top-color:transparent;animation:dsh-brain-loading-spin 0.9s linear infinite;vertical-align:middle;margin-right:8px}"),
+              headerWithBadge,
+              React.createElement(
+                "div",
+                {
+                  style: { padding: "32px 16px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
+                  "data-block": "preview-loading"
+                },
+                React.createElement("span", { className: "dsh-brain-loading-dot" }),
+                React.createElement("span", null, t("loading"))
+              )
+            );
+          }
           const hintBlock = r.hint ? React.createElement(
             "div",
             {
@@ -2928,8 +2963,9 @@
       function TodoStrip(props) {
         const localeCode = resolveLocaleCode(props);
         const t = makeT(localeCode);
-        const [r] = useResolvedPreview(props);
+        const [r, , runtimeResolved] = useResolvedPreview(props);
         const data = r.data;
+        if (!runtimeResolved) return null;
         if (!data || !data.initialized) return null;
         const active = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
         if (active.length === 0) return null;

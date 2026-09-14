@@ -2650,15 +2650,36 @@ window.__ModuleLoader__.load({
         : resolvePreview(props);
       const sid = (props && props.sessionId) || null;
       const [runtime, setRuntime] = React.useState(null);
+      // v1.1.x-fix：区分"host 还在拉"和"host 已答 / 确认未初始化"。
+      //   runtimeResolved = true 表示"不要再显示 loading 占位，切换到正常状态判定"
+      //   触发条件：host 返回数据 / host 报错 / 4 秒超时（IPC 桥可能挂掉）。
+      //   默认 false，让首屏显示 loading 而不是误导性的 Onboarding。
+      const [runtimeResolved, setRuntimeResolved] = React.useState(DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc);
 
       React.useEffect(() => {
         setRuntime(null);
-        if (DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc) return undefined;
+        const offlineMode = DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc;
+        if (offlineMode) {
+          setRuntimeResolved(true);
+          return undefined;
+        }
+        setRuntimeResolved(false);
         let active = true;
+        let timeoutId = null;
+        const finish = () => {
+          if (!active) return;
+          setRuntimeResolved(true);
+        };
+        // 4 秒兜底：超过这个时间还没拉回数据 → 强制 resolve，让 UI 降级到
+        //   Onboarding（host 不可用时用户可手动点"启动项目大脑"）
+        timeoutId = setTimeout(finish, 4000);
         const refresh = () => {
           __DSH_CONNECTION__.rpc.call("/project-brain", "preview", { sessionId: sid })
             .then((result) => {
-              if (!active || !result || !result.ok || !result.value) return;
+              if (!active || !result || !result.ok || !result.value) {
+                finish();
+                return;
+              }
               const value = result.value;
               setRuntime({
                 data: value.preview,
@@ -2668,25 +2689,31 @@ window.__ModuleLoader__.load({
                 hint: "",
                 source: "runtime",
               });
+              finish();
             })
             .catch((error) => {
               // Keep the embedded snapshot as a graceful offline fallback.
               console.warn("[dsh-project-brain] runtime preview unavailable:", error);
+              finish();
             });
         };
         refresh();
         const timer = setInterval(refresh, 5000);
-        return () => { active = false; clearInterval(timer); };
+        return () => {
+          active = false;
+          clearTimeout(timeoutId);
+          clearInterval(timer);
+        };
       }, [sid]);
 
-      return [runtime || embedded, setRuntime];
+      return [runtime || embedded, setRuntime, runtimeResolved];
     }
 
     // ─── 根组件：Connection RPC 为主，build-time embed 为首屏/离线降级 ───
     function SidebarPreviewRoot(props) {
       const localeCode = resolveLocaleCode(props);
       const t = makeT(localeCode);
-      const [r, setRuntimePreview] = useResolvedPreview(props);
+      const [r, setRuntimePreview, runtimeResolved] = useResolvedPreview(props);
       const data = r.data;
 
       const handleOnboardingComplete = React.useCallback((value) => {
@@ -2728,6 +2755,23 @@ window.__ModuleLoader__.load({
       );
 
       if (!dataWithLocale.initialized) {
+        // v1.1.x-fix：host 还没答复时显示 loading 占位，而不是"项目未启动"卡片。
+        //   用户切到有数据的项目时，build-time embed 经常 miss sessionId，
+        //   旧逻辑直接渲染橙色 banner + Onboarding 让人误以为插件坏了。
+        //   现在：先 loading → host 回数据后切到真 Dashboard / host 超时降级到 Onboarding。
+        if (!runtimeResolved) {
+          return React.createElement("div", containerProps,
+            React.createElement("style", null, "@keyframes dsh-brain-loading-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}.dsh-brain-loading-dot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--dsw-alias-brand-primary);border-top-color:transparent;animation:dsh-brain-loading-spin 0.9s linear infinite;vertical-align:middle;margin-right:8px}"),
+            headerWithBadge,
+            React.createElement("div", {
+              style: { padding: "32px 16px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
+              "data-block": "preview-loading",
+            },
+              React.createElement("span", { className: "dsh-brain-loading-dot" }),
+              React.createElement("span", null, t("loading")),
+            ),
+          );
+        }
         const hintBlock = r.hint ? React.createElement(
           "div",
           {
@@ -2791,8 +2835,12 @@ window.__ModuleLoader__.load({
     function TodoStrip(props) {
       const localeCode = resolveLocaleCode(props);
       const t = makeT(localeCode);
-      const [r] = useResolvedPreview(props);
+      const [r, , runtimeResolved] = useResolvedPreview(props);
       const data = r.data;
+      // v1.1.x-fix：host 拉数据期间（!runtimeResolved）不渲染 strip，避免切项目时
+      //   "embedded.data.initialized=true（之前项目的）→ 现在 sid 的 embedded=false"
+      //   引起的闪烁。host 回数据后再根据 data.initialized 决定显示与否。
+      if (!runtimeResolved) return null;
       if (!data || !data.initialized) return null;  // 未初始化项目不显示
       const active = (data.todos || []).filter((x) => x && x.status !== "done" && x.status !== "cancelled");
       if (active.length === 0) return null;        // 无活跃 TODO 不显示（避免噪音）
