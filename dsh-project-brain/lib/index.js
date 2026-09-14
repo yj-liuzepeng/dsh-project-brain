@@ -822,6 +822,7 @@ async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options =
   const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 6e4);
   const chunks = /* @__PURE__ */ new Map();
   const completed = /* @__PURE__ */ new Map();
+  let lastFinishKind = null;
   try {
     const request = {
       provider: route.provider,
@@ -838,8 +839,9 @@ async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options =
       if (!chunk) continue;
       if (chunk.type === "text-delta") chunks.set(chunk.index, (chunks.get(chunk.index) || "") + String(chunk.text || ""));
       else if (chunk.type === "block-end" && chunk.block && chunk.block.type === "text") completed.set(chunk.index, String(chunk.block.text || ""));
-      else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind && chunk.reason.kind !== "stop") throw Object.assign(new Error("architecture LLM finished with " + chunk.reason.kind), { code: "ARCHITECTURE_LLM_FINISH" });
+      else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind) lastFinishKind = chunk.reason.kind;
     }
+    if (lastFinishKind && lastFinishKind !== "stop") throw Object.assign(new Error("architecture LLM finished with " + lastFinishKind), { code: "ARCHITECTURE_LLM_FINISH", details: { finishKind: lastFinishKind } });
     const indexes = [.../* @__PURE__ */ new Set([...chunks.keys(), ...completed.keys()])].sort((a, b) => a - b);
     const text = indexes.map((index) => chunks.get(index) || completed.get(index) || "").join("").trim();
     if (!text) throw Object.assign(new Error("architecture LLM returned no text"), { code: "ARCHITECTURE_LLM_EMPTY" });
@@ -847,6 +849,31 @@ async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, options =
   } finally {
     clearTimeout(timer);
   }
+}
+function explainLlmError(error) {
+  const err = error || {};
+  const code = err.code || "ARCHITECTURE_LLM_FAILED";
+  const message = String(err.message || err);
+  const details = err.details && typeof err.details === "object" ? err.details : {};
+  if (code === "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE") {
+    return { code, message, reasonText: "DSH \u672A\u628A\u6A21\u578B\u670D\u52A1\u66B4\u9732\u7ED9\u9879\u76EE\u8111", actionKey: "check_settings" };
+  }
+  if (code === "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE") {
+    return { code, message, reasonText: "\u5F53\u524D\u4F1A\u8BDD\u8FD8\u6CA1\u6709\u53EF\u7528\u7684\u6A21\u578B\u8DEF\u7531", actionKey: "send_message" };
+  }
+  if (code === "ARCHITECTURE_LLM_FINISH") {
+    const kind = String(details.finishKind || "").toLowerCase();
+    if (kind === "length") return { code, message, reasonText: "\u6A21\u578B\u8F93\u51FA\u8D85\u8FC7 max_tokens \u88AB\u622A\u65AD\uFF0C\u672A\u80FD\u5199\u51FA\u5B8C\u6574 JSON", actionKey: "retry_scan" };
+    if (kind === "content_filter" || kind === "safety") return { code, message, reasonText: "\u6A21\u578B\u56E0\u5185\u5BB9\u5B89\u5168\u7B56\u7565\u4E2D\u65AD\u8F93\u51FA", actionKey: "retry_scan" };
+    if (kind === "cancel") return { code, message, reasonText: "\u8C03\u7528\u88AB\u4E3B\u52A8\u53D6\u6D88\uFF08\u53EF\u80FD\u8D85\u65F6\uFF09", actionKey: "retry_scan" };
+    if (kind === "error" || kind === "upstream") return { code, message, reasonText: "\u6A21\u578B\u4E0A\u6E38\u8FD4\u56DE\u9519\u8BEF\uFF08\u7F51\u7EDC\u6216\u670D\u52A1\u5F02\u5E38\uFF09", actionKey: "retry_scan" };
+    return { code, message, reasonText: "\u6A21\u578B\u672A\u6B63\u5E38\u7ED3\u675F\uFF08" + (kind || "\u672A\u77E5\u539F\u56E0") + "\uFF09", actionKey: "retry_scan" };
+  }
+  if (code === "ARCHITECTURE_LLM_EMPTY") return { code, message, reasonText: "\u6A21\u578B\u8FD4\u56DE\u4E86\u7A7A\u5185\u5BB9", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_INVALID_JSON") return { code, message, reasonText: "\u6A21\u578B\u8F93\u51FA\u65E0\u6CD5\u89E3\u6790\u4E3A JSON\uFF08\u81EA\u52A8\u4FEE\u590D\u4E5F\u5DF2\u5931\u8D25\uFF09", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_SCHEMA") return { code, message, reasonText: "\u6A21\u578B\u8F93\u51FA\u4E0D\u7B26\u5408\u67B6\u6784 schema", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_TIMEOUT" || /timeout/i.test(message)) return { code, message, reasonText: "\u8C03\u7528\u8D85\u65F6\uFF08\u9ED8\u8BA4 60 \u79D2\uFF09", actionKey: "retry_scan" };
+  return { code, message, reasonText: "\u67B6\u6784\u751F\u6210\u5931\u8D25\uFF1A" + (message || "\u672A\u77E5\u9519\u8BEF"), actionKey: "retry_scan" };
 }
 async function collectEvidence(fs, projectPath, scan, config) {
   const allFiles = (scan.files || []).filter((file) => !isGeneratedOrVendor(file));
@@ -921,11 +948,7 @@ async function buildArchitecture({ fs, projectPath, scan, previous, config = {},
   if (!requested) return local;
   if (!local.changed && previous && previous.schemaVersion === 2 && previous.llm && previous.llm.used) return { ...previous, generatedAt: Date.now(), changed: false };
   if (!llm || typeof llm.stream !== "function") {
-    local.llm.error = {
-      code: "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE",
-      message: "DSH \u672A\u5411\u63D2\u4EF6\u63D0\u4F9B LLM \u670D\u52A1\uFF0C\u5DF2\u751F\u6210\u672C\u5730\u6982\u5FF5\u67B6\u6784",
-      details: { serviceAvailable: false, routeAvailable: Boolean(route) }
-    };
+    local.llm.error = explainLlmError({ code: "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE", message: "DSH \u672A\u5411\u63D2\u4EF6\u63D0\u4F9B LLM \u670D\u52A1\uFF0C\u5DF2\u751F\u6210\u672C\u5730\u6982\u5FF5\u67B6\u6784", details: { serviceAvailable: false, routeAvailable: Boolean(route) } });
     return local;
   }
   if (!route && typeof getRoute === "function") {
@@ -936,11 +959,7 @@ async function buildArchitecture({ fs, projectPath, scan, previous, config = {},
     }
   }
   if (!route) {
-    local.llm.error = {
-      code: "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE",
-      message: "\u5F53\u524D Session \u5C1A\u672A\u4EA7\u751F\u53EF\u590D\u7528\u7684\u6A21\u578B\u8DEF\u7531\uFF0C\u8BF7\u5148\u5B8C\u6210\u4E00\u6B21\u5BF9\u8BDD\u540E\u91CD\u8BD5",
-      details: { serviceAvailable: true, routeAvailable: false, sessionId: sessionId || null }
-    };
+    local.llm.error = explainLlmError({ code: "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE", message: "\u5F53\u524D Session \u5C1A\u672A\u4EA7\u751F\u53EF\u590D\u7528\u7684\u6A21\u578B\u8DEF\u7531\uFF0C\u8BF7\u5148\u5B8C\u6210\u4E00\u6B21\u5BF9\u8BDD\u540E\u91CD\u8BD5", details: { serviceAvailable: true, routeAvailable: false, sessionId: sessionId || null } });
     return local;
   }
   local.llm.provider = route.provider;
@@ -968,7 +987,7 @@ async function buildArchitecture({ fs, projectPath, scan, previous, config = {},
     enriched.evidence = { ...local.evidence, sourceSnippetsShared: includeSource };
     return enriched;
   } catch (error) {
-    local.llm.error = { code: error.code || "ARCHITECTURE_LLM_FAILED", message: String(error.message || error) };
+    local.llm.error = explainLlmError(error);
     return local;
   }
 }

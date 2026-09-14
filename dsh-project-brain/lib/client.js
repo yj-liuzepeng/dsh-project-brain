@@ -45,6 +45,12 @@
           "arch.trigger": "\u89E6\u53D1",
           "arch.outcome": "\u7ED3\u679C",
           "arch.llmFallback": "DSH LLM \u672A\u5B8C\u6210\uFF0C\u5F53\u524D\u5C55\u793A\u672C\u5730\u63A8\u65AD",
+          "arch.actionRetry": "\u91CD\u65B0\u626B\u63CF",
+          "arch.actionChat": "\u5148\u53D1\u4E00\u6761\u6D88\u606F",
+          "arch.actionSettings": "\u68C0\u67E5 DSH \u6A21\u578B\u8DEF\u7531",
+          "arch.retrying": "\u91CD\u65B0\u626B\u63CF\u4E2D\u2026",
+          "arch.retryDone": "\u5DF2\u91CD\u65B0\u751F\u6210",
+          "arch.retryFailed": "\u91CD\u65B0\u626B\u63CF\u5931\u8D25",
           "actions.continue": "\u7EE7\u7EED\u4E0A\u6B21\u5F00\u53D1",
           "actions.openDashboard": "\u6253\u5F00 Dashboard",
           "actions.closeDashboard": "\u6536\u8D77 Dashboard",
@@ -149,6 +155,12 @@
           "arch.trigger": "Trigger",
           "arch.outcome": "Outcome",
           "arch.llmFallback": "DSH LLM was unavailable; showing local inference",
+          "arch.actionRetry": "Rescan",
+          "arch.actionChat": "Send a message first",
+          "arch.actionSettings": "Check DSH model route",
+          "arch.retrying": "Rescanning\u2026",
+          "arch.retryDone": "Regenerated",
+          "arch.retryFailed": "Rescan failed",
           "actions.continue": "Continue last session",
           "actions.openDashboard": "Open full Dashboard",
           "actions.closeDashboard": "Close Dashboard",
@@ -788,9 +800,10 @@
           )
         );
       }
-      function ArchitectureGraphBlock({ data, t, embedded }) {
+      function ArchitectureGraphBlock({ data, t, embedded, onRescan }) {
         const architecture = data && data.architecture;
         const [selectedId, setSelectedId] = React.useState(null);
+        const [retryState, setRetryState] = React.useState({ status: "idle", message: null });
         if (!architecture) return null;
         const components = (architecture.components || architecture.nodes || []).slice(0, 24);
         if (!components.length) return null;
@@ -816,7 +829,55 @@
             React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { flex: "1 1 auto", margin: 0 }) }, "\u{1F3DB}\uFE0F " + t("arch.title")),
             React.createElement("span", { style: { fontSize: "10px", padding: "3px 8px", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", color: architecture.source === "hybrid" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, sourceLabel)
           ),
-          architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error ? React.createElement("div", { title: architecture.llm.error.message || architecture.llm.error.code, style: { fontSize: "10px", padding: "6px 8px", marginBottom: "8px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)" } }, "\u26A0\uFE0F " + t("arch.llmFallback") + " \xB7 " + (architecture.llm.error.code || "LLM_ERROR")) : null,
+          architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error ? (function() {
+            const err = architecture.llm.error || {};
+            const reasonText = err.reasonText || err.message || (err.code || "LLM_ERROR");
+            const actionKey = err.actionKey || "retry_scan";
+            let actionNode = null;
+            if (actionKey === "retry_scan") {
+              const busy = retryState.status === "loading";
+              actionNode = React.createElement("button", {
+                type: "button",
+                disabled: busy || typeof onRescan !== "function",
+                onClick: async () => {
+                  if (typeof onRescan !== "function") return;
+                  setRetryState({ status: "loading", message: null });
+                  try {
+                    const out = await onRescan();
+                    setRetryState({ status: "success", message: out && out.message ? out.message : t("arch.retryDone") });
+                  } catch (e) {
+                    setRetryState({ status: "error", message: String(e && e.message || e) });
+                  }
+                },
+                style: {
+                  fontSize: "10px",
+                  padding: "3px 8px",
+                  borderRadius: "6px",
+                  background: "transparent",
+                  border: "1px solid var(--dsw-alias-state-warn-primary)",
+                  color: "var(--dsw-alias-state-warn-primary)",
+                  cursor: busy ? "wait" : "pointer",
+                  fontWeight: 600
+                }
+              }, busy ? t("arch.retrying") : "\u{1F504} " + t("arch.actionRetry"));
+            } else if (actionKey === "send_message") {
+              actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "\u{1F4AC} " + t("arch.actionChat"));
+            } else if (actionKey === "check_settings") {
+              actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "\u2699\uFE0F " + t("arch.actionSettings"));
+            }
+            const statusNode = retryState.status === "success" ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-success-primary)" } }, "\u2713 " + (retryState.message || "")) : retryState.status === "error" ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-warn-primary)" } }, "\u2717 " + (retryState.message || "")) : null;
+            return React.createElement(
+              "div",
+              {
+                title: err.message || err.code || "",
+                style: { fontSize: "11px", padding: "8px 10px", marginBottom: "10px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)", background: "rgba(255,180,0,0.06)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", lineHeight: 1.5 }
+              },
+              React.createElement("span", { style: { fontWeight: 700 } }, "\u26A0\uFE0F " + t("arch.llmFallback")),
+              React.createElement("span", { style: { flex: "1 1 auto", minWidth: "180px" } }, reasonText),
+              actionNode,
+              statusNode
+            );
+          })() : null,
           React.createElement(
             "div",
             { style: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)", gap: "8px", marginBottom: "10px" } },
@@ -2397,6 +2458,19 @@
         const [quickActionState, setQuickActionState] = React.useState({});
         const [activeTab, setActiveTab] = React.useState("overview");
         const rpc = connection && connection.rpc;
+        const runArchRescan = React.useCallback(async () => {
+          if (!sessionId || !rpc || typeof rpc.call !== "function") throw new Error(t("arch.retryFailed"));
+          const res = await rpc.call("/project-brain", "action", { sessionId, action: "rescan" });
+          if (!res || !res.ok || !res.value) throw new Error(res && res.error && res.error.message || t("arch.retryFailed"));
+          if (res.value && res.value.preview && typeof onPreviewUpdate === "function") {
+            try {
+              onPreviewUpdate(res.value);
+            } catch (e) {
+            }
+          }
+          const stats = res.value && res.value.result && res.value.result.data && res.value.result.data.stats;
+          return { message: stats ? t("arch.retryDone") + " \xB7 " + (stats.files || 0) + " \u6587\u4EF6" : t("arch.retryDone") };
+        }, [sessionId, rpc, onPreviewUpdate, t]);
         const [gitInfo, setGitInfo] = React.useState(null);
         const [gitAutoRefresh, setGitAutoRefresh] = React.useState(() => {
           try {
@@ -2729,7 +2803,7 @@
               dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
               dashSection("\u{1F6AA}", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode)
             ) : null,
-            activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true }) : null,
+            activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true, onRescan: runArchRescan }) : null,
             activeTab === "work" ? React.createElement(
               "div",
               { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },

@@ -281,6 +281,7 @@ export async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, op
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("architecture LLM timeout")), timeoutMs || 60000);
   const chunks = new Map(); const completed = new Map();
+  let lastFinishKind = null;
   try {
     const request = {
       provider: route.provider,
@@ -297,13 +298,50 @@ export async function streamLlmText(llm, route, prompt, sessionId, timeoutMs, op
       if (!chunk) continue;
       if (chunk.type === "text-delta") chunks.set(chunk.index, (chunks.get(chunk.index) || "") + String(chunk.text || ""));
       else if (chunk.type === "block-end" && chunk.block && chunk.block.type === "text") completed.set(chunk.index, String(chunk.block.text || ""));
-      else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind && chunk.reason.kind !== "stop") throw Object.assign(new Error("architecture LLM finished with " + chunk.reason.kind), { code: "ARCHITECTURE_LLM_FINISH" });
+      else if (chunk.type === "finish" && chunk.reason && chunk.reason.kind) lastFinishKind = chunk.reason.kind;
     }
+    if (lastFinishKind && lastFinishKind !== "stop") throw Object.assign(new Error("architecture LLM finished with " + lastFinishKind), { code: "ARCHITECTURE_LLM_FINISH", details: { finishKind: lastFinishKind } });
     const indexes = [...new Set([...chunks.keys(), ...completed.keys()])].sort((a, b) => a - b);
     const text = indexes.map((index) => chunks.get(index) || completed.get(index) || "").join("").trim();
     if (!text) throw Object.assign(new Error("architecture LLM returned no text"), { code: "ARCHITECTURE_LLM_EMPTY" });
     return text;
   } finally { clearTimeout(timer); }
+}
+
+// 把内部 error code 翻成「人话原因 + 下一步动作」
+//   reasonText: 一句话中文，解释发生了什么（不含动作）
+//   actionKey: 客户端按这个决定渲染哪种引导
+//     - retry_scan       一键「重新扫描」按钮
+//     - send_message     引导用户先发一条消息（DSH 才有模型路由）
+//     - check_settings   引导用户检查 DSH 模型路由设置
+function explainLlmError(error) {
+  const err = error || {};
+  const code = err.code || "ARCHITECTURE_LLM_FAILED";
+  const message = String(err.message || err);
+  const details = err.details && typeof err.details === "object" ? err.details : {};
+  // 1) 路由/服务不可用
+  if (code === "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE") {
+    return { code, message, reasonText: "DSH 未把模型服务暴露给项目脑", actionKey: "check_settings" };
+  }
+  if (code === "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE") {
+    return { code, message, reasonText: "当前会话还没有可用的模型路由", actionKey: "send_message" };
+  }
+  // 2) 流结束原因（FINISH）—— 按 reason.kind 区分人话
+  if (code === "ARCHITECTURE_LLM_FINISH") {
+    const kind = String(details.finishKind || "").toLowerCase();
+    if (kind === "length") return { code, message, reasonText: "模型输出超过 max_tokens 被截断，未能写出完整 JSON", actionKey: "retry_scan" };
+    if (kind === "content_filter" || kind === "safety") return { code, message, reasonText: "模型因内容安全策略中断输出", actionKey: "retry_scan" };
+    if (kind === "cancel") return { code, message, reasonText: "调用被主动取消（可能超时）", actionKey: "retry_scan" };
+    if (kind === "error" || kind === "upstream") return { code, message, reasonText: "模型上游返回错误（网络或服务异常）", actionKey: "retry_scan" };
+    return { code, message, reasonText: "模型未正常结束（" + (kind || "未知原因") + "）", actionKey: "retry_scan" };
+  }
+  // 3) 输出内容类
+  if (code === "ARCHITECTURE_LLM_EMPTY") return { code, message, reasonText: "模型返回了空内容", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_INVALID_JSON") return { code, message, reasonText: "模型输出无法解析为 JSON（自动修复也已失败）", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_SCHEMA") return { code, message, reasonText: "模型输出不符合架构 schema", actionKey: "retry_scan" };
+  if (code === "ARCHITECTURE_LLM_TIMEOUT" || /timeout/i.test(message)) return { code, message, reasonText: "调用超时（默认 60 秒）", actionKey: "retry_scan" };
+  // 4) 兜底
+  return { code, message, reasonText: "架构生成失败：" + (message || "未知错误"), actionKey: "retry_scan" };
 }
 
 async function collectEvidence(fs, projectPath, scan, config) {
@@ -386,11 +424,7 @@ export async function buildArchitecture({ fs, projectPath, scan, previous, confi
   if (!requested) return local;
   if (!local.changed && previous && previous.schemaVersion === 2 && previous.llm && previous.llm.used) return { ...previous, generatedAt: Date.now(), changed: false };
   if (!llm || typeof llm.stream !== "function") {
-    local.llm.error = {
-      code: "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE",
-      message: "DSH 未向插件提供 LLM 服务，已生成本地概念架构",
-      details: { serviceAvailable: false, routeAvailable: Boolean(route) },
-    };
+    local.llm.error = explainLlmError({ code: "ARCHITECTURE_LLM_SERVICE_UNAVAILABLE", message: "DSH 未向插件提供 LLM 服务，已生成本地概念架构", details: { serviceAvailable: false, routeAvailable: Boolean(route) } });
     return local;
   }
   // Evidence collection can take a moment. Resolve the route again here so a
@@ -400,11 +434,7 @@ export async function buildArchitecture({ fs, projectPath, scan, previous, confi
     try { route = getRoute(); } catch (e) { route = null; }
   }
   if (!route) {
-    local.llm.error = {
-      code: "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE",
-      message: "当前 Session 尚未产生可复用的模型路由，请先完成一次对话后重试",
-      details: { serviceAvailable: true, routeAvailable: false, sessionId: sessionId || null },
-    };
+    local.llm.error = explainLlmError({ code: "ARCHITECTURE_LLM_SESSION_ROUTE_UNAVAILABLE", message: "当前 Session 尚未产生可复用的模型路由，请先完成一次对话后重试", details: { serviceAvailable: true, routeAvailable: false, sessionId: sessionId || null } });
     return local;
   }
   local.llm.provider = route.provider; local.llm.model = route.model;
@@ -429,7 +459,7 @@ export async function buildArchitecture({ fs, projectPath, scan, previous, confi
     enriched.llm = { requested: true, used: true, provider: route.provider, model: route.model, attempts: repaired ? 2 : 1, repaired, error: null };
     enriched.evidence = { ...local.evidence, sourceSnippetsShared: includeSource };
     return enriched;
-  } catch (error) { local.llm.error = { code: error.code || "ARCHITECTURE_LLM_FAILED", message: String(error.message || error) }; return local; }
+  } catch (error) { local.llm.error = explainLlmError(error); return local; }
 }
 export function architectureRelevantFiles(files) {
   return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));

@@ -54,6 +54,12 @@ window.__ModuleLoader__.load({
         "arch.trigger": "触发",
         "arch.outcome": "结果",
         "arch.llmFallback": "DSH LLM 未完成，当前展示本地推断",
+        "arch.actionRetry": "重新扫描",
+        "arch.actionChat": "先发一条消息",
+        "arch.actionSettings": "检查 DSH 模型路由",
+        "arch.retrying": "重新扫描中…",
+        "arch.retryDone": "已重新生成",
+        "arch.retryFailed": "重新扫描失败",
         "actions.continue": "继续上次开发",
         "actions.openDashboard": "打开 Dashboard",
         "actions.closeDashboard": "收起 Dashboard",
@@ -158,6 +164,12 @@ window.__ModuleLoader__.load({
         "arch.trigger": "Trigger",
         "arch.outcome": "Outcome",
         "arch.llmFallback": "DSH LLM was unavailable; showing local inference",
+        "arch.actionRetry": "Rescan",
+        "arch.actionChat": "Send a message first",
+        "arch.actionSettings": "Check DSH model route",
+        "arch.retrying": "Rescanning…",
+        "arch.retryDone": "Regenerated",
+        "arch.retryFailed": "Rescan failed",
         "actions.continue": "Continue last session",
         "actions.openDashboard": "Open full Dashboard",
         "actions.closeDashboard": "Close Dashboard",
@@ -767,9 +779,10 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function ArchitectureGraphBlock({ data, t, embedded }) {
+    function ArchitectureGraphBlock({ data, t, embedded, onRescan }) {
       const architecture = data && data.architecture;
       const [selectedId, setSelectedId] = React.useState(null);
+      const [retryState, setRetryState] = React.useState({ status: "idle", message: null });
       if (!architecture) return null;
       const components = (architecture.components || architecture.nodes || []).slice(0, 24);
       if (!components.length) return null;
@@ -793,7 +806,53 @@ window.__ModuleLoader__.load({
           React.createElement("span", { style: { fontSize: "10px", padding: "3px 8px", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", color: architecture.source === "hybrid" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, sourceLabel),
         ),
         architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error
-          ? React.createElement("div", { title: architecture.llm.error.message || architecture.llm.error.code, style: { fontSize: "10px", padding: "6px 8px", marginBottom: "8px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)" } }, "⚠️ " + t("arch.llmFallback") + " · " + (architecture.llm.error.code || "LLM_ERROR"))
+          ? (function () {
+              const err = architecture.llm.error || {};
+              const reasonText = err.reasonText || err.message || (err.code || "LLM_ERROR");
+              const actionKey = err.actionKey || "retry_scan";
+              // 动作区：retry_scan → 重新扫描按钮；send_message / check_settings → 文案提示
+              let actionNode = null;
+              if (actionKey === "retry_scan") {
+                const busy = retryState.status === "loading";
+                actionNode = React.createElement("button", {
+                  type: "button",
+                  disabled: busy || typeof onRescan !== "function",
+                  onClick: async () => {
+                    if (typeof onRescan !== "function") return;
+                    setRetryState({ status: "loading", message: null });
+                    try {
+                      const out = await onRescan();
+                      setRetryState({ status: "success", message: out && out.message ? out.message : t("arch.retryDone") });
+                    } catch (e) {
+                      setRetryState({ status: "error", message: String((e && e.message) || e) });
+                    }
+                  },
+                  style: {
+                    fontSize: "10px", padding: "3px 8px", borderRadius: "6px",
+                    background: "transparent", border: "1px solid var(--dsw-alias-state-warn-primary)",
+                    color: "var(--dsw-alias-state-warn-primary)", cursor: busy ? "wait" : "pointer", fontWeight: 600,
+                  },
+                }, busy ? t("arch.retrying") : "🔄 " + t("arch.actionRetry"));
+              } else if (actionKey === "send_message") {
+                actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "💬 " + t("arch.actionChat"));
+              } else if (actionKey === "check_settings") {
+                actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "⚙️ " + t("arch.actionSettings"));
+              }
+              const statusNode = retryState.status === "success"
+                ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-success-primary)" } }, "✓ " + (retryState.message || ""))
+                : retryState.status === "error"
+                  ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-warn-primary)" } }, "✗ " + (retryState.message || ""))
+                  : null;
+              return React.createElement("div", {
+                title: err.message || err.code || "",
+                style: { fontSize: "11px", padding: "8px 10px", marginBottom: "10px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)", background: "rgba(255,180,0,0.06)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", lineHeight: 1.5 },
+              },
+                React.createElement("span", { style: { fontWeight: 700 } }, "⚠️ " + t("arch.llmFallback")),
+                React.createElement("span", { style: { flex: "1 1 auto", minWidth: "180px" } }, reasonText),
+                actionNode,
+                statusNode,
+              );
+            })()
           : null,
         React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)", gap: "8px", marginBottom: "10px" } },
           React.createElement("div", { style: panelStyle },
@@ -2291,6 +2350,17 @@ window.__ModuleLoader__.load({
       const [quickActionState, setQuickActionState] = React.useState({});
       const [activeTab, setActiveTab] = React.useState("overview");
       const rpc = connection && connection.rpc;
+      // 架构兜底条专用重试：独立 promise-based（避开 quickActionState 的 stale 闭包）
+      const runArchRescan = React.useCallback(async () => {
+        if (!sessionId || !rpc || typeof rpc.call !== "function") throw new Error(t("arch.retryFailed"));
+        const res = await rpc.call("/project-brain", "action", { sessionId, action: "rescan" });
+        if (!res || !res.ok || !res.value) throw new Error((res && res.error && res.error.message) || t("arch.retryFailed"));
+        if (res.value && res.value.preview && typeof onPreviewUpdate === "function") {
+          try { onPreviewUpdate(res.value); } catch (e) {}
+        }
+        const stats = res.value && res.value.result && res.value.result.data && res.value.result.data.stats;
+        return { message: stats ? t("arch.retryDone") + " · " + (stats.files || 0) + " 文件" : t("arch.retryDone") };
+      }, [sessionId, rpc, onPreviewUpdate, t]);
       // v0.4.x: Git Tab 数据（null=探测中，{available:false}=非 git 仓库不显示 tab，{available:true,...}=有 git）
       const [gitInfo, setGitInfo] = React.useState(null);
       // v0.4.x: Git Tab 自动刷新开关（默认开；localStorage 记忆；切到 git tab 时启动 30 秒轮询）
@@ -2586,7 +2656,7 @@ window.__ModuleLoader__.load({
             dashSection("🗂️", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
             dashSection("🚪", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode),
           ) : null,
-          activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true }) : null,
+          activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true, onRescan: runArchRescan }) : null,
           activeTab === "work" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },
             dashSection("📋", "dash.todo", todoNode),
             dashSection("📅", "dash.timeline", timelineNode),
