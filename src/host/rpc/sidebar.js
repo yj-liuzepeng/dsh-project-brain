@@ -74,22 +74,64 @@ function rpcOk(value) {
   return { ok: true, value };
 }
 
+// DSH Connection RPC 的 result 类型用 schemastery discriminated union：
+//   - ok=true  → value
+//   - ok=false → { code: <one of DSH_ERROR_CODES>, message, details }
+//   任何 ok=false 的 error.code 不在 DSH_ERROR_CODES 里都会被 schemastery 拒绝，
+//   reject 到客户端 .catch，让用户看到一坨 invalid_union 错误。
+// 修复：自动把不在白名单的 code 降级到 "internal"，并把原 code 放进 details.originalCode。
+const DSH_ERROR_CODES = new Set([
+  "bad-request", "cancelled", "session-not-found", "model-unavailable", "session-conflict", "invalid-time-zone",
+  "workspace-attach-failed", "workspace-not-found", "workspace-invalid-path", "workspace-name-conflict", "workspace-move-invalid",
+  "directory-unreadable", "directory-exists", "directory-create-failed", "directory-picker-unavailable",
+  "agent-preset-read-only", "agent-preset-locked", "agent-preset-conflict", "agent-preset-not-found", "agent-preset-invalid",
+  "agent-busy", "attachment-error", "queue-item-not-found", "steer-unavailable",
+  "command-error", "unknown-command",
+  "settings-rejected", "settings-conflict",
+  "credential-rejected", "model-discovery-failed",
+  "title-invalid", "fork-unavailable",
+  "subagent-parent-unavailable", "subagent-not-found", "subagent-catalog-diagnostic", "subagent-not-resumable", "subagent-unauthorized", "subagent-delivery-unavailable",
+  "internal",
+]);
+function normalizeDshErrorCode(code, details) {
+  if (typeof code === "string" && DSH_ERROR_CODES.has(code)) {
+    return { code, details: details && typeof details === "object" ? details : {} };
+  }
+  // 不在白名单 → 降级到 "internal"，保留原 code 供 client 端诊断
+  const merged = Object.assign({}, details && typeof details === "object" ? details : {});
+  if (typeof code === "string" && code.length > 0 && !merged.originalCode) merged.originalCode = code;
+  return { code: "internal", details: merged };
+}
+
 function rpcError(code, message, details) {
+  const normalized = normalizeDshErrorCode(code, details);
   return {
     ok: false,
     error: {
-      code,
+      code: normalized.code,
       message,
-      details: details && typeof details === "object" ? details : {},
+      details: normalized.details,
     },
   };
 }
 
-function resolveRpcProjectPath(ctx, payload) {
+// v1.1.x-fix：DSH 冷启动 race condition —— sessions service 异步注册 session workspace，
+//   第一次 getCwdBySession 可能返回 null（切到全新 session 后 ~300~500ms 才到位）。
+//   一次短暂重试（500ms 后）能消除绝大多数切项目/切 session 时的 workspace-not-found 闪退。
+const PROJECT_PATH_RETRY_DELAY_MS = 500;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function resolveRpcProjectPath(ctx, payload) {
   // Never trust a browser-provided filesystem path. The live Session header is
   // the authority for project isolation; it was created by DSH Host and cannot
   // be redirected by a crafted Client request.
-  return getCwdBySession(ctx, payload && payload.sessionId);
+  const sid = payload && payload.sessionId;
+  const first = getCwdBySession(ctx, sid);
+  if (first) return first;
+  // 第一次 null → 等 500ms 再读一次（DSH 内部通常几百 ms 内完成注册）
+  await sleep(PROJECT_PATH_RETRY_DELAY_MS);
+  return getCwdBySession(ctx, sid);
 }
 
 /**
@@ -109,7 +151,7 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
   connection.rpc.handle(
     PROJECT_BRAIN_RPC_CHANNEL,
     async (endpoint, payload) => {
-      const projectPath = resolveRpcProjectPath(ctx, payload || {});
+      const projectPath = await resolveRpcProjectPath(ctx, payload || {});
       const session = getSession(ctx, payload && payload.sessionId);
       const architectureRuntime = {
         getMemoryConfig,

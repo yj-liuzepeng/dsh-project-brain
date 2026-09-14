@@ -379,6 +379,8 @@ window.__ModuleLoader__.load({
 
     // ─── build-time fallback：解析 embed 多 workspace 索引 ───
     // Connection RPC 请求完成前使用的离线快照降级。
+    // v1.1.x-fix: embedded 阶段不再预设 hint（hint 是运行时降级信号，embedded 不知道 host 是否能成功）。
+    //   首屏一律走 loading，等 host RPC 真正答复后再决定渲染 dashboard / Onboarding / 兜底 banner。
     function resolvePreview(props) {
       const sid = (props && props.sessionId) || null;
       const wsMap = __ALL_WORKSPACES__ || {};
@@ -387,13 +389,6 @@ window.__ModuleLoader__.load({
       let projects = (wsId && wsMap.workspaceProjects && wsMap.workspaceProjects[wsId]) || [];
       let wsPath = (wsId && wsMap.workspacePaths && wsMap.workspacePaths[wsId]) || null;
       const picked = projects.length > 0 ? projects[0] : null;
-      const known = !sid || !!wsId;
-      let hint = "";
-      if (!known) {
-        hint = `当前 sessionId "${String(sid).slice(0,12)}…" 不在 build 时收集的 sessionToWorkspaceId 映射里（build 之后新建的 session）。客户端将自动从 host 兜底解析 workspace 路径。`;
-      } else if (sid && !picked) {
-        hint = `workspaceId 已知（${wsId}，path=${wsPath}）但 .project-brain 还没生成，请在该 workspace 调用 project_init 工具。`;
-      }
       if (!picked) {
         return {
           data: {
@@ -409,12 +404,11 @@ window.__ModuleLoader__.load({
             _workspaceId: wsId,
             _workspacePath: wsPath,
             _sessionId: sid,
-            _hint: hint,
           },
           workspaceId: wsId,
           workspacePath: wsPath,
           sessionId: sid,
-          hint: hint,
+          hint: "",
           source: "snapshot",
         };
       }
@@ -2720,14 +2714,33 @@ window.__ModuleLoader__.load({
         : resolvePreview(props);
       const sid = (props && props.sessionId) || null;
       const [runtime, setRuntime] = React.useState(null);
-      // v1.1.x-fix：区分"host 还在拉"和"host 已答 / 确认未初始化"。
-      //   runtimeResolved = true 表示"不要再显示 loading 占位，切换到正常状态判定"
-      //   触发条件：host 返回数据 / host 报错 / 4 秒超时（IPC 桥可能挂掉）。
-      //   默认 false，让首屏显示 loading 而不是误导性的 Onboarding。
+      // v1.1.x-fix：3 状态机 + 显式 runtimeError
+      //   - runtimeResolved=false                                       → host RPC 进行中（loading 占位）
+      //   - runtimeResolved=true && runtime != null                     → host RPC 成功（render dashboard / Onboarding）
+      //   - runtimeResolved=true && runtime == null && runtimeError!=null → host RPC 失败（render 显式降级 banner）
+      //   - runtimeResolved=true && runtime == null && runtimeError==null → 离线模式（offlineMode 入口直返）
+      // 移除原 4 秒 setTimeout 强制 finish——避免 host 慢时落到 embedded hint 闪现。
       const [runtimeResolved, setRuntimeResolved] = React.useState(DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc);
+      const [runtimeError, setRuntimeError] = React.useState(null);
+
+      // 把 Connection RPC 抛出的"原始 error"压缩成人话（避免 banner 里出现整页 schemastery JSON）
+      function compressRpcError(err) {
+        const raw = err && err.message ? err.message : (typeof err === "string" ? err : String(err || ""));
+        // schemastery 的 invalid_union / invalid_value 错误 → 直接提示 result schema 不匹配
+        if (/invalid_union|invalid_value|No matching discriminator/.test(raw)) {
+          return "[DSH schema] host 返回的 result 不符合 Connection RPC schema（通常是 DSH 升级/降级引入的协议不兼容，或插件返回了 schema 未声明的字段）";
+        }
+        // Network/connection 类错误
+        if (/Failed to fetch|NetworkError|ECONNREFUSED|ENOTFOUND|timeout/i.test(raw)) {
+          return "[DSH IPC] host 通道不可达（" + raw.slice(0, 80) + "）";
+        }
+        // 其他：截断到 200 字符
+        return raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
+      }
 
       React.useEffect(() => {
         setRuntime(null);
+        setRuntimeError(null);
         const offlineMode = DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc;
         if (offlineMode) {
           setRuntimeResolved(true);
@@ -2735,55 +2748,69 @@ window.__ModuleLoader__.load({
         }
         setRuntimeResolved(false);
         let active = true;
-        let timeoutId = null;
-        const finish = () => {
-          if (!active) return;
-          setRuntimeResolved(true);
-        };
-        // 4 秒兜底：超过这个时间还没拉回数据 → 强制 resolve，让 UI 降级到
-        //   Onboarding（host 不可用时用户可手动点"启动项目大脑"）
-        timeoutId = setTimeout(finish, 4000);
         const refresh = () => {
+          if (!active) return;
           __DSH_CONNECTION__.rpc.call("/project-brain", "preview", { sessionId: sid })
             .then((result) => {
-              if (!active || !result || !result.ok || !result.value) {
-                finish();
-                return;
+              if (!active) return;
+              if (result && result.ok && result.value) {
+                const value = result.value;
+                setRuntime({
+                  data: value.preview,
+                  workspaceId: embedded.workspaceId,
+                  workspacePath: value.projectPath || embedded.workspacePath,
+                  sessionId: sid,
+                  hint: "",
+                  source: "runtime",
+                });
+                setRuntimeError(null);
+              } else {
+                // host RPC 返回失败结构（workspace-not-found / bad-request 等）——
+                // 显式记录错误，让 UI 渲染降级 banner 而不是落到 embedded。
+                const err = (result && result.error) || {};
+                const originalCode = (err.details && err.details.originalCode) || null;
+                setRuntimeError({
+                  code: err.code || "RPC_EMPTY",
+                  originalCode: originalCode,
+                  message: err.message || "host RPC 返回异常",
+                  sessionId: sid,
+                  at: Date.now(),
+                });
               }
-              const value = result.value;
-              setRuntime({
-                data: value.preview,
-                workspaceId: embedded.workspaceId,
-                workspacePath: value.projectPath || embedded.workspacePath,
-                sessionId: sid,
-                hint: "",
-                source: "runtime",
-              });
-              finish();
+              setRuntimeResolved(true);
             })
             .catch((error) => {
+              if (!active) return;
               // Keep the embedded snapshot as a graceful offline fallback.
               console.warn("[dsh-project-brain] runtime preview unavailable:", error);
-              finish();
+              setRuntimeError({
+                code: "RPC_THROW",
+                message: compressRpcError(error),
+                sessionId: sid,
+                at: Date.now(),
+              });
+              setRuntimeResolved(true);
             });
         };
         refresh();
-        const timer = setInterval(refresh, 5000);
+        // v1.1.x-fix：setInterval 5000→2000ms，缩短切 session 时的"host 慢"等待窗口。
+        //   DSH 异步注册 session workspace 时首次 preview 可能返回 workspace-not-found，
+        //   5s 太长导致 banner 显示几秒才消失；2s 通常足够 DSH 完成注册。
+        const timer = setInterval(refresh, 2000);
         return () => {
           active = false;
-          clearTimeout(timeoutId);
           clearInterval(timer);
         };
       }, [sid]);
 
-      return [runtime || embedded, setRuntime, runtimeResolved];
+      return [runtime || embedded, setRuntime, runtimeResolved, runtimeError];
     }
 
     // ─── 根组件：Connection RPC 为主，build-time embed 为首屏/离线降级 ───
     function SidebarPreviewRoot(props) {
       const localeCode = resolveLocaleCode(props);
       const t = makeT(localeCode);
-      const [r, setRuntimePreview, runtimeResolved] = useResolvedPreview(props);
+      const [r, setRuntimePreview, runtimeResolved, runtimeError] = useResolvedPreview(props);
       const data = r.data;
 
       const handleOnboardingComplete = React.useCallback((value) => {
@@ -2807,10 +2834,11 @@ window.__ModuleLoader__.load({
       };
       const containerProps = {
         className: "dsh-project-brain-preview",
-        "data-version": "v0.5.1-runtime-rpc",
+        "data-version": "v1.1.x-three-runtime-rpc",
         "data-workspace-id": r.workspaceId || "(none)",
         "data-workspace-path": r.workspacePath || "(none)",
         "data-session-id": (r.sessionId || "").toString().slice(0, 8),
+        "data-runtime-state": runtimeResolved ? (runtimeError ? "host-error" : (r.source === "runtime" ? "host-ok" : "offline")) : "host-loading",
         style: containerStyle,
       };
       const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode, _workspacePath: r.workspacePath || null });
@@ -2824,44 +2852,120 @@ window.__ModuleLoader__.load({
         ),
       );
 
+      // v1.1.x-fix：3 状态机渲染
+      //   1) host RPC 进行中（!runtimeResolved）→ loading 占位，**不显示 Onboarding / hint**，
+      //      避免 build miss 时 embedded 阶段的 hint 闪现误导用户。
+      //   2) host RPC 失败（runtimeError）→ 显式降级 banner（含原因 + 操作建议，按用户
+      //      preference "任何兜底/降级必须附原因+操作建议"）。
+      //   3) host RPC 成功 / 离线模式（runtime）→ 走正常判定：已初始化 → Dashboard，
+      //      未初始化 → Onboarding（path 来自 r.workspacePath）。
       if (!dataWithLocale.initialized) {
-        // v1.1.x-fix：host 还没答复时显示 loading 占位，而不是"项目未启动"卡片。
-        //   用户切到有数据的项目时，build-time embed 经常 miss sessionId，
-        //   旧逻辑直接渲染橙色 banner + Onboarding 让人误以为插件坏了。
-        //   现在：先 loading → host 回数据后切到真 Dashboard / host 超时降级到 Onboarding。
+        // 1) host RPC 进行中
         if (!runtimeResolved) {
           return React.createElement("div", containerProps,
             React.createElement("style", null, "@keyframes dsh-brain-loading-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}.dsh-brain-loading-dot{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--dsw-alias-brand-primary);border-top-color:transparent;animation:dsh-brain-loading-spin 0.9s linear infinite;vertical-align:middle;margin-right:8px}"),
             headerWithBadge,
             React.createElement("div", {
-              style: { padding: "32px 16px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
+              style: { padding: "32px 16px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
               "data-block": "preview-loading",
             },
-              React.createElement("span", { className: "dsh-brain-loading-dot" }),
-              React.createElement("span", null, t("loading")),
+              React.createElement("div", { style: { display: "flex", alignItems: "center" } },
+                React.createElement("span", { className: "dsh-brain-loading-dot" }),
+                React.createElement("span", null, localeCode === "en-US" ? "Resolving workspace from Session…" : "正在从 Session 解析 workspace…"),
+              ),
+              React.createElement("div", { style: { fontSize: "10px", opacity: 0.7 } },
+                (r.sessionId ? String(r.sessionId).slice(0, 12) + "…" : "—"),
+              ),
             ),
           );
         }
-        const hintBlock = r.hint ? React.createElement(
-          "div",
-          {
-            style: {
-              margin: "8px 16px",
-              padding: "10px 12px",
-              background: "var(--dsw-alias-state-warn-primary)",
-              color: "var(--dsw-alias-bg-base)",
-              borderRadius: "6px",
-              fontSize: "12px",
-              fontFamily: "monospace",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
+
+        // 2) host RPC 失败 → 显式降级 banner
+        if (runtimeError) {
+          const errCode = runtimeError.code || "RPC_EMPTY";
+          const originalCode = runtimeError.originalCode || null;
+          // v1.1.x-fix：host 端会把不在 DSH schema 白名单的 code 降级到 "internal"，原 code 进 details.originalCode。
+          //   客户端 banner 判定时优先用 originalCode（更精确），再用 errCode。这样切项目时的"workspace-not-found"
+          //   不会因为降级显示成"host 连接失败"+"检查网络/重启"。
+          const effectiveCode = originalCode || errCode;
+          const isWorkspaceMiss = effectiveCode === "workspace-not-found";
+          const isSchema = (errCode === "RPC_THROW" || errCode === "internal") && /\[DSH schema\]/.test(runtimeError.message || "");
+          const isNetwork = (errCode === "RPC_THROW" || errCode === "internal") && /\[DSH IPC\]/.test(runtimeError.message || "");
+          const bannerTitle = isWorkspaceMiss
+            ? (localeCode === "en-US" ? "Workspace path not found for this Session" : "无法从当前 Session 解析 workspace 路径")
+            : isSchema
+              ? (localeCode === "en-US" ? "DSH host returned a malformed result" : "DSH host 返回的 result 协议不匹配")
+              : isNetwork
+                ? (localeCode === "en-US" ? "Cannot reach DSH host" : "无法连接 DSH host")
+                : (localeCode === "en-US" ? "Host RPC failed" : "host 连接失败");
+          const bannerReason = isWorkspaceMiss
+            ? (localeCode === "en-US"
+                ? "DSH Host could not resolve cwd for this sessionId. Usually means DSH has not yet registered the session workspace (cold start) or the session has no cwd header."
+                : "DSH Host 暂时无法解析当前 sessionId 对应的 cwd（通常 DSH 还没把 session workspace 注册进来，或 session header 缺 cwd 字段）。")
+            : isSchema
+              ? (localeCode === "en-US"
+                  ? "The result of /project-brain preview did not match Connection RPC schema. This usually means the plugin and DSH Desktop versions are out of sync — try restarting DSH."
+                  : "/project-brain preview 返回的 result 不符合 Connection RPC schema，通常是插件与 DSH 桌面版本不一致导致——重启 DSH 试试。")
+              : (localeCode === "en-US"
+                  ? `RPC "${errCode}"${originalCode ? " (was " + originalCode + ")" : ""} — ${runtimeError.message || "(no message)"}`
+                  : `RPC "${errCode}"${originalCode ? "（原 code=" + originalCode + "）" : ""} — ${runtimeError.message || "未知错误"}`);
+          const bannerAction = isWorkspaceMiss
+            ? (localeCode === "en-US"
+                ? "Action: wait a moment and switch again, or open any file in the project root so DSH registers the workspace, then return."
+                : "建议：等 1~2 秒再切一次，或在项目根目录随便打开一个文件让 DSH 注册 workspace 后再回来。")
+            : isSchema
+              ? (localeCode === "en-US"
+                  ? "Action: fully quit DSH Desktop (right-click tray → Quit) and restart. Reopen the project — the bundle will be reloaded."
+                  : "建议：完全退出 DSH 桌面（托盘右键 → Quit）后重新启动，再打开该项目即可重新加载 bundle。")
+            : (localeCode === "en-US"
+                ? "Action: check DSH Desktop network/plugin health, or restart DSH. The retry interval is 5s."
+                : "建议：检查 DSH 桌面网络/插件状态，或重启 DSH。客户端每 5 秒会自动重试。");
+          const bannerSeverity = isWorkspaceMiss ? "轻" : (isSchema || isNetwork) ? "中" : "中";
+          const severityLabel = localeCode === "en-US"
+            ? (isWorkspaceMiss ? "Severity: low" : "Severity: medium")
+            : `严重程度：${bannerSeverity}`;
+          const banner = React.createElement(
+            "div",
+            {
+              "data-block": "host-error-banner",
+              "data-error-code": errCode,
+              style: {
+                margin: "8px 16px",
+                padding: "12px 14px",
+                background: "var(--dsw-alias-state-warn-primary)",
+                color: "var(--dsw-alias-bg-base)",
+                borderRadius: "8px",
+                fontSize: "12px",
+                lineHeight: 1.55,
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              },
             },
-          },
-          r.hint,
-        ) : null;
+            React.createElement("div", { style: { fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" } },
+              React.createElement("span", null, "⚠️"),
+              React.createElement("span", null, bannerTitle),
+            ),
+            React.createElement("div", { style: { opacity: 0.95 } }, bannerReason),
+            React.createElement("div", { style: { opacity: 0.9, fontSize: "11px" } }, bannerAction),
+            React.createElement("div", { style: { opacity: 0.85, fontSize: "10px" } }, severityLabel),
+          );
+          return React.createElement("div", containerProps,
+            headerWithBadge,
+            banner,
+            React.createElement(OnboardingBlock, {
+              t,
+              path: r.workspacePath || null,
+              sessionId: r.sessionId || null,
+              onComplete: handleOnboardingComplete,
+              connection: __DSH_CONNECTION__,
+            }),
+          );
+        }
+
+        // 3) host RPC 成功且确认未初始化 → Onboarding（path 来自 r.workspacePath）
         return React.createElement("div", containerProps,
           headerWithBadge,
-          hintBlock,
           React.createElement(OnboardingBlock, {
             t,
             path: r.workspacePath || null,

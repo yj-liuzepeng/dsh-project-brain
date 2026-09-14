@@ -5194,18 +5194,76 @@ function getSession(ctx, sessionId) {
 function rpcOk(value) {
   return { ok: true, value };
 }
+var DSH_ERROR_CODES = /* @__PURE__ */ new Set([
+  "bad-request",
+  "cancelled",
+  "session-not-found",
+  "model-unavailable",
+  "session-conflict",
+  "invalid-time-zone",
+  "workspace-attach-failed",
+  "workspace-not-found",
+  "workspace-invalid-path",
+  "workspace-name-conflict",
+  "workspace-move-invalid",
+  "directory-unreadable",
+  "directory-exists",
+  "directory-create-failed",
+  "directory-picker-unavailable",
+  "agent-preset-read-only",
+  "agent-preset-locked",
+  "agent-preset-conflict",
+  "agent-preset-not-found",
+  "agent-preset-invalid",
+  "agent-busy",
+  "attachment-error",
+  "queue-item-not-found",
+  "steer-unavailable",
+  "command-error",
+  "unknown-command",
+  "settings-rejected",
+  "settings-conflict",
+  "credential-rejected",
+  "model-discovery-failed",
+  "title-invalid",
+  "fork-unavailable",
+  "subagent-parent-unavailable",
+  "subagent-not-found",
+  "subagent-catalog-diagnostic",
+  "subagent-not-resumable",
+  "subagent-unauthorized",
+  "subagent-delivery-unavailable",
+  "internal"
+]);
+function normalizeDshErrorCode(code, details) {
+  if (typeof code === "string" && DSH_ERROR_CODES.has(code)) {
+    return { code, details: details && typeof details === "object" ? details : {} };
+  }
+  const merged = Object.assign({}, details && typeof details === "object" ? details : {});
+  if (typeof code === "string" && code.length > 0 && !merged.originalCode) merged.originalCode = code;
+  return { code: "internal", details: merged };
+}
 function rpcError(code, message, details) {
+  const normalized = normalizeDshErrorCode(code, details);
   return {
     ok: false,
     error: {
-      code,
+      code: normalized.code,
       message,
-      details: details && typeof details === "object" ? details : {}
+      details: normalized.details
     }
   };
 }
-function resolveRpcProjectPath(ctx, payload) {
-  return getCwdBySession(ctx, payload && payload.sessionId);
+var PROJECT_PATH_RETRY_DELAY_MS = 500;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function resolveRpcProjectPath(ctx, payload) {
+  const sid = payload && payload.sessionId;
+  const first = getCwdBySession(ctx, sid);
+  if (first) return first;
+  await sleep(PROJECT_PATH_RETRY_DELAY_MS);
+  return getCwdBySession(ctx, sid);
 }
 function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, updateSettings, settingsWritable, getLlm }) {
   if (!connection || !connection.rpc || typeof connection.rpc.handle !== "function") {
@@ -5217,7 +5275,7 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
   connection.rpc.handle(
     PROJECT_BRAIN_RPC_CHANNEL,
     async (endpoint, payload) => {
-      const projectPath = resolveRpcProjectPath(ctx, payload || {});
+      const projectPath = await resolveRpcProjectPath(ctx, payload || {});
       const session = getSession(ctx, payload && payload.sessionId);
       const architectureRuntime = {
         getMemoryConfig,

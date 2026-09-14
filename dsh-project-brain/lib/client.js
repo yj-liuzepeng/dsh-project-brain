@@ -362,13 +362,6 @@
         let projects = wsId && wsMap.workspaceProjects && wsMap.workspaceProjects[wsId] || [];
         let wsPath = wsId && wsMap.workspacePaths && wsMap.workspacePaths[wsId] || null;
         const picked = projects.length > 0 ? projects[0] : null;
-        const known = !sid || !!wsId;
-        let hint = "";
-        if (!known) {
-          hint = `\u5F53\u524D sessionId "${String(sid).slice(0, 12)}\u2026" \u4E0D\u5728 build \u65F6\u6536\u96C6\u7684 sessionToWorkspaceId \u6620\u5C04\u91CC\uFF08build \u4E4B\u540E\u65B0\u5EFA\u7684 session\uFF09\u3002\u5BA2\u6237\u7AEF\u5C06\u81EA\u52A8\u4ECE host \u515C\u5E95\u89E3\u6790 workspace \u8DEF\u5F84\u3002`;
-        } else if (sid && !picked) {
-          hint = `workspaceId \u5DF2\u77E5\uFF08${wsId}\uFF0Cpath=${wsPath}\uFF09\u4F46 .project-brain \u8FD8\u6CA1\u751F\u6210\uFF0C\u8BF7\u5728\u8BE5 workspace \u8C03\u7528 project_init \u5DE5\u5177\u3002`;
-        }
         if (!picked) {
           return {
             data: {
@@ -383,13 +376,12 @@
               stats: { pendingTodos: 0, completedTodos: 0, decisions: 0 },
               _workspaceId: wsId,
               _workspacePath: wsPath,
-              _sessionId: sid,
-              _hint: hint
+              _sessionId: sid
             },
             workspaceId: wsId,
             workspacePath: wsPath,
             sessionId: sid,
-            hint,
+            hint: "",
             source: "snapshot"
           };
         }
@@ -2869,8 +2861,20 @@
         const sid = props && props.sessionId || null;
         const [runtime, setRuntime] = React.useState(null);
         const [runtimeResolved, setRuntimeResolved] = React.useState(DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc);
+        const [runtimeError, setRuntimeError] = React.useState(null);
+        function compressRpcError(err) {
+          const raw = err && err.message ? err.message : typeof err === "string" ? err : String(err || "");
+          if (/invalid_union|invalid_value|No matching discriminator/.test(raw)) {
+            return "[DSH schema] host \u8FD4\u56DE\u7684 result \u4E0D\u7B26\u5408 Connection RPC schema\uFF08\u901A\u5E38\u662F DSH \u5347\u7EA7/\u964D\u7EA7\u5F15\u5165\u7684\u534F\u8BAE\u4E0D\u517C\u5BB9\uFF0C\u6216\u63D2\u4EF6\u8FD4\u56DE\u4E86 schema \u672A\u58F0\u660E\u7684\u5B57\u6BB5\uFF09";
+          }
+          if (/Failed to fetch|NetworkError|ECONNREFUSED|ENOTFOUND|timeout/i.test(raw)) {
+            return "[DSH IPC] host \u901A\u9053\u4E0D\u53EF\u8FBE\uFF08" + raw.slice(0, 80) + "\uFF09";
+          }
+          return raw.length > 200 ? raw.slice(0, 200) + "\u2026" : raw;
+        }
         React.useEffect(() => {
           setRuntime(null);
+          setRuntimeError(null);
           const offlineMode = DEMO_ONBOARDING || !sid || !__DSH_CONNECTION__ || !__DSH_CONNECTION__.rpc;
           if (offlineMode) {
             setRuntimeResolved(true);
@@ -2878,47 +2882,58 @@
           }
           setRuntimeResolved(false);
           let active = true;
-          let timeoutId = null;
-          const finish = () => {
-            if (!active) return;
-            setRuntimeResolved(true);
-          };
-          timeoutId = setTimeout(finish, 4e3);
           const refresh = () => {
+            if (!active) return;
             __DSH_CONNECTION__.rpc.call("/project-brain", "preview", { sessionId: sid }).then((result) => {
-              if (!active || !result || !result.ok || !result.value) {
-                finish();
-                return;
+              if (!active) return;
+              if (result && result.ok && result.value) {
+                const value = result.value;
+                setRuntime({
+                  data: value.preview,
+                  workspaceId: embedded.workspaceId,
+                  workspacePath: value.projectPath || embedded.workspacePath,
+                  sessionId: sid,
+                  hint: "",
+                  source: "runtime"
+                });
+                setRuntimeError(null);
+              } else {
+                const err = result && result.error || {};
+                const originalCode = err.details && err.details.originalCode || null;
+                setRuntimeError({
+                  code: err.code || "RPC_EMPTY",
+                  originalCode,
+                  message: err.message || "host RPC \u8FD4\u56DE\u5F02\u5E38",
+                  sessionId: sid,
+                  at: Date.now()
+                });
               }
-              const value = result.value;
-              setRuntime({
-                data: value.preview,
-                workspaceId: embedded.workspaceId,
-                workspacePath: value.projectPath || embedded.workspacePath,
-                sessionId: sid,
-                hint: "",
-                source: "runtime"
-              });
-              finish();
+              setRuntimeResolved(true);
             }).catch((error) => {
+              if (!active) return;
               console.warn("[dsh-project-brain] runtime preview unavailable:", error);
-              finish();
+              setRuntimeError({
+                code: "RPC_THROW",
+                message: compressRpcError(error),
+                sessionId: sid,
+                at: Date.now()
+              });
+              setRuntimeResolved(true);
             });
           };
           refresh();
-          const timer = setInterval(refresh, 5e3);
+          const timer = setInterval(refresh, 2e3);
           return () => {
             active = false;
-            clearTimeout(timeoutId);
             clearInterval(timer);
           };
         }, [sid]);
-        return [runtime || embedded, setRuntime, runtimeResolved];
+        return [runtime || embedded, setRuntime, runtimeResolved, runtimeError];
       }
       function SidebarPreviewRoot(props) {
         const localeCode = resolveLocaleCode(props);
         const t = makeT(localeCode);
-        const [r, setRuntimePreview, runtimeResolved] = useResolvedPreview(props);
+        const [r, setRuntimePreview, runtimeResolved, runtimeError] = useResolvedPreview(props);
         const data = r.data;
         const handleOnboardingComplete = React.useCallback((value) => {
           if (!value || !value.preview) return;
@@ -2940,10 +2955,11 @@
         };
         const containerProps = {
           className: "dsh-project-brain-preview",
-          "data-version": "v0.5.1-runtime-rpc",
+          "data-version": "v1.1.x-three-runtime-rpc",
           "data-workspace-id": r.workspaceId || "(none)",
           "data-workspace-path": r.workspacePath || "(none)",
           "data-session-id": (r.sessionId || "").toString().slice(0, 8),
+          "data-runtime-state": runtimeResolved ? runtimeError ? "host-error" : r.source === "runtime" ? "host-ok" : "offline" : "host-loading",
           style: containerStyle
         };
         const dataWithLocale = Object.assign({}, data, { _localeCode: localeCode, _workspacePath: r.workspacePath || null });
@@ -2967,36 +2983,81 @@
               React.createElement(
                 "div",
                 {
-                  style: { padding: "32px 16px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
+                  style: { padding: "32px 16px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", color: "var(--dsw-alias-label-secondary)", fontSize: "12px" },
                   "data-block": "preview-loading"
                 },
-                React.createElement("span", { className: "dsh-brain-loading-dot" }),
-                React.createElement("span", null, t("loading"))
+                React.createElement(
+                  "div",
+                  { style: { display: "flex", alignItems: "center" } },
+                  React.createElement("span", { className: "dsh-brain-loading-dot" }),
+                  React.createElement("span", null, localeCode === "en-US" ? "Resolving workspace from Session\u2026" : "\u6B63\u5728\u4ECE Session \u89E3\u6790 workspace\u2026")
+                ),
+                React.createElement(
+                  "div",
+                  { style: { fontSize: "10px", opacity: 0.7 } },
+                  r.sessionId ? String(r.sessionId).slice(0, 12) + "\u2026" : "\u2014"
+                )
               )
             );
           }
-          const hintBlock = r.hint ? React.createElement(
-            "div",
-            {
-              style: {
-                margin: "8px 16px",
-                padding: "10px 12px",
-                background: "var(--dsw-alias-state-warn-primary)",
-                color: "var(--dsw-alias-bg-base)",
-                borderRadius: "6px",
-                fontSize: "12px",
-                fontFamily: "monospace",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all"
-              }
-            },
-            r.hint
-          ) : null;
+          if (runtimeError) {
+            const errCode = runtimeError.code || "RPC_EMPTY";
+            const originalCode = runtimeError.originalCode || null;
+            const effectiveCode = originalCode || errCode;
+            const isWorkspaceMiss = effectiveCode === "workspace-not-found";
+            const isSchema = (errCode === "RPC_THROW" || errCode === "internal") && /\[DSH schema\]/.test(runtimeError.message || "");
+            const isNetwork = (errCode === "RPC_THROW" || errCode === "internal") && /\[DSH IPC\]/.test(runtimeError.message || "");
+            const bannerTitle = isWorkspaceMiss ? localeCode === "en-US" ? "Workspace path not found for this Session" : "\u65E0\u6CD5\u4ECE\u5F53\u524D Session \u89E3\u6790 workspace \u8DEF\u5F84" : isSchema ? localeCode === "en-US" ? "DSH host returned a malformed result" : "DSH host \u8FD4\u56DE\u7684 result \u534F\u8BAE\u4E0D\u5339\u914D" : isNetwork ? localeCode === "en-US" ? "Cannot reach DSH host" : "\u65E0\u6CD5\u8FDE\u63A5 DSH host" : localeCode === "en-US" ? "Host RPC failed" : "host \u8FDE\u63A5\u5931\u8D25";
+            const bannerReason = isWorkspaceMiss ? localeCode === "en-US" ? "DSH Host could not resolve cwd for this sessionId. Usually means DSH has not yet registered the session workspace (cold start) or the session has no cwd header." : "DSH Host \u6682\u65F6\u65E0\u6CD5\u89E3\u6790\u5F53\u524D sessionId \u5BF9\u5E94\u7684 cwd\uFF08\u901A\u5E38 DSH \u8FD8\u6CA1\u628A session workspace \u6CE8\u518C\u8FDB\u6765\uFF0C\u6216 session header \u7F3A cwd \u5B57\u6BB5\uFF09\u3002" : isSchema ? localeCode === "en-US" ? "The result of /project-brain preview did not match Connection RPC schema. This usually means the plugin and DSH Desktop versions are out of sync \u2014 try restarting DSH." : "/project-brain preview \u8FD4\u56DE\u7684 result \u4E0D\u7B26\u5408 Connection RPC schema\uFF0C\u901A\u5E38\u662F\u63D2\u4EF6\u4E0E DSH \u684C\u9762\u7248\u672C\u4E0D\u4E00\u81F4\u5BFC\u81F4\u2014\u2014\u91CD\u542F DSH \u8BD5\u8BD5\u3002" : localeCode === "en-US" ? `RPC "${errCode}"${originalCode ? " (was " + originalCode + ")" : ""} \u2014 ${runtimeError.message || "(no message)"}` : `RPC "${errCode}"${originalCode ? "\uFF08\u539F code=" + originalCode + "\uFF09" : ""} \u2014 ${runtimeError.message || "\u672A\u77E5\u9519\u8BEF"}`;
+            const bannerAction = isWorkspaceMiss ? localeCode === "en-US" ? "Action: wait a moment and switch again, or open any file in the project root so DSH registers the workspace, then return." : "\u5EFA\u8BAE\uFF1A\u7B49 1~2 \u79D2\u518D\u5207\u4E00\u6B21\uFF0C\u6216\u5728\u9879\u76EE\u6839\u76EE\u5F55\u968F\u4FBF\u6253\u5F00\u4E00\u4E2A\u6587\u4EF6\u8BA9 DSH \u6CE8\u518C workspace \u540E\u518D\u56DE\u6765\u3002" : isSchema ? localeCode === "en-US" ? "Action: fully quit DSH Desktop (right-click tray \u2192 Quit) and restart. Reopen the project \u2014 the bundle will be reloaded." : "\u5EFA\u8BAE\uFF1A\u5B8C\u5168\u9000\u51FA DSH \u684C\u9762\uFF08\u6258\u76D8\u53F3\u952E \u2192 Quit\uFF09\u540E\u91CD\u65B0\u542F\u52A8\uFF0C\u518D\u6253\u5F00\u8BE5\u9879\u76EE\u5373\u53EF\u91CD\u65B0\u52A0\u8F7D bundle\u3002" : localeCode === "en-US" ? "Action: check DSH Desktop network/plugin health, or restart DSH. The retry interval is 5s." : "\u5EFA\u8BAE\uFF1A\u68C0\u67E5 DSH \u684C\u9762\u7F51\u7EDC/\u63D2\u4EF6\u72B6\u6001\uFF0C\u6216\u91CD\u542F DSH\u3002\u5BA2\u6237\u7AEF\u6BCF 5 \u79D2\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002";
+            const bannerSeverity = isWorkspaceMiss ? "\u8F7B" : isSchema || isNetwork ? "\u4E2D" : "\u4E2D";
+            const severityLabel = localeCode === "en-US" ? isWorkspaceMiss ? "Severity: low" : "Severity: medium" : `\u4E25\u91CD\u7A0B\u5EA6\uFF1A${bannerSeverity}`;
+            const banner = React.createElement(
+              "div",
+              {
+                "data-block": "host-error-banner",
+                "data-error-code": errCode,
+                style: {
+                  margin: "8px 16px",
+                  padding: "12px 14px",
+                  background: "var(--dsw-alias-state-warn-primary)",
+                  color: "var(--dsw-alias-bg-base)",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  lineHeight: 1.55,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px"
+                }
+              },
+              React.createElement(
+                "div",
+                { style: { fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" } },
+                React.createElement("span", null, "\u26A0\uFE0F"),
+                React.createElement("span", null, bannerTitle)
+              ),
+              React.createElement("div", { style: { opacity: 0.95 } }, bannerReason),
+              React.createElement("div", { style: { opacity: 0.9, fontSize: "11px" } }, bannerAction),
+              React.createElement("div", { style: { opacity: 0.85, fontSize: "10px" } }, severityLabel)
+            );
+            return React.createElement(
+              "div",
+              containerProps,
+              headerWithBadge,
+              banner,
+              React.createElement(OnboardingBlock, {
+                t,
+                path: r.workspacePath || null,
+                sessionId: r.sessionId || null,
+                onComplete: handleOnboardingComplete,
+                connection: __DSH_CONNECTION__
+              })
+            );
+          }
           return React.createElement(
             "div",
             containerProps,
             headerWithBadge,
-            hintBlock,
             React.createElement(OnboardingBlock, {
               t,
               path: r.workspacePath || null,
