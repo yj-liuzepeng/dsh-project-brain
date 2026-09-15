@@ -24,13 +24,13 @@ Persistent project intelligence and memory plugin for [DSH (DeepSeek Harness)](h
 
 ## What it does
 
-- Scans the **current runtime workspace**, recognizing 6 languages (JS/TS / Python / Go / Java / Rust / C-C++), frameworks, entry points, CI, and module layout.
-- Produces a semantic architecture report (project purpose, architecture style, layers, responsibilities, relationships, runtime flows, key files, reading order). Uses the current DSH LLM route when available, falls back to deterministic local analysis otherwise.
+- Scans the **current runtime workspace**, recognizing 6 languages (JS/TS / Python / Go / Java / Rust / C-C++), frameworks, entry points, CI, and module layout. Tech stack is layered as **runtime / delivery / structure / language** (v1.3.0 `stack-taxonomy`): main view shows runtime frameworks only; CI, IaC, and observability fall to the "delivery" row.
+- Produces a semantic architecture report (project purpose, architecture style, layers, responsibilities, relationships, runtime flows, key files, reading order). The Architecture tab uses a **lane-based** layout (layer name on the left, components on the right; click a layer to expand the runtime path through it). Uses the current DSH LLM route when available, falls back to deterministic local analysis otherwise.
 - Persists **8 structured memory types** (`decision` / `change` / `bug` / `lesson` / `requirement` / `architecture` / `issue` / `context`) under `<workspace>/.project-brain/`, isolated per workspace.
-- Injects a compact context summary into new Sessions, so a fresh conversation continues with accumulated project knowledge (high-value decisions, active TODOs, recent activity).
-- **Hybrid retrieval by design**: zero-configuration local BM25 default; optional Embedding endpoint enables dual-channel (keyword + vector) recall with Reciprocal Rank Fusion (k=60) — both channels contribute, missing channels gracefully fall back to weighted scoring.
+- **Durable Core standing memory** (v1.3.0): each new Session automatically gets the full `active` memory set injected (cap: 15 entries / ~800 tokens); overflow goes to `dormant`. Changelog / activity reports follow a rule-based gate and no longer crowd into Core — so injected context stays focused on cross-session facts (decisions, constraints, architecture notes, lessons).
+- **Weighted retrieval by default** (v1.3.0): `project_ask` uses a **5-factor weighted rank** (BM25 + importance + recency + type-stability + diversity); vectors only add a bonus. When hybrid retrieval is enabled (optional Embedding), RRF (k=60) stays as a measurable algorithm (`scripts/smoke-retrieval-rrf.mjs`) — not the `ask` main contract. This avoids "same endpoint, different rank depending on the query".
 - Session-end automatically extracts up to 4 stable semantic memories from current DSH LLM, with privacy filtering, length limits, deduplication, and failure fallback (no crash if LLM is unavailable).
-- Interactive Dashboard (4 tabs: Overview / Architecture / Activity / Memories / Settings / Git History) for rescan, status, dream memory cleanup, and work activity inspection.
+- Interactive Dashboard (**6 tabs**: Overview / Architecture / Activity / Memories / Settings / Git History) + project-brain activation entry + SuggestionCard for next-step suggestions + 4 Quick Actions (rescan / organize TODOs / organize memories / project overview) for status, cleanup, and activity inspection.
 
 ## Tool surface
 
