@@ -8,9 +8,11 @@
 // P0.4.1：stats/activity 改为真实数据（todo.jsonl / memory.jsonl / timeline.jsonl），
 // 与 build.js 的 embed 口径一致；删除已死的 writePreviewCache（webServer 路由方案遗留）。
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { todoStats, recentTimeline, techStackToType, activeTodos, isActiveMemory } from "../store/brain-logic.js";
+import { todoStats, recentTimeline, techStackToType, activeTodos, isCoreMemory } from "../store/brain-logic.js";
+import { serializeJsonl } from "../store/brain-files.js";
+import { housekeepMemories, persistHousekeep } from "../memory/admit.js";
 import { sanitizeProjectDescription } from "../../scanner.js";
 import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "../../stack-taxonomy.js";
 
@@ -43,6 +45,14 @@ function readJsonlSync(filePath) {
     try { out.push(JSON.parse(s)); } catch (e) { /* skip bad line */ }
   }
   return out;
+}
+
+function readMemoriesHousekeptSync(filePath) {
+  const memories = readJsonlSync(filePath);
+  const hk = housekeepMemories(memories);
+  if (!hk.changed) return memories;
+  try { writeFileSync(filePath, serializeJsonl(hk.rows), "utf8"); } catch (e) {}
+  return hk.rows;
 }
 
 function deriveFallbackPhase(p) {
@@ -81,8 +91,8 @@ export function buildSidebarPreview(projectPath) {
   const p = readJsonSync(path.join(brainDir, "project.json"));
   const architecture = readJsonSync(path.join(brainDir, "architecture.json"));
   const timeline = readJsonlSync(path.join(brainDir, "timeline.jsonl"));
-  const memories = readJsonlSync(path.join(brainDir, "memory.jsonl"));
-  const visibleMemories = memories.filter(isActiveMemory);
+  const memories = readMemoriesHousekeptSync(path.join(brainDir, "memory.jsonl"));
+  const visibleMemories = memories.filter(isCoreMemory);
   const todos = readJsonlSync(path.join(brainDir, "todo.jsonl"));
 
   let data;
@@ -164,6 +174,8 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
     return out;
   }
 
+  try { await persistHousekeep(fs, root, { writeTimeline: false }); } catch (e) {}
+
   const [p, timelineAll, memoriesAll, todosAll, codegraph, architecture] = await Promise.all([
     readJson(".project-brain/project.json"),
     readJsonl(".project-brain/timeline.jsonl"),
@@ -191,7 +203,9 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
   }
 
   const timeline = (Array.isArray(timelineAll) ? timelineAll : []).filter(Boolean).slice().sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
-  const visibleMemories = (Array.isArray(memoriesAll) ? memoriesAll : []).filter(isActiveMemory);
+  const coreMemories = (Array.isArray(memoriesAll) ? memoriesAll : []).filter(isCoreMemory);
+  const dormantMemories = (Array.isArray(memoriesAll) ? memoriesAll : []).filter((m) => m && m.status === "dormant");
+  const visibleMemories = coreMemories;
   const recentActivity = timeline.slice(0, 5).map((e) => ({ id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType }));
   const memories = visibleMemories.slice().sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 3);
   const stats = todoStats(todosAll);
@@ -235,7 +249,12 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       eventType: "init",
     }] : []),
     memories: memories,
-    memoriesAll: visibleMemories.slice().sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 50),
+    memoriesAll: coreMemories.concat(dormantMemories).slice().sort((a, b) => {
+      const ac = isCoreMemory(a) ? 0 : 1;
+      const bc = isCoreMemory(b) ? 0 : 1;
+      if (ac !== bc) return ac - bc;
+      return (b.importance || 0) - (a.importance || 0);
+    }).slice(0, 50),
     todos: todos,
     timelineAll: timeline.slice(0, 50),
     codegraph: codegraph,
@@ -244,7 +263,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       pendingTodos: stats.pendingTodos,
       completedTodos: stats.completedTodos,
       decisions: visibleMemories.filter((m) => m.type === "decision").length,
-      archivedMemories: memoriesAll.length - visibleMemories.length,
+      archivedMemories: (Array.isArray(memoriesAll) ? memoriesAll : []).filter((m) => m && (m.status === "archived" || m.status === "superseded" || m.status === "deleted")).length,
     },
   };
 }

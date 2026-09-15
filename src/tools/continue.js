@@ -6,14 +6,16 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { readBrain } from "../host/store/brain-files.js";
 import { buildContinueData } from "../host/store/brain-logic.js";
+import { buildInjectionContext } from "../host/memory/inject-context.js";
 import { resolveProjectPath } from "../host/store/path-resolver.js";
+import { ensureHousekeepOnRead } from "../host/memory/admit.js";
 
 export function buildContinueTool({ fs, sandboxPolicy }) {
   return defineTool({
     name: "project_continue",
     description:
       "dsh-project-brain: 恢复当前项目的开发上下文（用户说「继续上次的开发」时调用）。" +
-      "返回项目概要、最近活动、Top-5 记忆（按重要度+时间排序）、活跃待办与建议下一步，" +
+      "返回项目概要、全部 Core 记忆、上次会话摘要、活跃待办与建议下一步，" +
       "据此可直接续接开发，无需用户重新描述项目。",
     parameters: {
       path: { type: "string", description: "项目根路径（绝对路径），默认 sandboxPolicy.workspaceRoot" },
@@ -53,8 +55,10 @@ export function buildContinueTool({ fs, sandboxPolicy }) {
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        await ensureHousekeepOnRead(fs, projectPath);
         const brain = await readBrain(fs, projectPath);
         const data = buildContinueData(brain, Date.now());
+        data.injection = buildInjectionContext(brain);
         if (!data.initialized) {
           return {
             ok: false,

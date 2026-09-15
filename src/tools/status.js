@@ -6,6 +6,7 @@ import { todoStats, recentTimeline, techStackToType } from "../host/store/brain-
 import { resolveProjectPath } from "../host/store/path-resolver.js";
 import { activeMemories } from "../host/memory/retrieval.js";
 import { publicMemoryConfig } from "../host/memory/config.js";
+import { ensureHousekeepOnRead } from "../host/memory/admit.js";
 
 const baseOutputSchema = {
   type: "object",
@@ -29,6 +30,7 @@ export function buildStatusTool({ fs, sandboxPolicy, getMemoryConfig }) {
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        await ensureHousekeepOnRead(fs, projectPath);
         const brain = await readBrain(fs, projectPath);
         const p = brain && brain.project;
         if (!p || p.__error) {

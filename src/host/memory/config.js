@@ -7,7 +7,7 @@ export const Config = z.object({
   vectorEnabled: z.boolean().default(false),
   embeddingBaseURL: z.string().default(""),
   embeddingModel: z.string().default(""),
-  embeddingApiKeyEnv: z.string().role("credential-ref").default("PROJECT_BRAIN_EMBEDDING_API_KEY"),
+  embeddingApiKeyEnv: z.string().default("PROJECT_BRAIN_EMBEDDING_API_KEY"),
   embeddingDimensions: z.number().step(1).min(0).default(0),
   embeddingBatchSize: z.number().step(1).min(1).max(128).default(16),
   embeddingMaxIndexPerRun: z.number().step(1).min(1).max(500).default(64),
@@ -63,6 +63,33 @@ export function normalizeMemoryConfig(value) {
     architectureMaxNodes: integer("architectureMaxNodes", 24, 6, 60),
     architectureLlmTimeoutMs: integer("architectureLlmTimeoutMs", 60000, 5000, 120000),
   });
+}
+
+// 全大写蛇形（如 PROJECT_BRAIN_EMBEDDING_API_KEY）当环境变量/凭据名；
+// 其余（方舟 UUID、sk-…）当直接填写的 API Key。
+export function isEmbeddingEnvRef(value) {
+  return /^[A-Z][A-Z0-9_]{2,127}$/.test(String(value || "").trim());
+}
+
+export function redactSecret(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  if (isEmbeddingEnvRef(s)) return s;
+  if (s.length <= 8) return "••••";
+  return "••••" + s.slice(-4);
+}
+
+export async function resolveEmbeddingApiKey(ref, resolveCredential) {
+  const s = String(ref || "").trim();
+  if (!s) return null;
+  if (!isEmbeddingEnvRef(s)) return s;
+  if (typeof resolveCredential === "function") {
+    try {
+      const hit = await resolveCredential(s);
+      if (typeof hit === "string" && hit.trim()) return hit.trim();
+    } catch (e) {}
+  }
+  return null;
 }
 
 export function publicMemoryConfig(config) {
@@ -150,15 +177,16 @@ export function createMemoryConfigRuntime(ctx, entryConfig) {
       return normalizeMemoryConfig(settingsService.get(MEMORY_SETTINGS_NS));
     },
     async resolveCredential(ref) {
-      if (!ref) return null;
-      if (credentials && typeof credentials.resolve === "function") {
-        try {
-          const hit = await credentials.resolve(ref);
-          if (hit && typeof hit.value === "string" && hit.value.trim()) return hit.value.trim();
-        } catch (e) {}
-      }
-      const value = typeof process !== "undefined" && process.env ? process.env[ref] : null;
-      return typeof value === "string" && value.trim() ? value.trim() : null;
+      return resolveEmbeddingApiKey(ref, async (name) => {
+        if (credentials && typeof credentials.resolve === "function") {
+          try {
+            const hit = await credentials.resolve(name);
+            if (hit && typeof hit.value === "string" && hit.value.trim()) return hit.value.trim();
+          } catch (e) {}
+        }
+        const value = typeof process !== "undefined" && process.env ? process.env[name] : null;
+        return typeof value === "string" && value.trim() ? value.trim() : null;
+      });
     },
   };
 }

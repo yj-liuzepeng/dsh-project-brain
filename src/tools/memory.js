@@ -4,8 +4,10 @@
 
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { brainPath, appendJsonl, readJsonl, writeJsonl } from "../host/store/brain-files.js";
-import { MEMORY_TYPES, isActiveMemory, makeMemoryEntry, normalizeMemoryType, topMemories } from "../host/store/brain-logic.js";
+import { MEMORY_TYPES, isCoreMemory, isRetrievableMemory, normalizeMemoryType } from "../host/store/brain-logic.js";
 import { resolveProjectPath } from "../host/store/path-resolver.js";
+import { admitMemory, confirmWithSessionLlm, ensureHousekeepOnRead } from "../host/memory/admit.js";
+import { resolveSessionRoute } from "../host/architecture/analyzer.js";
 
 function emitPreviewChanged(exec, projectPath) {
   try {
@@ -16,12 +18,29 @@ function emitPreviewChanged(exec, projectPath) {
   } catch (e) { /* ignore */ }
 }
 
-export function buildMemoryAddTool({ fs, sandboxPolicy }) {
+function executionRoute(exec) {
+  if (!exec) return null;
+  return resolveSessionRoute(exec.session)
+    || resolveSessionRoute(exec.currentSession)
+    || resolveSessionRoute(exec.agent && exec.agent.session)
+    || resolveSessionRoute(exec.agent)
+    || resolveSessionRoute(exec.ctx && exec.ctx.session);
+}
+
+function executionSessionId(exec) {
+  return exec && (exec.sessionId
+    || (exec.session && exec.session.id)
+    || (exec.agent && exec.agent.sessionId)
+    || (exec.agent && exec.agent.session && exec.agent.session.id)) || null;
+}
+
+export function buildMemoryAddTool({ fs, sandboxPolicy, getLlm }) {
   return defineTool({
     name: "project_memory_add",
     description:
-      "dsh-project-brain: 为当前项目写入一条结构化项目记忆（" + MEMORY_TYPES.join("/") + "）。" +
-      "在做出重要决策、发现 bug/踩坑、架构变化、需求变更后调用； importance 0~1（越高越容易在 continue 时召回）。",
+      "dsh-project-brain: 写入一条跨会话仍为真的项目记忆（decision/requirement/architecture/bug/lesson）。" +
+      "不要写入 changelog、本次改了哪些文件或会话流水账；进行中的工作用 project_todo_*。" +
+      " importance 0~1。工具可能因规则或模型确认拒绝，不要改写成 changelog 再试。",
     parameters: {
       type: { type: "string", description: "记忆类型，枚举：" + MEMORY_TYPES.join(" | ") },
       title: { type: "string", description: "标题（一句话，<=200 字符）" },
@@ -62,8 +81,8 @@ export function buildMemoryAddTool({ fs, sandboxPolicy }) {
           return { ok: false, code: "E_NO_TITLE", message: "title 必填" };
         }
         const now = Date.now();
-        const sessionId = exec && (exec.sessionId || (exec.session && exec.session.id));
-        const entry = makeMemoryEntry({
+        const sessionId = executionSessionId(exec);
+        const candidate = {
           type: type,
           title: args.title,
           content: args.content,
@@ -72,19 +91,40 @@ export function buildMemoryAddTool({ fs, sandboxPolicy }) {
           relatedFiles: args.relatedFiles,
           tags: args.tags,
           source: { kind: "agent", ...(sessionId ? { sessionId: String(sessionId) } : {}) },
-        }, now);
-        const wrote = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
-        if (!wrote) {
-          return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
-        }
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
-          id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
-          title: "新增记忆[" + type + "]：" + entry.title,
-          eventType: "memory",
-          occurredAt: now,
+        };
+        const admitted = await admitMemory({
+          fs,
+          projectPath,
+          candidate,
+          channel: "automatic",
+          now,
+          llmConfirm: () => confirmWithSessionLlm({
+            llm: getLlm ? getLlm() : null,
+            route: executionRoute(exec),
+            sessionId,
+            candidate,
+          }),
         });
+        if (!admitted.ok) {
+          return {
+            ok: false,
+            code: admitted.code || "E_ADMIT_REJECTED",
+            message: admitted.message || admitted.reason || "memory not admitted",
+          };
+        }
+        if (admitted.action === "insert") {
+          const entry = admitted.entry;
+          await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+            id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+            title: "新增记忆[" + entry.type + "]：" + entry.title,
+            eventType: "memory",
+            occurredAt: now,
+          });
+          emitPreviewChanged(exec, projectPath);
+          return { ok: true, data: { id: entry.id, type: entry.type, title: entry.title, importance: entry.importance, confidence: entry.confidence } };
+        }
         emitPreviewChanged(exec, projectPath);
-        return { ok: true, data: { id: entry.id, type: entry.type, title: entry.title, importance: entry.importance, confidence: entry.confidence } };
+        return { ok: true, data: { id: admitted.id, skipped: true } };
       } catch (e) {
         return { ok: false, code: "E_MEMORY_ADD_FAILED", message: String((e && e.message) || e) };
       }
@@ -102,6 +142,7 @@ export function buildMemoryListTool({ fs, sandboxPolicy }) {
       type: { type: "string", description: "只看该类型（可选）：" + MEMORY_TYPES.join(" | ") },
       limit: { type: "number", description: "返回条数上限，默认 10" },
       includeArchived: { type: "boolean", description: "是否包含 archived/superseded 记忆，默认 false" },
+      layer: { type: "string", description: "active（默认 Core）| dormant | all（active+dormant）" },
       path: { type: "string", description: "项目根路径（默认从 session cwd 推断）" },
     },
     output: {
@@ -130,13 +171,28 @@ export function buildMemoryListTool({ fs, sandboxPolicy }) {
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        await ensureHousekeepOnRead(fs, projectPath);
         const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
-        const visible = args && args.includeArchived ? memories : memories.filter(isActiveMemory);
+        const layer = args && typeof args.layer === "string" ? String(args.layer).toLowerCase() : "active";
+        let visible;
+        if (args && args.includeArchived) {
+          visible = memories;
+        } else if (layer === "dormant") {
+          visible = memories.filter((m) => m && m.status === "dormant");
+        } else if (layer === "all") {
+          visible = memories.filter(isRetrievableMemory);
+        } else {
+          visible = memories.filter(isCoreMemory);
+        }
         const filtered = normalizeMemoryType(args && args.type)
           ? visible.filter((m) => m.type === normalizeMemoryType(args.type))
           : visible;
         const limit = Math.max(1, Math.min(50, Number((args && args.limit) || 10)));
-        const sorted = topMemories(filtered, limit);
+        const sorted = filtered.slice().sort((a, b) => {
+          const di = (Number(b.importance) || 0) - (Number(a.importance) || 0);
+          if (di !== 0) return di;
+          return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+        }).slice(0, limit);
         return {
           ok: true,
           data: {
@@ -200,7 +256,7 @@ export function buildMemoryArchiveTool({ fs, sandboxPolicy }) {
         }
         const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
         // 唯一匹配：id 等于或以 prefix 开头
-        const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isActiveMemory(m));
+        const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
         if (matches.length === 0) {
           return { ok: false, code: "E_NOT_FOUND", message: `未找到 id=${idPrefix} 的活跃记忆` };
         }
@@ -292,35 +348,41 @@ export function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
         if (!content || String(content).length < 20) return { ok: false, code: "E_NO_CONTENT", message: "content 必填且 ≥ 20 字" };
         const reason = args && typeof args.reason === "string" ? args.reason.trim().slice(0, 500) : "";
         const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
-        const matches = memories.filter((m) => m && m.id && (m.id === oldId || m.id.indexOf(oldId) === 0) && isActiveMemory(m));
-        if (matches.length === 0) return { ok: false, code: "E_OLD_NOT_FOUND", message: `未找到 id=${oldId} 的活跃记忆` };
+        const matches = memories.filter((m) => m && m.id && (m.id === oldId || m.id.indexOf(oldId) === 0) && isRetrievableMemory(m));
+        if (matches.length === 0) return { ok: false, code: "E_OLD_NOT_FOUND", message: `未找到 id=${oldId} 的可检索记忆` };
         if (matches.length > 1) return { ok: false, code: "E_AMBIGUOUS_ID", message: `oldId=${oldId} 匹配到 ${matches.length} 条，请提供更精确的 id` };
         const oldTarget = matches[0];
         const now = Date.now();
-        const sessionId = exec && (exec.sessionId || (exec.session && exec.session.id));
-        // 写新记忆
-        const newEntry = makeMemoryEntry({
+        const sessionId = executionSessionId(exec);
+        const candidate = {
           type, title, content,
           importance: args.importance,
           confidence: args.confidence,
           relatedFiles: args.relatedFiles,
           tags: args.tags,
           source: { kind: "agent", ...(sessionId ? { sessionId: String(sessionId) } : {}), supersedes: oldTarget.id },
-        }, now);
-        // 旧记忆标记 superseded
-        const updated = memories.map((m) => {
-          if (m.id !== oldTarget.id) return m;
-          return Object.assign({}, m, {
-            status: "superseded",
-            updatedAt: now,
-            lastAccessedAt: now,
-            supersededBy: newEntry.id,
-            ...(reason ? { supersededReason: reason } : {}),
-          });
+          supersedes: oldTarget.id,
+        };
+        const admitted = await admitMemory({
+          fs,
+          projectPath,
+          candidate,
+          channel: "automatic",
+          now,
+          llmConfirm: { admit: true, supersedes: oldTarget.id, type },
         });
-        updated.push(newEntry);
-        const wrote = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), updated);
-        if (!wrote) return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
+        if (!admitted.ok) {
+          return { ok: false, code: admitted.code || "E_ADMIT_REJECTED", message: admitted.message || admitted.reason || "supersede not admitted" };
+        }
+        const newEntry = admitted.entry || { id: admitted.id, type, title };
+        if (reason && admitted.action === "insert") {
+          const latest = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+          const withReason = latest.map((m) => {
+            if (m.id !== oldTarget.id) return m;
+            return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
+          });
+          await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), withReason);
+        }
         await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "替换记忆[" + oldTarget.type + "→" + newEntry.type + "]：" + newEntry.title + (reason ? "（" + reason + "）" : ""),

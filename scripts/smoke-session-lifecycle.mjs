@@ -203,7 +203,7 @@ await new Promise((r) => setTimeout(r, 1000));
 
 const memAfterSummary = readFileSync(join(PKG_DIR, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 const tlAfterSummary = readFileSync(join(PKG_DIR, ".project-brain", "timeline.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-check("summarizer 后 memory.jsonl 含 change 类型", memAfterSummary.some((m) => m.type === "change"));
+check("summarizer 后 memory.jsonl 不含 change 类型", !memAfterSummary.some((m) => m.type === "change"));
 check("summarizer 后 timeline.jsonl 含 session_summary", tlAfterSummary.some((e) => e.eventType === "session_summary"));
 console.log("  (memory rows:", memAfterSummary.length, ", timeline entries:", tlAfterSummary.length, ")");
 
@@ -239,7 +239,7 @@ await new Promise((r) => setTimeout(r, 300));  // 等 refreshCache (async read f
 if (ourSection) {
   const md = typeof ourSection.text === "function" ? ourSection.text({}) : ourSection.text;
   console.log("\n--- injected context ---\n" + md + "\n---");
-  check("injected context 包含 'Project Brain Context'", /Project Brain Context/.test(md));
+  check("injected context 包含 'Project Brain'", /## Project Brain/.test(md));
   check("injected context 包含 project name 'my-app'", /my-app/.test(md));
   check("injected context 包含 decision memory '采用 Express'", /采用 Express/.test(md));
   check("injected context 包含 lesson memory 'DSH host bundle'", /DSH host bundle/.test(md));

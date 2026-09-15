@@ -5,10 +5,12 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const tests = [
+  "smoke-durable-core.mjs",
   "smoke-runtime-workspace.mjs",
   "smoke-project-memory.mjs",
   "smoke-session-semantic.mjs",
   "smoke-memory-retrieval.mjs",
+  "smoke-settings-probe.mjs",
   "smoke-architecture.mjs",
   "smoke-test.mjs",
   "smoke-todostrip.mjs",

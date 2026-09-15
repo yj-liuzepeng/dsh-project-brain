@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
 import { isAbsolute, normalize, sep } from "node:path";
 
 import { parseArchitectureJson, streamLlmText } from "../architecture/analyzer.js";
-import { isActiveMemory, makeMemoryEntry, normalizeMemoryType } from "../store/brain-logic.js";
+import { isRetrievableMemory, makeMemoryEntry, normalizeMemoryType } from "../store/brain-logic.js";
+import { memoryFingerprint } from "./admit.js";
 
-const ALLOWED_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson", "issue", "context"]);
+const ALLOWED_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson", "context"]);
 
 function clean(value, limit) {
   return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
@@ -55,8 +55,7 @@ function safeRelatedFile(value) {
 }
 
 function fingerprint(item) {
-  const normalized = `${item.type}\n${item.title}\n${item.content}`.toLowerCase().replace(/\s+/g, " ").trim();
-  return createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 24);
+  return memoryFingerprint(item);
 }
 
 // Grounding check：模糊匹配 evidence 字符串是否真实存在于 transcript 里
@@ -91,7 +90,9 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     `最多 ${maxItems} 条记忆。只输出严格 JSON 对象，不要 Markdown。`,
     "每条记忆必须带 evidence：原文中能直接验证该记忆的连续片段（建议 8-60 字），用于 grounding 校验。",
     "如果某条记忆无法在原文中找到对应证据，请降低 confidence 或不输出。",
-    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson|issue|context", title: "简洁标题", content: "自包含的事实与理由", evidence: "原文片段（8-60 字）", importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"] }] }),
+    "durable=true 仅当该事实去掉日期/版本号后仍为真；changelog、本次改了哪些文件、会话流水账必须 durable=false。",
+    "title 写成站立事实句（例如「路径以 session cwd 为准」），不要写成 v1.2.0 patch 或验收清单。content 用 2–4 句把 what+why 写完。",
+    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson", title: "简洁标题", content: "自包含的事实与理由", evidence: "原文片段（8-60 字）", durable: true, importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"], supersedes: null }] }),
   ];
   if (diffEvidence && String(diffEvidence).trim()) {
     parts.push("【git diff 参考证据（仅辅助核对文件级事实，不要逐条复述为记忆）】\n" + String(diffEvidence).trim());
@@ -117,7 +118,7 @@ export async function extractSessionMemories({ session, llm, route, sessionId, e
   const parsed = parseArchitectureJson(text);
   const summary = clean(parsed && parsed.summary, 2000);
   const raw = Array.isArray(parsed && parsed.memories) ? parsed.memories : [];
-  const known = new Set((existingMemories || []).filter(isActiveMemory).map((item) =>
+  const known = new Set((existingMemories || []).filter(isRetrievableMemory).map((item) =>
     item && item.source && item.source.fingerprint ? String(item.source.fingerprint) : fingerprint(item || {})
   ));
   const memories = [];
@@ -126,9 +127,10 @@ export async function extractSessionMemories({ session, llm, route, sessionId, e
   for (const item of raw.slice(0, maxItems)) {
     const type = normalizeMemoryType(item && item.type);
     const title = clean(item && item.title, 200);
-    const content = redactSessionText(clean(item && item.content, 4000));
+    const content = redactSessionText(clean(item && item.content, 400));
     const evidence = clean(item && item.evidence, 200);
     if (!ALLOWED_TYPES.has(type) || !title || content.length < 20) continue;
+    if (item && item.durable !== true) continue;
     const candidate = { type, title, content };
     const hash = fingerprint(candidate);
     if (known.has(hash)) continue;
@@ -167,6 +169,7 @@ export async function extractSessionMemories({ session, llm, route, sessionId, e
         model: route.model,
         grounded: groundingPassed,
         evidence: evidence || null,
+        ...(item && item.supersedes ? { supersedes: String(item.supersedes) } : {}),
       },
     }, now));
   }

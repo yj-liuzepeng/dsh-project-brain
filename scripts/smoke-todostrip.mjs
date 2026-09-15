@@ -105,6 +105,31 @@ checks.push({ name: "architecture tab shows peer layers and click-to-inspect mod
 // 15) 架构图明确区分本地分析与当前 DSH LLM 增强结果。
 checks.push({ name: "architecture source badges are bundled", ok: bundle.includes('"arch.hybrid"') && bundle.includes('"arch.local"') });
 
+const settingsProbe = bundle.includes('"probe-" + target')
+  && bundle.includes("settings.probe.embedding")
+  && bundle.includes("settings.probe.llm")
+  && bundle.includes('action: "probe"')
+  && bundle.includes('group.group === "retrieval"')
+  && bundle.includes('group.group === "summary"');
+checks.push({ name: "settings tab can probe embedding and session LLM", ok: settingsProbe });
+checks.push({
+  name: "settings embedding API key field accepts pasted secrets",
+  ok: bundle.includes('type: "password"')
+    && bundle.includes("Paste the API key to use it directly")
+    && bundle.includes('"data-action": "toggle-secret"'),
+});
+checks.push({
+  name: "retrieval weight hints and compact probe buttons",
+  ok: bundle.includes("Applies only to project_ask memory ranking")
+    && bundle.includes("Lexical BM25")
+    && bundle.includes("Semantic similarity")
+    && bundle.includes("Memory importance")
+    && bundle.includes("Extraction confidence")
+    && bundle.includes("Newer ranks higher")
+    && bundle.includes("data-probe-btn")
+    && bundle.includes("rgb(236, 245, 252)"),
+});
+
 // 16) Dashboard 使用单一页签工作台，避免架构、任务、记忆在首页重复堆叠。
 const dashboardTabs = bundle.includes('"data-dashboard-tab"')
   && bundle.includes('"dash.tab.overview"')

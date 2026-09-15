@@ -19,10 +19,9 @@
 // Token 预算：默认 1500 token 上限，超出截断。
 
 import { brainPath, readJsonl, readJson } from "./store/brain-files.js";
-import { todoStats, recentTimeline } from "./store/brain-logic.js";
-import { retrieveMemories } from "./memory/retrieval.js";
+import { buildInjectionContext } from "./memory/inject-context.js";
+import { ensureHousekeepOnRead } from "./memory/admit.js";
 
-const DEFAULT_MAX_TOKENS = 1500;
 // 每个 workspace 独立缓存。旧实现只有一个 module-global cache，A 项目启动后再
 // 打开 B 项目时，B 的 system prompt 可能拿到 A 的记忆。
 const projectCache = new Map();
@@ -70,150 +69,6 @@ function resolveContextProject(context, sessions) {
   return null;
 }
 
-// 估算 token 数（粗略：英文 4 字符/token，中文 1.5 字符/token）
-function estimateTokens(text) {
-  if (!text) return 0;
-  // 中文字符 \u4e00-\u9fff 算 1.5 字符/token，英文算 4
-  const cn = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-  const other = text.length - cn;
-  return Math.ceil(cn / 1.5 + other / 4);
-}
-
-// 截断 markdown 到 token 上限（按段落截断，避免截到一半）
-function truncateToTokens(md, maxTokens) {
-  if (estimateTokens(md) <= maxTokens) return md;
-  const lines = md.split("\n");
-  let used = 0;
-  const out = [];
-  for (const line of lines) {
-    const t = estimateTokens(line);
-    if (used + t > maxTokens) {
-      out.push("\n…（内容超出 token 预算已截断，可调用 project_continue / project_memory_list 获取完整内容）");
-      break;
-    }
-    out.push(line);
-    used += t;
-  }
-  return out.join("\n");
-}
-
-// 选择 Top-K 记忆（按 memoryScore 排序）
-function topKMemories(memories, n) {
-  return retrieveMemories({ memories, topK: n }).map((hit) => hit.memory);
-}
-
-// 取最近一条带 summary 的 session_summary 事件（决策 3：跨对话高保真续接）
-function latestSessionSummary(timeline) {
-  const summaries = (timeline || [])
-    .filter((e) => e && e.eventType === "session_summary" && e.summary && String(e.summary).trim())
-    .sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
-  return summaries.length ? String(summaries[0].summary).trim() : null;
-}
-
-// 最近决策链：取最近 N 条 decision / architecture 类型的记忆（按 createdAt 倒序）
-//   目的：让 LLM 进入 session 时立刻看到「这个项目的核心决策是什么」，避免重复决策
-function recentDecisionChain(memories, n = 3) {
-  const chainTypes = new Set(["decision", "architecture"]);
-  return (memories || [])
-    .filter((m) => m && chainTypes.has(m.type) && m.status !== "archived" && m.status !== "superseded" && m.status !== "deleted")
-    .slice()
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    .slice(0, n);
-}
-
-// 渲染 markdown section
-function renderContext(projectData, memories, todos, recentEvents, activeTodo, lastSummary, decisionChain) {
-  const lines = [];
-  lines.push("## Project Brain Context（自动注入 · v0.3.0）");
-  lines.push("");
-  lines.push("> 以下内容由 dsh-project-brain 自动从 `.project-brain/` 读取，用于让你（LLM）一进入 session 就掌握项目上下文。可调用 `project_continue` / `project_memory_list` / `project_todo_list` 获取更详细数据。");
-  lines.push("");
-
-  if (projectData) {
-    lines.push("### 项目概况");
-    lines.push(`- 名称: ${projectData.name || "(未命名)"}`);
-    if (projectData.type) lines.push(`- 类型: ${projectData.type}`);
-    if (projectData.techStack) {
-      const ts = Object.entries(projectData.techStack).map(([k, v]) => `${k}=${v}`).join(", ");
-      if (ts) lines.push(`- 技术栈: ${ts}`);
-    }
-    if (projectData.description) lines.push(`- 简介: ${projectData.description}`);
-    lines.push("");
-  }
-
-  // 最近决策链（决策 3 增强：让 LLM 一进入 session 就知道「这个项目的核心决策是什么」，
-  //   避免重复决策 / 推翻已有方案）
-  if (decisionChain && decisionChain.length > 0) {
-    lines.push("### 最近决策链（按时间倒序）");
-    for (const m of decisionChain) {
-      const tag = m.type ? `[${m.type}] ` : "";
-      lines.push(`- ${tag}${m.title}`);
-      if (m.content) {
-        const snippet = String(m.content).slice(0, 180).replace(/\n+/g, " ");
-        lines.push(`  ${snippet}`);
-      }
-    }
-    lines.push("");
-  }
-
-  // Top 记忆
-  if (memories.length > 0) {
-    lines.push("### 关键记忆（按重要度+时新性排序，Top " + memories.length + "）");
-    for (const m of memories) {
-      const tag = m.type ? `[${m.type}] ` : "";
-      lines.push(`- ${tag}${m.title}`);
-      if (m.content) {
-        const snippet = String(m.content).slice(0, 200).replace(/\n+/g, " ");
-        lines.push(`  ${snippet}`);
-      }
-    }
-    lines.push("");
-  }
-
-  // 活跃 TODO（最多 5）
-  if (todos.length > 0) {
-    lines.push("### 活跃 TODO（最多 5）");
-    for (const t of todos.slice(0, 5)) {
-      const prio = t.priority ? `[${t.priority}] ` : "";
-      const status = t.status === "in_progress" ? "⏳ " : "";
-      lines.push(`- ${status}${prio}${t.title}`);
-    }
-    lines.push("");
-  }
-
-  // 最近活动（最多 3）
-  if (recentEvents.length > 0) {
-    lines.push("### 最近活动");
-    for (const e of recentEvents) {
-      const date = new Date(e.occurredAt);
-      const ymd = date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
-      lines.push(`- ${ymd}: ${e.title}`);
-    }
-    lines.push("");
-  }
-
-  // 上次会话总结（决策 3：token 满切对话后的高保真续接）
-  if (lastSummary) {
-    lines.push("### 上次会话总结");
-    lines.push("> " + lastSummary.replace(/\n+/g, " "));
-    lines.push("");
-  }
-
-  // 当前进行中的 TODO 重点提示
-  if (activeTodo) {
-    lines.push(`> ⚡ 当前进行中：**${activeTodo.title}** （优先级 ${activeTodo.priority || "medium"}）`);
-  }
-
-  lines.push("");
-  lines.push("### 项目记忆约定");
-  lines.push("- 用户说「记住 X / 以后 Y / 不要 Z / 记一下」等表达长期意图的指令时，立即调 `project_memory_add` 写入当前项目的 `.project-brain/memory.jsonl`，无需再次确认；若是跨项目通用偏好，再同步调 `memory_save` 写入 dsh-mneme。");
-  lines.push("- 开发中出现稳定的架构决策、需求约束、Bug 根因或可复用教训时，主动调 `project_memory_add` 持久化。");
-  lines.push("- 新任务用 `project_todo_add`，状态变化用 `project_todo_update` / `project_todo_done`，不要只留在当前对话里。");
-  lines.push("- 项目结构发生明显变化后调用 `project_rescan`；需要理解最近代码变化时调用 `project_diff`。");
-
-  return lines.join("\n");
-}
-
 // 从 fs 服务读取项目数据（async）
 async function loadProjectDataForInjection(fs, projectPath) {
   try {
@@ -232,6 +87,7 @@ async function loadProjectDataForInjection(fs, projectPath) {
 // 预读并刷新 cache
 async function refreshCache(fs, projectPath) {
   if (!fs || !projectPath) return;
+  try { await ensureHousekeepOnRead(fs, projectPath); } catch (e) {}
   const data = await loadProjectDataForInjection(fs, projectPath);
   if (!data.project || data.project.__error) {
     projectCache.delete(projectPath);
@@ -245,16 +101,7 @@ function getCachedSection(projectPath) {
   const cached = projectPath ? projectCache.get(projectPath) : null;
   if (!cached || !cached.data) return null;
   const { project, memories, todos, timeline } = cached.data;
-  const stats = todoStats(todos);
-  const activeTodos = todos.filter((t) => t.status !== "done" && t.status !== "cancelled");
-  const top = topKMemories(memories, 5);
-  const recent = recentTimeline(timeline, 3);
-  const inProgress = activeTodos.find((t) => t.status === "in_progress");
-  const lastSummary = latestSessionSummary(timeline);
-  const decisionChain = recentDecisionChain(memories, 3);
-  let md = renderContext(project, top, activeTodos, recent, inProgress, lastSummary, decisionChain);
-  md = truncateToTokens(md, DEFAULT_MAX_TOKENS);
-  return md;
+  return buildInjectionContext({ project, memories, todos, timeline });
 }
 
 // 主入口：注册 systemPrompt section + 监听 session-start 预读

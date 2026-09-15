@@ -114,13 +114,22 @@ window.__ModuleLoader__.load({
         "dash.entry": "开发入口",
         "dash.todo": "待办（全部）",
         "dash.timeline": "时间线",
-        "dash.memory": "项目记忆（全部）",
+        "dash.memory": "项目记忆",
+        "dash.memory.core": "当前 Core（每轮注入）",
+        "dash.memory.dormant": "休眠（不注入，可用 project_ask）",
+        "dash.memory.dormantShow": "展开休眠记忆",
+        "dash.memory.dormantHide": "收起休眠记忆",
         "dash.tab.overview": "概览",
         "dash.tab.architecture": "架构",
         "dash.tab.work": "任务动态",
         "dash.tab.knowledge": "项目记忆",
         "dash.tab.git": "Git 历史",
         "dash.tab.settings": "设置",
+        "settings.probe.embedding": "测试向量连通",
+        "settings.probe.llm": "测试会话 LLM",
+        "settings.probe.embeddingHint": "用当前表单值请求一次 embeddings，不写 cache。未保存的修改也会用于本次测试。",
+        "settings.probe.llmHint": "探测当前 DSH 会话的模型路由，会话摘要和架构增强用的是同一条 LLM。",
+        "settings.probe.running": "测试中…",
         "dash.snapshot": "数据快照 · {time}",
         "dash.none": "（空）",
         "suggest.title": "💡 你今天可能想推进",
@@ -239,13 +248,22 @@ window.__ModuleLoader__.load({
         "dash.entry": "Entrypoints",
         "dash.todo": "TODO (all)",
         "dash.timeline": "Timeline",
-        "dash.memory": "Memories (all)",
+        "dash.memory": "Memories",
+        "dash.memory.core": "Core (injected every session)",
+        "dash.memory.dormant": "Dormant (askable, not injected)",
+        "dash.memory.dormantShow": "Show dormant memories",
+        "dash.memory.dormantHide": "Hide dormant memories",
         "dash.tab.overview": "Overview",
         "dash.tab.architecture": "Architecture",
         "dash.tab.work": "Work & activity",
         "dash.tab.knowledge": "Knowledge",
         "dash.tab.git": "Git history",
         "dash.tab.settings": "Settings",
+        "settings.probe.embedding": "Test embedding",
+        "settings.probe.llm": "Test session LLM",
+        "settings.probe.embeddingHint": "Sends one embeddings request with the form values. Does not write cache. Unsaved edits are included.",
+        "settings.probe.llmHint": "Pings the current DSH session model used by session summary and architecture enrichment.",
+        "settings.probe.running": "Testing…",
         "dash.snapshot": "Data snapshot · {time}",
         "dash.none": "(empty)",
         "suggest.title": "💡 Today you may want to continue",
@@ -2301,9 +2319,9 @@ window.__ModuleLoader__.load({
             hint: { "zh-CN": "OpenAI 兼容 /v1/embeddings 端点；留空 = 禁用向量", "en-US": "OpenAI-compatible /v1/embeddings endpoint; empty = no vectors" } },
           { key: "embeddingModel", label: { "zh-CN": "Embedding 模型", "en-US": "Embedding model" }, type: "string",
             placeholder: "text-embedding-3-small" },
-          { key: "embeddingApiKeyEnv", label: { "zh-CN": "API Key 环境变量", "en-US": "API Key env name" }, type: "string",
-            placeholder: "PROJECT_BRAIN_EMBEDDING_API_KEY",
-            hint: { "zh-CN": "环境变量名（不是 key 本身）", "en-US": "Environment variable name (not the key)" } },
+          { key: "embeddingApiKeyEnv", label: { "zh-CN": "API Key", "en-US": "API Key" }, type: "password",
+            placeholder: "sk-… 或 PROJECT_BRAIN_EMBEDDING_API_KEY",
+            hint: { "zh-CN": "优先直接填写 API Key。如果填的是 PROJECT_BRAIN_EMBEDDING_API_KEY 这类全大写名字，则不会把它当作密钥，而是读取本机同名环境变量的值；请先在系统或用户环境变量里配好该项，并完全退出再打开 DSH Desktop。", "en-US": "Paste the API key to use it directly. An ALL_CAPS name like PROJECT_BRAIN_EMBEDDING_API_KEY is not the secret: the plugin reads the local environment variable of the same name. Set that env var on this machine, then fully quit and reopen DSH Desktop." } },
           { key: "embeddingDimensions", label: { "zh-CN": "向量维度", "en-US": "Vector dimensions" }, type: "number",
             hint: { "zh-CN": "0 = 由服务自动推断", "en-US": "0 = auto from service" } },
           { key: "embeddingBatchSize", label: { "zh-CN": "Embedding 批大小", "en-US": "Embedding batch size" }, type: "number", min: 1, max: 128 },
@@ -2312,13 +2330,18 @@ window.__ModuleLoader__.load({
         ],
       },
       { group: "weights", icon: "⚖️", title: { "zh-CN": "检索权重", "en-US": "Retrieval weights" },
-        hint: { "zh-CN": "检索混合打分各因子权重；总和不需要为 1，会自动归一化。", "en-US": "Weighted sum; not required to sum to 1 (auto-normalized)." },
+        hint: { "zh-CN": "只作用于 project_ask 的记忆排序（不管列表和会话注入）。哪项更大哪项更优先，五项相对大小即可，不必凑成 1。保存后下次提问生效。", "en-US": "Applies only to project_ask memory ranking, not list or session inject. Higher = more influence; need not sum to 1. Takes effect on the next ask after save." },
         fields: [
-          { key: "keywordWeight", label: { "zh-CN": "关键词权重", "en-US": "Keyword" }, type: "number", min: 0, max: 1, step: 0.05 },
-          { key: "vectorWeight", label: { "zh-CN": "向量权重", "en-US": "Vector" }, type: "number", min: 0, max: 1, step: 0.05 },
-          { key: "importanceWeight", label: { "zh-CN": "重要性权重", "en-US": "Importance" }, type: "number", min: 0, max: 1, step: 0.05 },
-          { key: "confidenceWeight", label: { "zh-CN": "可信度权重", "en-US": "Confidence" }, type: "number", min: 0, max: 1, step: 0.05 },
-          { key: "recencyWeight", label: { "zh-CN": "时新性权重", "en-US": "Recency" }, type: "number", min: 0, max: 1, step: 0.05 },
+          { key: "keywordWeight", label: { "zh-CN": "关键词权重", "en-US": "Keyword" }, type: "number", min: 0, max: 1, step: 0.05,
+            hint: { "zh-CN": "字面匹配（BM25）。问题里有专有名词、文件名、术语时调高。", "en-US": "Lexical BM25. Raise when the question contains names, files, or exact terms." } },
+          { key: "vectorWeight", label: { "zh-CN": "向量权重", "en-US": "Vector" }, type: "number", min: 0, max: 1, step: 0.05,
+            hint: { "zh-CN": "语义相近。同义改写、词对不上时靠这项。未建向量或未开 hybrid 时此项为 0。", "en-US": "Semantic similarity. Helps paraphrases. Stays 0 until vectors are indexed in hybrid mode." } },
+          { key: "importanceWeight", label: { "zh-CN": "重要性权重", "en-US": "Importance" }, type: "number", min: 0, max: 1, step: 0.05,
+            hint: { "zh-CN": "记忆自带的重要性。默认最大，让标过重要的决策排前面。", "en-US": "Memory importance. Highest by default so marked decisions rank first." } },
+          { key: "confidenceWeight", label: { "zh-CN": "可信度权重", "en-US": "Confidence" }, type: "number", min: 0, max: 1, step: 0.05,
+            hint: { "zh-CN": "抽取可信度。一般保持较低，避免模型自评挤掉事实。", "en-US": "Extraction confidence. Keep low so model self-scores do not dominate." } },
+          { key: "recencyWeight", label: { "zh-CN": "时新性权重", "en-US": "Recency" }, type: "number", min: 0, max: 1, step: 0.05,
+            hint: { "zh-CN": "越新越高：约 7 天内满分，约 180 天降到 0。", "en-US": "Newer ranks higher: full score within ~7 days, near 0 by ~180 days." } },
         ],
       },
       { group: "summary", icon: "📝", title: { "zh-CN": "会话摘要 (LLM)", "en-US": "Session summary (LLM)" },
@@ -2361,6 +2384,11 @@ window.__ModuleLoader__.load({
       const locale = (localeCode === "en-US") ? "en-US" : "zh-CN";
       const initial = { loaded: false, writable: false, config: {}, dirty: {}, saving: false, error: null, info: null };
       const [state, setState] = React.useState(initial);
+      const [probes, setProbes] = React.useState({
+        embedding: { status: "idle", message: "" },
+        llm: { status: "idle", message: "" },
+      });
+      const [revealSecrets, setRevealSecrets] = React.useState({});
 
       const loadSettings = React.useCallback(async () => {
         if (!rpc || typeof rpc.call !== "function") {
@@ -2420,6 +2448,66 @@ window.__ModuleLoader__.load({
         setState((s) => Object.assign({}, s, { dirty: {}, error: null, info: "已丢弃本地修改（点击「重新读取」会刷新服务器值）" }));
       }
 
+      async function runProbe(target) {
+        if (!rpc || typeof rpc.call !== "function" || probes[target] && probes[target].status === "running") return;
+        setProbes((s) => Object.assign({}, s, { [target]: { status: "running", message: t("settings.probe.running") } }));
+        try {
+          const res = await rpc.call("/project-brain", "settings", {
+            sessionId,
+            action: "probe",
+            target,
+            config: state.config,
+          });
+          const probe = res && res.ok && res.value && res.value.probe;
+          if (!probe) {
+            const msg = (res && res.error && res.error.message) || "RPC failed";
+            setProbes((s) => Object.assign({}, s, { [target]: { status: "fail", message: msg } }));
+            return;
+          }
+          const latency = probe.details && probe.details.latencyMs != null ? " · " + probe.details.latencyMs + "ms" : "";
+          setProbes((s) => Object.assign({}, s, {
+            [target]: { status: probe.ok ? "ok" : "fail", message: String(probe.message || probe.code || "") + latency },
+          }));
+        } catch (e) {
+          setProbes((s) => Object.assign({}, s, { [target]: { status: "fail", message: String((e && e.message) || e) } }));
+        }
+      }
+
+      function renderProbe(target) {
+        const probe = probes[target] || { status: "idle", message: "" };
+        const running = probe.status === "running";
+        const color = probe.status === "ok"
+          ? "var(--dsw-alias-state-success-primary)"
+          : probe.status === "fail"
+            ? "var(--dsw-alias-state-error-primary)"
+            : "var(--dsw-alias-label-secondary)";
+        const label = target === "embedding" ? t("settings.probe.embedding") : t("settings.probe.llm");
+        const hint = target === "embedding" ? t("settings.probe.embeddingHint") : t("settings.probe.llmHint");
+        return React.createElement("div", { style: { marginTop: "8px", paddingTop: "10px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" } },
+            React.createElement("button", {
+              type: "button",
+              "data-action": "probe-" + target,
+              "data-probe-btn": "compact",
+              disabled: running || !state.loaded,
+              onClick: () => runProbe(target),
+              style: {
+                padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "500", fontFamily: "inherit",
+                border: "1px solid rgb(186, 216, 238)",
+                background: "rgb(236, 245, 252)",
+                color: "rgb(56, 112, 168)",
+                cursor: running ? "not-allowed" : "pointer",
+                opacity: running ? 0.6 : 1,
+              },
+            }, running ? t("settings.probe.running") : label),
+            probe.message ? React.createElement("span", { "data-probe-status": probe.status, style: { fontSize: "11px", color } },
+              (probe.status === "ok" ? "✓ " : probe.status === "fail" ? "✗ " : "") + probe.message,
+            ) : null,
+          ),
+          React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "4px" } }, hint),
+        );
+      }
+
       function renderField(field, value) {
         const fieldLabel = settingsFieldLabel(field, locale);
         const hint = settingsFieldHint(field, locale);
@@ -2459,6 +2547,51 @@ window.__ModuleLoader__.load({
             }, (field.options || []).map((opt) =>
               React.createElement("option", { key: opt.v, value: opt.v }, settingsOptionLabel(opt, locale)),
             )),
+            hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null,
+          );
+        }
+
+        if (field.type === "password") {
+          const revealed = !!revealSecrets[field.key];
+          return React.createElement("div", { key: field.key, style: { marginBottom: "10px" } },
+            React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+            React.createElement("div", { style: { position: "relative" } },
+              React.createElement("input", {
+                id: inputId,
+                type: revealed ? "text" : "password",
+                autoComplete: "off",
+                disabled: !state.writable || state.saving,
+                value: value == null ? "" : String(value),
+                placeholder: field.placeholder || "",
+                onChange: (e) => updateField(field.key, e.target.value),
+                style: Object.assign({}, inputBase, { paddingRight: "36px", fontFamily: "ui-monospace, monospace" }),
+              }),
+              React.createElement("button", {
+                type: "button",
+                "data-action": "toggle-secret",
+                "aria-label": revealed
+                  ? (locale === "en-US" ? "Hide API key" : "隐藏密钥")
+                  : (locale === "en-US" ? "Show API key" : "显示密钥"),
+                title: revealed ? (locale === "en-US" ? "Hide" : "隐藏") : (locale === "en-US" ? "Show" : "显示"),
+                onClick: () => setRevealSecrets((s) => Object.assign({}, s, { [field.key]: !s[field.key] })),
+                style: {
+                  position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)",
+                  width: "24px", height: "24px", padding: 0, border: "none", borderRadius: "4px",
+                  background: "transparent", color: "var(--dsw-alias-label-secondary)",
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                },
+              },
+                React.createElement("svg", {
+                  width: 16, height: 16, viewBox: "0 0 24 24", fill: "none",
+                  stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round",
+                  "aria-hidden": "true",
+                },
+                  React.createElement("path", { d: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" }),
+                  React.createElement("circle", { cx: 12, cy: 12, r: 3 }),
+                  revealed ? React.createElement("line", { x1: 3, y1: 3, x2: 21, y2: 21 }) : null,
+                ),
+              ),
+            ),
             hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null,
           );
         }
@@ -2512,8 +2645,8 @@ window.__ModuleLoader__.load({
           color: state.writable ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)",
         } },
           React.createElement("span", null, state.writable ? "✅" : "⚠️"),
-          React.createElement("span", null, state.writable
-            ? (locale === "en-US" ? "Settings writable. Changes persist immediately." : "配置可写，保存后即时生效。")
+          React.createElement("span", { style: { flex: "1 1 auto", lineHeight: "1.45" } }, state.writable
+            ? (locale === "en-US" ? "Settings are writable. After editing, scroll to the bottom of this page and click Save — unsaved changes do not take effect." : "配置可写。改完后请滚到本页最底部点「保存」；未点保存不会生效。")
             : (locale === "en-US" ? "Settings read-only in this runtime (DSH settings service unavailable). Configure via DSH settings panel or env vars." : "当前运行时配置为只读（DSH settings 服务不可用）。请通过 DSH 设置面板或环境变量配置。")),
           React.createElement("span", { style: { marginLeft: "auto", cursor: "pointer", opacity: 0.85 } , onClick: loadSettings, title: locale === "en-US" ? "Reload" : "重新读取"},
             "⟳"),
@@ -2531,6 +2664,8 @@ window.__ModuleLoader__.load({
             ),
             group.hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginBottom: "10px" } }, settingsFieldHint(group, locale)) : null,
             group.fields.map((field) => renderField(field, state.config[field.key])),
+            group.group === "retrieval" ? renderProbe("embedding") : null,
+            group.group === "summary" ? renderProbe("llm") : null,
           ),
         ),
         React.createElement("div", { style: {
@@ -2580,6 +2715,7 @@ window.__ModuleLoader__.load({
       const [activeTab, setActiveTab] = React.useState("overview");
       // v1.1.x-fix：项目记忆卡片点击 → 弹框展示完整内容（避免 inline 展开撑爆页面）
       const [memoryModal, setMemoryModal] = React.useState(null);
+      const [dormantOpen, setDormantOpen] = React.useState(false);
       const openMemoryModal = React.useCallback((m) => { setMemoryModal(m); }, []);
       const closeMemoryModal = React.useCallback(() => { setMemoryModal(null); }, []);
       const rpc = connection && connection.rpc;
@@ -3251,59 +3387,88 @@ window.__ModuleLoader__.load({
         const blocks = mdParse(src);
         return blocks.map((b, idx) => mdRenderBlock(b, React, "md-" + idx));
       };
+      const renderMemoryCard = (m) => {
+        const contentStr = m.content ? String(m.content) : "";
+        const hasLongContent = contentStr.length > 200;
+        const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
+        return React.createElement("article", {
+          key: m.id,
+          "data-mem-id": m.id,
+          "data-mem-status": m.status || "active",
+          onClick: () => openMemoryModal(m),
+          title: "点击查看完整内容",
+          style: {
+            padding: "12px 14px",
+            background: "var(--dsw-alias-bg-layer-1)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderLeft: "3px solid " + (m.status === "dormant" ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-border-l1)"),
+            borderRadius: "8px",
+            cursor: "pointer",
+            transition: "border-color 0.15s ease, transform 0.1s ease",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            minWidth: 0,
+            minHeight: "120px",
+            opacity: m.status === "dormant" ? 0.82 : 1,
+          },
+          onMouseEnter: (e) => {
+            e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
+            e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
+          },
+          onMouseLeave: (e) => {
+            e.currentTarget.style.borderLeftColor = m.status === "dormant" ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-border-l1)";
+            e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
+          },
+        },
+          React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
+            React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
+            m.status === "dormant" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, "dormant") : null,
+            React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title),
+          ),
+          contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "…" : "")) : null,
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
+              m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
+              m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
+              Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null,
+            ),
+            contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "▸ 查看详情") : null,
+          ),
+        );
+      };
+      const coreMemList = memoriesAll.filter((m) => m && m.status !== "dormant");
+      const dormantMemList = memoriesAll.filter((m) => m && m.status === "dormant");
+      const memoryGrid = (items) => React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } }, items.slice(0, 20).map(renderMemoryCard));
       const memoryNode = memoriesAll.length > 0
-        ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } },
-            memoriesAll.slice(0, 20).map((m) => {
-              const contentStr = m.content ? String(m.content) : "";
-              const hasLongContent = contentStr.length > 200;
-              const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
-              return React.createElement("article", {
-                key: m.id,
-                "data-mem-id": m.id,
-                onClick: () => openMemoryModal(m),
-                title: "点击查看完整内容",
+        ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } },
+            React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)" } }, t("dash.memory.core") + " · " + coreMemList.length),
+            coreMemList.length ? memoryGrid(coreMemList) : emptyNode,
+            dormantMemList.length ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+              React.createElement("button", {
+                type: "button",
+                "data-action": "toggle-dormant-memories",
+                onClick: () => setDormantOpen((open) => !open),
                 style: {
-                  padding: "12px 14px",
-                  background: "var(--dsw-alias-bg-layer-1)",
+                  alignSelf: "flex-start",
+                  background: "transparent",
                   border: "1px solid var(--dsw-alias-border-l1)",
-                  borderLeft: "3px solid var(--dsw-alias-border-l1)",
                   borderRadius: "8px",
                   cursor: "pointer",
-                  transition: "border-color 0.15s ease, transform 0.1s ease",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
-                  minWidth: 0,
-                  minHeight: "120px",
+                  fontSize: "11px",
+                  fontWeight: "600",
+                  color: "var(--dsw-alias-label-secondary)",
+                  padding: "4px 10px",
+                  fontFamily: "inherit",
                 },
-                onMouseEnter: (e) => {
-                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
-                  e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
-                },
-                onMouseLeave: (e) => {
-                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-border-l1)";
-                  e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
-                },
-              },
-                // 顶部：type chip + title（标题允许多行，不再 ellipsis）
-                React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
-                  React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
-                  React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title),
-                ),
-                // 内容区：3 行摘要（不可展开，避免撑爆页面）
-                contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "…" : "")) : null,
-                // 底部：importance + 时间 + tags + 查看按钮
-                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
-                  React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
-                    m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
-                    m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
-                    Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null,
-                  ),
-                  contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "▸ 查看详情") : null,
-                ),
-              );
-            }))
-          : emptyNode;
+              }, (dormantOpen ? t("dash.memory.dormantHide") : t("dash.memory.dormantShow")) + " · " + dormantMemList.length),
+              dormantOpen ? React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", marginBottom: "8px" } }, t("dash.memory.dormant")),
+                memoryGrid(dormantMemList),
+              ) : null,
+            ) : null,
+          )
+        : emptyNode;
 
       // v1.1.x-fix：项目记忆详情弹框（避免 inline 展开撑爆网格）
       const memoryModalNode = memoryModal ? React.createElement(

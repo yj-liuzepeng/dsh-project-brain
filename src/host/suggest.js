@@ -15,14 +15,14 @@
 //
 // 强约束：纯函数 + 不依赖 DSH runtime（便于 smoke 离线测试）。
 
-import { recentTimeline, activeTodos, topMemories, isActiveMemory } from "./store/brain-logic.js";
+import { recentTimeline, activeTodos, topMemories, isCoreMemory } from "./store/brain-logic.js";
 
 // ──  收集证据（纯函数，input brain 数据） ──
 
 function buildEvidence(brain, now) {
   const nowMs = typeof now === "number" ? now : Date.now();
   const project = (brain && brain.project) || null;
-  const memories = ((brain && brain.memories) || []).filter(isActiveMemory);
+  const memories = ((brain && brain.memories) || []).filter(isCoreMemory);
   const todos = (brain && brain.todos) || [];
   const timeline = (brain && brain.timeline) || [];
   const architecture = brain && brain.architecture;

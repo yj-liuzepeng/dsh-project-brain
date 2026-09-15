@@ -7,7 +7,16 @@
 
 ## Unreleased
 
+### Added（新增）
+
+- **Durable Core 站立记忆**：`active` 全量注入（上限 15 条 / 约 800 token），溢出进 `dormant`；changelog / 活动汇报走规则门槛，不再挤进 Core。
+- **设置页联通测试**：可探测 Embedding 与会话 LLM；API Key 支持直接粘贴（全大写名才当环境变量）。
+- **检索权重说明**：每项权重补充配置提示；连通按钮改为小号浅蓝。
+
 ### Changed（变更）
+
+- **`project_ask` 主路径改为加权融合**：BM25 + 重要度 + 时效，向量只作加分；RRF 保留为可测算法，不再当 ask 主合同。向量 cache 仅在 `project_ask` 成功索引时写入。
+- **设置页顶部提示**：标明保存按钮在页面底部，未保存不生效。
 
 - **技术栈卡片按运行时口径分层**：主视野只展示框架 / 网关 / 数据 / 容器等运行时技术；CI、IaC、观测下沉到「交付」次行；Monorepo 等结构标签与 Lint/测试工具保持弱展示。旧 `techStack` 兜底不再把 `ci:` / `structure:` 顶到主 chip。
 - **Dockerfile 即视为 Docker**：存在 Dockerfile 时写入 `stack.container`，不再只在 `FROM nginx` 时才出现基础设施。

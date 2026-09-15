@@ -58,7 +58,30 @@ export function makeMemoryEntry(input, now) {
 }
 
 export function isActiveMemory(memory) {
-  return Boolean(memory) && memory.status !== "archived" && memory.status !== "superseded" && memory.status !== "deleted";
+  return isRetrievableMemory(memory);
+}
+
+// Core = always injected. Missing/reinforced count as active until backfill.
+export function isCoreMemory(memory) {
+  if (!memory) return false;
+  const status = memory.status;
+  if (status === "archived" || status === "superseded" || status === "deleted" || status === "dormant") return false;
+  return true;
+}
+
+// Ask/list-all: Core + dormant. Archived/superseded/deleted stay hidden unless includeArchived.
+export function isRetrievableMemory(memory) {
+  if (!memory) return false;
+  const status = memory.status;
+  return status !== "archived" && status !== "superseded" && status !== "deleted";
+}
+
+export function estimateTokens(text) {
+  if (!text) return 0;
+  const s = String(text);
+  const cn = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+  const other = s.length - cn;
+  return Math.ceil(cn / 1.5 + other / 4);
 }
 
 export function makeTodoEntry(input, now) {
@@ -112,8 +135,14 @@ export function memoryScore(m, now) {
 }
 
 export function topMemories(memories, n, now) {
-  const list = (memories || []).filter(isActiveMemory);
-  list.sort(function (a, b) { return memoryScore(b, now) - memoryScore(a, now); });
+  const list = (memories || []).filter(isCoreMemory);
+  list.sort(function (a, b) {
+    const di = (Number(b.importance) || 0) - (Number(a.importance) || 0);
+    if (di !== 0) return di;
+    const ua = (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+    if (ua !== 0) return ua;
+    return memoryScore(b, now) - memoryScore(a, now);
+  });
   return list.slice(0, n || 5);
 }
 
@@ -148,7 +177,10 @@ export function buildContinueData(brain, now) {
   const activity = recentTimeline(timeline, 5).map(function (e) {
     return { id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType };
   });
-  const top = topMemories(memories, 5, nowMs).map(function (m) {
+  const core = memories.filter(isCoreMemory).slice().sort(function (a, b) {
+    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+  });
+  const top = core.map(function (m) {
     return {
       id: m.id, type: m.type, title: m.title,
       content: String(m.content || "").slice(0, 200),
@@ -160,7 +192,7 @@ export function buildContinueData(brain, now) {
     return { id: t.id, title: t.title, status: t.status, priority: t.priority };
   });
   const stats = todoStats(todos);
-  const activeMemories = memories.filter(isActiveMemory);
+  const activeMemories = core;
   const decisions = activeMemories.filter(function (m) { return m.type === "decision"; });
   const inProgress = active.filter(function (t) { return t.status === "in_progress"; })[0];
 

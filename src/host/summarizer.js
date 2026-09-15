@@ -14,13 +14,12 @@
 //
 // 全部 try/catch + swallow：summarizer 抛错不能让 DSH 崩。
 
-import { brainPath, appendJsonl, readBrain, readJsonl, writeJsonl } from "./store/brain-files.js";
-import { makeMemoryEntry } from "./store/brain-logic.js";
+import { brainPath, appendJsonl, readBrain } from "./store/brain-files.js";
 import { detectChanges } from "./diff/detector.js";
 import { scanAndWrite } from "./scan-and-write.js";
 import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
 import { extractSessionMemories } from "./memory/session-extractor.js";
-import { computeDreamActions, applyDreamCommit } from "./store/brain-logic.js";
+import { admitMemory, persistHousekeep } from "./memory/admit.js";
 
 // 从 session 反推 cwd（不依赖 sandboxPolicy）
 function sessionCwd(session) {
@@ -90,42 +89,52 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   const now = Date.now();
   const writes = [];
   let semantic = { status: "not_requested", memories: [], summary: "" };
+  const admittedIds = [];
 
-  // 2) LLM 对话总结为主（决策 2）：从会话对话文本抽取稳定语义记忆 + 会话总结，
-  //    git diff 仅作为参考证据喂给 LLM。任何错误都降级，不影响 Session 关闭。
   try {
     semantic = await extractSessionMemories({ session, llm, route, sessionId, existingMemories: brain.memories, config, now: now + 1, diffEvidence });
     for (const entry of semantic.memories) {
-      writes.push(() => appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry));
+      const grounded = !(entry.source && entry.source.grounded === false);
+      if (!grounded && Number(entry.confidence) < 0.6) continue;
+      const result = await admitMemory({
+        fs,
+        projectPath,
+        candidate: {
+          type: entry.type,
+          title: entry.title,
+          content: entry.content,
+          importance: entry.importance,
+          confidence: entry.confidence,
+          relatedFiles: entry.relatedFiles,
+          tags: entry.tags,
+          source: entry.source,
+          supersedes: entry.source && entry.source.supersedes,
+        },
+        channel: "automatic",
+        now: entry.createdAt || now,
+        llmConfirm: {
+          admit: true,
+          type: entry.type,
+          supersedes: entry.source && entry.source.supersedes,
+        },
+        pinnedIds: admittedIds,
+      });
+      if (result.ok && result.action === "insert" && result.id) {
+        admittedIds.push(result.id);
+      }
     }
-    if (semantic.memories.length) log("info", `summarizer: appended ${semantic.memories.length} semantic memories`);
+    if (admittedIds.length) log("info", `summarizer: admitted ${admittedIds.length} semantic memories`);
     if (semantic.summary) log("info", "summarizer: session summary generated (" + semantic.summary.length + " chars)");
   } catch (e) {
     semantic = { status: "failed", memories: [], summary: "", error: String((e && e.message) || e) };
     log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
   }
 
-  // 3) fallback：LLM 不可用 / 无输出时，才用 git diff 生成一条 change 记忆兜底
-  if (semantic.memories.length === 0 && changedFiles.length > 0 && !duplicateChange) {
-    const title = `本次 session 改动 ${changedFiles.length} 个文件`;
-    const content = "改动的文件：\n" + changedFiles.map((f) => "- " + f).join("\n") +
-      (diff.stat ? "\n\ngit diff --stat:\n" + diff.stat : "");
-    const entry = makeMemoryEntry({
-      type: "change",
-      title,
-      content,
-      importance: 0.55,
-      relatedFiles: changedFiles.slice(0, 20),
-      source: { kind: "session_summary", fingerprint, sessionId: sessionId || null },
-    }, now);
-    writes.push(async () => {
-      const ok = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
-      log(ok ? "info" : "warn", `summarizer: change memory fallback ${ok ? "appended" : "FAILED"} (${entry.id})`);
-    });
-    log("info", `summarizer: git diff fallback recorded ${changedFiles.length} changed files (no LLM memories)`);
+  if (changedFiles.length > 0) {
+    log("info", `summarizer: git diff noted ${changedFiles.length} files (timeline only, no change memory)`);
   } else if (duplicateChange) {
     log("info", "summarizer: unchanged git window already recorded (" + fingerprint + ")");
-  } else if (changedFiles.length === 0) {
+  } else {
     log("info", "summarizer: no git diff (non-git repo or no changes)");
   }
 
@@ -133,68 +142,38 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
     title: "Session 摘要完成" + (changedFiles.length > 0
-      ? "（" + changedFiles.length + " 文件变更，" + semantic.memories.length + " 条语义记忆）"
-      : "（" + semantic.memories.length + " 条语义记忆）"),
+      ? "（" + changedFiles.length + " 文件变更，" + admittedIds.length + " 条语义记忆）"
+      : "（" + admittedIds.length + " 条语义记忆）"),
     eventType: "session_summary",
     occurredAt: now,
-    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + semantic.memories.length + " semanticStatus=" + semantic.status,
+    detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + admittedIds.length + " semanticStatus=" + semantic.status + (changedFiles.length ? " files=" + changedFiles.slice(0, 20).join(",") : ""),
     sessionId: sessionId || null,
     summary: semantic.summary || "",
     changeFingerprint: fingerprint,
     deduplicated: duplicateChange,
     semanticStatus: semantic.status,
-    semanticMemories: semantic.memories.length,
+    semanticMemories: admittedIds.length,
   };
   writes.push(async () => {
     const ok = await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry);
     log(ok ? "info" : "warn", `summarizer: timeline event ${ok ? "appended" : "FAILED"} (${timelineEntry.id})`);
   });
 
-  // DSH fs does not expose an atomic append primitive. Serialize writes so
-  // multiple semantic memories cannot read the same old JSONL and overwrite
-  // one another.
   for (const write of writes) await write();
 
-  // 4.5) Auto-Dream：memory.jsonl 超过阈值时自动跑 light dream，去重 + 归档低 importance
-  //      保证长期使用下记忆库不无限膨胀、不污染检索
-  const autoDreamThreshold = (config && Number(config.autoDreamThreshold)) || 30;
   let autoDreamResult = null;
   try {
-    const allMemories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
-    if (Array.isArray(allMemories) && allMemories.length >= autoDreamThreshold) {
-      const before = allMemories.length;
-      const opts = {
-        now: Date.now(),
-        mergeThreshold: 0.92,
-        archiveImportance: 0.15,
-        archiveAgeDays: 30,
-      };
-      const computed = computeDreamActions(allMemories, opts);
-      const nextMemories = applyDreamCommit(allMemories, computed.plannedActions, opts.now, "light");
-      const wroteDream = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), nextMemories);
-      if (wroteDream) {
-        autoDreamResult = {
-          triggered: true,
-          beforeCount: before,
-          afterCount: nextMemories.length,
-          merged: computed.mergeCount,
-          archived: computed.archiveCount,
-          threshold: autoDreamThreshold,
-        };
-        log("info", `summarizer: auto-dream triggered (${before}→${nextMemories.length}, merge=${computed.mergeCount} archive=${computed.archiveCount})`);
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
-          id: "evt-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
-          title: "自动 Dream 完成（" + computed.mergeCount + " 合并 · " + computed.archiveCount + " 归档）",
-          eventType: "dream",
-          occurredAt: Date.now(),
-          detail: "trigger=auto_summary threshold=" + autoDreamThreshold + " before=" + before + " after=" + nextMemories.length,
-        });
-      }
-    } else {
-      autoDreamResult = { triggered: false, currentCount: Array.isArray(allMemories) ? allMemories.length : 0, threshold: autoDreamThreshold };
-    }
+    const hk = await persistHousekeep(fs, projectPath, { now: Date.now(), pinnedIds: admittedIds });
+    autoDreamResult = {
+      triggered: Boolean(hk && hk.changed),
+      changed: Boolean(hk && hk.changed),
+      actions: (hk && hk.actions) || [],
+      archived: hk && hk.actions ? hk.actions.filter((a) => a.action === "archive_rule").length : 0,
+      evicted: hk && hk.actions ? hk.actions.filter((a) => a.action === "evict_to_dormant").length : 0,
+    };
+    if (autoDreamResult.triggered) log("info", "summarizer: housekeep changed memory.jsonl");
   } catch (e) {
-    log("warn", "summarizer: auto-dream failed: " + String((e && e.message) || e));
+    log("warn", "summarizer: housekeep failed: " + String((e && e.message) || e));
   }
 
   // 5) emit preview.changed（让 aggregator 清缓存 + rebuild 触发）
@@ -204,7 +183,7 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: semantic.memories.length, summary: semantic.summary || "", autoDream: autoDreamResult };
+  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: admittedIds.length, summary: semantic.summary || "", autoDream: autoDreamResult };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed

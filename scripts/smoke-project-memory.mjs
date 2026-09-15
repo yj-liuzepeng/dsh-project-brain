@@ -143,10 +143,11 @@ assert.equal(first.changedFiles > 0, true);
 const sameSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-1" });
 assert.equal(sameSession.skipped, "session_already_summarized");
 const secondSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-2" });
-assert.equal(secondSession.deduplicated, true);
+assert.equal(secondSession.skipped == null, true, "不同 session 仍会写 timeline 摘要");
+assert.equal(secondSession.semanticMemories || 0, 0, "无 LLM 时 git diff 不写 change 记忆");
 const semanticJson = JSON.stringify({ memories: [
-  { type: "decision", title: "选择事务数据库", content: "项目决定使用支持事务的数据库，以保障订单写入一致性。", importance: 0.8, confidence: 0.9 },
-  { type: "requirement", title: "订单必须保持一致", content: "订单创建流程必须保证跨表写入的一致性和可恢复性。", importance: 0.85, confidence: 0.9 },
+  { type: "decision", title: "选择事务数据库", content: "项目决定使用支持事务的数据库，以保障订单写入一致性。", evidence: "业务数据库必须支持事务能力", durable: true, importance: 0.8, confidence: 0.9 },
+  { type: "requirement", title: "订单必须保持一致", content: "订单创建流程必须保证跨表写入的一致性和可恢复性。", evidence: "跨表写入的一致性和故障恢复", durable: true, importance: 0.85, confidence: 0.9 },
 ] });
 const semanticSession = { deriveMessages() { return [{ role: "user", content: [{ type: "text", text: "我们经过方案评审，决定业务数据库必须支持事务能力，用于保证订单创建时跨表写入的一致性和故障恢复。请把这个长期约束记录下来。" }] }]; } };
 const semanticLlm = { async *stream() { yield { type: "text-delta", index: 0, text: semanticJson }; yield { type: "finish", reason: { kind: "stop" } }; } };
@@ -156,7 +157,7 @@ const semanticResult = await summarizeOne({
 });
 assert.equal(semanticResult.semanticMemories, 2);
 const memories = readFileSync(join(projectA, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-assert.equal(memories.filter((item) => item.source && item.source.kind === "session_summary").length, 1);
+assert.equal(memories.filter((item) => item.source && item.source.kind === "session_summary").length, 0);
 assert.equal(memories.filter((item) => item.source && item.source.kind === "session_semantic").length, 2);
 
 // ───────── 改动 6: 实时记忆弱信号检测 ─────────
@@ -176,7 +177,11 @@ assert.ok(strong2 && strong2.strength === "strong", "以后要... → strong sig
 const none1 = detectSignal("今天天气不错");
 assert.equal(none1, null, "无信号 → null");
 const neg1 = detectSignal("记住：commit 时不要 force push");
-assert.equal(neg1, null, "git 假阳性 → null");
+assert.ok(neg1 && neg1.strength === "strong", "记住 + git 词仍是强信号");
+const spokenComma = detectSignal("帮我记住，我喜欢简洁高效，言简意赅的回答方式");
+assert.ok(spokenComma && spokenComma.strength === "strong", "帮我记住，… → strong");
+assert.equal(String(spokenComma.content).startsWith("，"), false, "记住后的中文逗号不能进正文");
+assert.match(spokenComma.content, /^我喜欢简洁高效/);
 
 // ───────── 改动 3: Grounding check ─────────
 const transcript = "USER: 我们经过方案评审，决定业务数据库必须支持事务能力。\nASSISTANT: 好的，记录下来。";
@@ -190,7 +195,7 @@ assert.equal(evidenceMatchesTranscript(null, transcript), false, "null evidence 
 // extractSessionMemories: evidence 正确 → grounded=true + 正常 confidence
 const longTranscript = "我们决定业务数据库必须支持事务能力，用于保障订单写入一致性和故障恢复。请把这个长期约束记录下来并应用到所有订单相关的开发任务。";
 const goodEvidenceJson = JSON.stringify({ summary: "s", memories: [
-  { type: "decision", title: "支持事务的数据库", content: "项目决定业务数据库必须支持事务能力，用于保障订单写入一致性。", evidence: "业务数据库必须支持事务能力", importance: 0.9, confidence: 0.9 },
+  { type: "decision", title: "支持事务的数据库", content: "项目决定业务数据库必须支持事务能力，用于保障订单写入一致性。", evidence: "业务数据库必须支持事务能力", durable: true, importance: 0.9, confidence: 0.9 },
 ] });
 const goodLlm = { async *stream() { yield { type: "text-delta", index: 0, text: goodEvidenceJson }; yield { type: "finish", reason: { kind: "stop" } }; } };
 const goodResult = await extractSessionMemories({
@@ -205,7 +210,7 @@ assert.equal(goodResult.memories[0].confidence, 0.9, "grounded confidence 保持
 // extractSessionMemories: evidence 错误 → confidence 被压低 + source.grounded=false
 const badTranscript = "我们讨论了数据库选型，经过评审一致认为应该选用 PostgreSQL 14，支持事务能力与 JSONB 数据类型。";
 const badEvidenceJson = JSON.stringify({ summary: "s", memories: [
-  { type: "decision", title: "使用 MongoDB", content: "项目决定使用 MongoDB 替代关系数据库。", evidence: "MongoDB 性能比 PostgreSQL 好三倍", importance: 0.8, confidence: 0.95 },
+  { type: "decision", title: "使用 MongoDB", content: "项目决定使用 MongoDB 替代关系数据库。", evidence: "MongoDB 性能比 PostgreSQL 好三倍", durable: true, importance: 0.8, confidence: 0.95 },
 ] });
 const badLlm = { async *stream() { yield { type: "text-delta", index: 0, text: badEvidenceJson }; yield { type: "finish", reason: { kind: "stop" } }; } };
 const badResult = await extractSessionMemories({
@@ -220,7 +225,7 @@ assert.ok(badResult.memories[0].confidence <= 0.4, "grounding 失败的 confiden
 // extractSessionMemories: 没给 evidence → confidence 压到 0.55
 const noEvTranscript = "我学到了测试很重要，每次发版前都应该跑全套测试覆盖，否则会出生产事故。";
 const noEvidenceJson = JSON.stringify({ summary: "s", memories: [
-  { type: "lesson", title: "测试很重要", content: "每次发版前都应该跑全套测试覆盖，否则可能出生产事故。", importance: 0.7, confidence: 0.9 },
+  { type: "lesson", title: "测试很重要", content: "每次发版前都应该跑全套测试覆盖，否则可能出生产事故。", durable: true, importance: 0.7, confidence: 0.9 },
 ] });
 const noEvLlm = { async *stream() { yield { type: "text-delta", index: 0, text: noEvidenceJson }; yield { type: "finish", reason: { kind: "stop" } }; } };
 const noEvResult = await extractSessionMemories({
@@ -262,20 +267,14 @@ ctxC.emit("agent/session-start", { agent: { session: { id: "session-c", header: 
 await new Promise((resolveWait) => setTimeout(resolveWait, 80));
 const sectionC = sectionsC.find((item) => item.name === "project-brain-context");
 const renderedC = sectionC.text({ agent: { session: { id: "session-c", header: { cwd: projectC } } } });
-assert.match(renderedC, /最近决策链/, "injector 必须渲染「最近决策链」段");
-// 验证决策链段只取最近 3 条（按 createdAt 倒序：a1 > d3 > d2，含 1 条 architecture + 2 条 decision）
-const decisionSection = renderedC.match(/### 最近决策链[\s\S]*?(?=\n### |\n## )/);
-assert.ok(decisionSection, "能定位到「最近决策链」段");
-const decisionSectionContent = decisionSection[0];
-assert.match(decisionSectionContent, /分层架构/, "决策链含最近的 architecture（a1）");
-assert.match(decisionSectionContent, /前端用 Vue 3/, "决策链含最近的 decision（d3）");
-assert.match(decisionSectionContent, /API 用 Fastify/, "决策链含次新的 decision（d2）");
-// 最早的 d1 和非 decision/architecture 的 b1 不应进入决策链
-assert.doesNotMatch(decisionSectionContent, /使用 PostgreSQL 14/, "决策链不混入最早的 d1（超出 Top3）");
-assert.doesNotMatch(decisionSectionContent, /修复某个 bug/, "决策链不混入 bug 类型（b1）");
-// 决策链数量上限：<=3 条
-const decisionItemCount = (decisionSectionContent.match(/^- /gm) || []).length;
-assert.ok(decisionItemCount <= 3, `决策链 ≤ 3 条 (实际 ${decisionItemCount})`);
+assert.match(renderedC, /### Core 记忆/, "injector 必须渲染 Core 记忆");
+assert.match(renderedC, /使用 PostgreSQL 14/, "Core 含全部 active，包括较早的决策");
+assert.match(renderedC, /前端用 Vue 3/);
+assert.match(renderedC, /API 用 Fastify/);
+assert.match(renderedC, /分层架构/);
+assert.match(renderedC, /修复某个 bug/, "Core 含 bug 类型，不再用决策链 Top-3 截断");
+assert.doesNotMatch(renderedC, /最近决策链/, "已移除最近决策链段");
+assert.doesNotMatch(renderedC, /无需再次确认/, "不得再提示记住就调 memory_add");
 
 // ───────── 改动 5: project_memory_archive / project_memory_supersede ─────────
 const archiveExec = { sessionId: "arch-1", session: { id: "arch-1", header: { cwd: projectC } } };
@@ -358,22 +357,22 @@ const autoDreamResult = await summarizeOne({
   llm: null, route: null, config: {},
 });
 assert.ok(autoDreamResult.autoDream, "autoDream 字段存在");
-assert.equal(autoDreamResult.autoDream.triggered, true, "auto-dream 触发（≥ 30）");
-assert.ok(autoDreamResult.autoDream.beforeCount >= 30, "beforeCount ≥ 30");
-assert.ok(autoDreamResult.autoDream.merged > 0, "auto-dream 合并了重复 title（merged > 0）");
-assert.ok(autoDreamResult.autoDream.afterCount < autoDreamResult.autoDream.beforeCount, "合并后 memory 数明显下降");
+assert.equal(autoDreamResult.autoDream.triggered, true, "housekeep 因 Core cap 触发写盘");
+assert.ok(autoDreamResult.autoDream.evicted > 0, "超额 active 被标 dormant");
+const afterHousekeep = readFileSync(join(projectD, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(afterHousekeep.length, 32, "housekeep 不得因标题相似删除行");
+assert.ok(afterHousekeep.filter((m) => m.status === "dormant").length >= 17, "超出 15 条的 Core 进入 dormant");
+assert.equal(afterHousekeep.filter((m) => m.status === "deleted").length, 0);
 
-// 验证 timeline 写了 dream 事件
 const dreamTimeline = readFileSync(join(projectD, ".project-brain", "timeline.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-assert.ok(dreamTimeline.some((e) => e.eventType === "dream" && /自动 Dream/.test(e.title)), "timeline 写了自动 Dream 事件");
+assert.ok(dreamTimeline.some((e) => e.eventType === "dream" && /记忆整理完成/.test(e.title)), "timeline 写了 housekeep 事件");
 
-// 第二次 summarizeOne → memory 数已低于阈值，auto-dream 不应触发
 const afterDream = await summarizeOne({
   fs: fsAdapter, projectPath: projectD, sessionId: "dream-2",
   llm: null, route: null, config: {},
 });
 assert.ok(afterDream.autoDream, "autoDream 字段存在");
-assert.equal(afterDream.autoDream.triggered, false, "auto-dream 不触发（已清理到阈值以下）");
+assert.equal(afterDream.autoDream.triggered, false, "第二次 housekeep 无变化不写盘");
 
 // ───────── 改动 7: Settings runtime — Dashboard 设置入口底层 ─────────
 // 无 settings 服务（hotMount/不可用环境）：writable=false, updateSettings 抛 SETTINGS_UNAVAILABLE
@@ -428,4 +427,4 @@ try { await readonlyRuntime.updateSettings({ vectorEnabled: true }); } catch (e)
 assert.ok(threwReadonly, "writable=false 必须抛错");
 
 rmSync(root, { recursive: true, force: true });
-console.log("project memory isolation: 56 assertions PASS");
+console.log("project memory isolation: 59 assertions PASS");

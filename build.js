@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "os";
-import { todoStats, activeTodos, techStackToType } from "./src/host/store/brain-logic.js";
+import { todoStats, activeTodos, techStackToType, isCoreMemory } from "./src/host/store/brain-logic.js";
 import { sanitizeProjectDescription } from "./src/scanner.js";
 import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "./src/stack-taxonomy.js";
 import { buildLocalSuggestion } from "./src/host/suggest.js";
@@ -130,12 +130,19 @@ export function loadProjectData(workspace) {
     }));
 
     // memory（Top3 预览 + 全部给 Dashboard）
-    const memoriesAll = readJsonlFile(join(brainDir, "memory.jsonl"))
-      .filter((m) => m && m.status !== "archived" && m.status !== "superseded" && m.status !== "deleted")
+    const memoriesRaw = readJsonlFile(join(brainDir, "memory.jsonl"));
+    const coreMemories = memoriesRaw.filter(isCoreMemory);
+    const dormantMemories = memoriesRaw.filter((m) => m && m.status === "dormant");
+    const memoriesAll = coreMemories.concat(dormantMemories)
       .slice()
-      .sort((a, b) => (b.importance || 0) - (a.importance || 0) || (b.createdAt || 0) - (a.createdAt || 0))
+      .sort((a, b) => {
+        const ac = isCoreMemory(a) ? 0 : 1;
+        const bc = isCoreMemory(b) ? 0 : 1;
+        if (ac !== bc) return ac - bc;
+        return (b.importance || 0) - (a.importance || 0) || (b.createdAt || 0) - (a.createdAt || 0);
+      })
       .slice(0, 50);
-    const memories = memoriesAll.slice(0, 3);
+    const memories = coreMemories.slice().sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 3);
 
     // todo（真实 stats + Dashboard 全量，active 优先）
     const todosAll = readJsonlFile(join(brainDir, "todo.jsonl"));
@@ -197,12 +204,12 @@ export function loadProjectData(workspace) {
       stats: {
         pendingTodos: stats.pendingTodos,
         completedTodos: stats.completedTodos,
-        decisions: memoriesAll.filter((m) => m.type === "decision").length,
+        decisions: coreMemories.filter((m) => m.type === "decision").length,
       },
       // v0.4.15：build-time 嵌入智能续接建议（仅本地规则，不调 LLM）
       suggestion: buildSuggestForBuild({
         project: raw,
-        memories: memoriesAll,
+        memories: coreMemories,
         todos: todosAll,
         timeline: timelineAll,
         architecture,

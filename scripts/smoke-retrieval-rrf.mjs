@@ -142,8 +142,8 @@ check("rrfMerge 单路未命中 → 该路贡献 0", () => {
   assert.ok(Math.abs(merged[0].relevance - 1 / (DEFAULT_RRF_K + 1)) < 1e-9);
 });
 
-// ───── 7) retrieveMemories 走 RRF 路径 ─────
-check("retrieveMemories 双路全齐 → 走 RRF（relevance 为 RRF 分数）", () => {
+// ───── 7) retrieveMemories 主路径：加权融合（向量只加分，不走 RRF） ─────
+check("retrieveMemories 双路全齐 → 仍走加权（relevance 不是 RRF）", () => {
   const vectors = new Map([
     ["jwt", [1, 0]],
     ["pg", [0, 1]],
@@ -159,11 +159,9 @@ check("retrieveMemories 双路全齐 → 走 RRF（relevance 为 RRF 分数）",
     queryVector,
   });
   assert.ok(hits.length > 0);
-  // jwt 命中 BM25 ("JWT", "认证") + vector ([1,0]) → 双路命中，应排第一
   assert.equal(hits[0].memory.id, "jwt");
-  // RRF relevance 形式: 1/(60+rank1) + 1/(60+rank1) ≈ 0.0328
-  assert.ok(hits[0].relevance > 1 / (DEFAULT_RRF_K + 1));
-  // keywordScore / vectorScore 都应 > 0
+  assert.ok(hits[0].relevance > 0.15);
+  assert.ok(hits[0].relevance <= 1.2);
   assert.ok(hits[0].keywordScore > 0);
   assert.ok(hits[0].vectorScore > 0);
 });
@@ -218,7 +216,7 @@ check("retrieveMemories vectors 为空 → 退加权（即使 queryVector 有值
 });
 
 // ───── 11) 多样性选择（双路下仍生效） ─────
-check("diverseSelect 在 RRF 模式下仍生效（同 type 记忆被降权）", () => {
+check("diverseSelect 在加权主路径下仍生效（同 type 记忆被降权）", () => {
   const tight = [
     makeMemoryEntry({ id: "d1", type: "decision", title: "决策1", content: "类似内容 JWT", importance: 0.8 }, now),
     makeMemoryEntry({ id: "d2", type: "decision", title: "决策2", content: "类似内容 JWT", importance: 0.8 }, now),

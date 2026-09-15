@@ -163,6 +163,7 @@ function applyImpl(ctx, config) {
       updateSettings: memoryRuntime.updateSettings,
       settingsWritable: memoryRuntime.settingsWritable,
       getLlm: llmRuntime.get,
+      resolveEmbeddingCredential: memoryRuntime.resolveCredential,
     });
   } catch (e) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] connection RPC registration failed:", String((e && e.message) || e)); } catch {}
@@ -193,7 +194,7 @@ function applyImpl(ctx, config) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupInjector failed:", String((e && e.message) || e)); } catch {}
   }
 
-  // 4) P0.5 Session 摘要：监听 session/disposed → git diff → 写 change memory + timeline 事件
+  // 4) Session 摘要：监听 session/disposed → 抽取 durable 记忆 + timeline 摘要
   try {
     setupSummarizer(ctx, fs, sandboxPolicy, {
       getMemoryConfig: memoryRuntime.get,

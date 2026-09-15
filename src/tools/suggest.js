@@ -15,6 +15,7 @@ import { readBrain } from "../host/store/brain-files.js";
 import { resolveProjectPath } from "../host/store/path-resolver.js";
 import { resolveSessionRoute, streamLlmText } from "../host/architecture/analyzer.js";
 import { buildLocalSuggestion, buildSuggestPromptForLlm, parseSuggestJson, normalizeSuggestion } from "../host/suggest.js";
+import { ensureHousekeepOnRead } from "../host/memory/admit.js";
 
 const baseOutputSchema = {
   type: "object",
@@ -98,6 +99,7 @@ export function buildSuggestTool({ fs, sandboxPolicy, getLlm }) {
         if (projectPath === ".") {
           return { ok: false, data: { error: { code: "E_NO_PATH", message: "无法从当前 Session 解析 workspace 路径" } } };
         }
+        await ensureHousekeepOnRead(fs, projectPath);
         const brain = await readBrain(fs, projectPath);
         if (!brain.project || brain.project.__error) {
           return { ok: false, data: { error: { code: "E_NOT_INITIALIZED", message: "项目还未初始化 .project-brain/project.json，请先调用 project_init" } } };

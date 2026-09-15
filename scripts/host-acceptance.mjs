@@ -144,9 +144,11 @@ function makeLlmService({ mode = "success" } = {}) {
         payload = JSON.stringify({
           summary: "LLM 增强的会话总结：讨论了 scanAndWrite 拆分方案",
           memories: [
-            { type: "decision", title: "拆分 scanAndWrite", content: "将 scanAndWrite 从 tools.js 拆出到 host/scan-and-write.js，避免 dsh-tools 阻塞 smoke", importance: 0.85, confidence: 0.9, relatedFiles: ["src/tools.js"], tags: ["refactor"] },
+            { type: "decision", title: "拆分 scanAndWrite", content: "将 scanAndWrite 从 tools.js 拆出到 host/scan-and-write.js，避免 dsh-tools 阻塞 smoke", evidence: "决定新建 src/host/scan-and-write.js", durable: true, importance: 0.85, confidence: 0.9, relatedFiles: ["src/tools.js"], tags: ["refactor"] },
           ],
         });
+      } else if (purpose === "project-memory-admit") {
+        payload = JSON.stringify({ admit: true, type: "decision", reason: "durable project fact", supersedes: null });
       } else {
         // 默认 architecture 输出（≥2 个 components 才能通过 ARCHITECTURE_LLM_SCHEMA 校验）
         payload = JSON.stringify({
@@ -411,7 +413,7 @@ async function main() {
   await tools4.execute({ name: "project_init", args: { path: wsA } });
   await tools4.execute({ name: "project_init", args: { path: wsB } });
   // 给 B 加专属记忆
-  await tools4.execute({ name: "project_memory_add", args: { path: wsB, type: "context", title: "B-only", content: "Only visible in workspace B", importance: 0.9 } });
+  await tools4.execute({ name: "project_memory_add", args: { path: wsB, type: "decision", title: "B-only", content: "Only visible in workspace B as a standing decision constraint.", importance: 0.9 } });
 
   const contA = await tools4.execute({ name: "project_continue", args: { path: wsA } });
   const contB = await tools4.execute({ name: "project_continue", args: { path: wsB } });

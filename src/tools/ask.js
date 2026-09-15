@@ -18,6 +18,7 @@ import { activeMemories, retrieveMemories } from "../host/memory/retrieval.js";
 import { embedQuery, ensureEmbeddingIndex } from "../host/memory/embeddings.js";
 import { normalizeMemoryConfig } from "../host/memory/config.js";
 import { resolveSessionRoute, streamLlmText } from "../host/architecture/analyzer.js";
+import { ensureHousekeepOnRead } from "../host/memory/admit.js";
 
 const baseOutputSchema = {
   type: "object",
@@ -126,19 +127,21 @@ export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbedd
   return defineTool({
     name: "project_ask",
     description:
-      "dsh-project-brain: 自然语言查询项目脑。默认使用本地 BM25 检索；配置后可使用混合向量检索，返回 " +
-      "Top-K sources + 项目概览。useLLM=true 时额外调 LLM 合成答案（RAG 风格）。" +
+      "dsh-project-brain: 自然语言查询项目脑。默认 BM25 + 重要度/时效（含 dormant）；向量若已配置只作为加分。" +
+      " 返回 Top-K sources + 项目概览。useLLM=true 时额外调 LLM 合成答案（RAG 风格）。" +
       "可用于回答「为什么这么设计 / 之前踩过什么坑 / 最近改了什么」等问题。",
     parameters: {
       question: { type: "string", description: "自然语言问题（必填）" },
       topK: { type: "number", description: "返回条目数上限，默认 5" },
       useLLM: { type: "boolean", description: "是否调 LLM 合成答案（默认 false，纯规则返回 sources）" },
+      includeArchived: { type: "boolean", description: "是否检索 archived/superseded，默认 false" },
       path: { type: "string", description: "项目根路径（默认从 session cwd 推断）" },
     },
     output: { schema: baseOutputSchema, render: (_args, value) => renderAsk(value) },
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        await ensureHousekeepOnRead(fs, projectPath);
         const question = args && args.question ? String(args.question).trim() : "";
         if (!question) return { ok: false, data: { error: { code: "E_NO_QUESTION", message: "question 必填" } } };
         const topK = Math.max(1, Math.min(20, Number(args && args.topK) || 5));
@@ -151,7 +154,8 @@ export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbedd
         const todos = await readJsonlSafe(fs, brainPath(projectPath, "todo.jsonl"));
         const timeline = await readJsonlSafe(fs, brainPath(projectPath, "timeline.jsonl"));
 
-        const activeMemoryList = activeMemories(memories);
+        const includeArchived = Boolean(args && args.includeArchived);
+        const activeMemoryList = includeArchived ? (memories || []).filter(Boolean) : activeMemories(memories);
         let vectors = null;
         let queryVector = null;
         let vectorState = {

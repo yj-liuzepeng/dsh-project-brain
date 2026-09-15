@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { brainPath, readJsonl, writeJsonl } from "../store/brain-files.js";
+import { resolveEmbeddingApiKey } from "./config.js";
 import { activeMemories, memoryDocument } from "./retrieval.js";
 
 const CACHE_FILE = "cache/embeddings.jsonl";
@@ -12,7 +13,7 @@ export function embeddingModelKey(config) {
   return [config.embeddingBaseURL || "", config.embeddingModel || "", config.embeddingDimensions || "auto"].join("|");
 }
 
-function embeddingEndpoint(baseURL) {
+export function embeddingEndpoint(baseURL) {
   const base = String(baseURL || "").replace(/\/+$/, "");
   return /\/embeddings$/i.test(base) ? base : base + "/embeddings";
 }
@@ -90,11 +91,9 @@ export async function ensureEmbeddingIndex({ fs, projectPath, memories, config, 
 
   if (toIndex.length > 0) {
     try {
-      const apiKey = config.embeddingApiKeyEnv && resolveCredential
-        ? await resolveCredential(config.embeddingApiKeyEnv)
-        : null;
+      const apiKey = await resolveEmbeddingApiKey(config.embeddingApiKeyEnv, resolveCredential);
       if (config.embeddingApiKeyEnv && !apiKey) {
-        const missing = new Error("Embedding credential is not configured: " + config.embeddingApiKeyEnv);
+        const missing = new Error("Embedding credential is not configured");
         missing.code = "EMBEDDING_CREDENTIAL_MISSING";
         throw missing;
       }
@@ -152,11 +151,9 @@ export async function ensureEmbeddingIndex({ fs, projectPath, memories, config, 
 }
 
 export async function embedQuery({ query, config, resolveCredential, signal, fetchImpl } = {}) {
-  const apiKey = config.embeddingApiKeyEnv && resolveCredential
-    ? await resolveCredential(config.embeddingApiKeyEnv)
-    : null;
-  if (config.embeddingApiKeyEnv && !apiKey) {
-    const error = new Error("Embedding credential is not configured: " + config.embeddingApiKeyEnv);
+  const apiKey = await resolveEmbeddingApiKey(config && config.embeddingApiKeyEnv, resolveCredential);
+  if (config && config.embeddingApiKeyEnv && !apiKey) {
+    const error = new Error("Embedding credential is not configured");
     error.code = "EMBEDDING_CREDENTIAL_MISSING";
     throw error;
   }

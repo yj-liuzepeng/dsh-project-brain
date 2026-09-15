@@ -13,10 +13,10 @@ import { scanAndWrite } from "../scan-and-write.js";
 import { buildSuggestTool } from "../../tools/suggest.js";
 import { publicMemoryConfig, normalizeMemoryConfig } from "../memory/config.js";
 import { resolveSessionRoute } from "../architecture/analyzer.js";
+import { probeEmbedding, probeSessionLlm } from "../settings-probe.js";
 import { getGitHistory, getGitBranches, getWorkTreeChanges } from "../git/history.js";
 
 // 把 normalizeMemoryConfig 的冻结对象转成可 JSON 序列化的普通对象（供 RPC 传回 Client）。
-// embeddingApiKeyEnv 只存环境变量名（非密钥本身），无需脱敏；但这里仍打包成纯数据对象。
 function sanitizeSettings(config) {
   const source = normalizeMemoryConfig(config);
   return {
@@ -140,7 +140,7 @@ async function resolveRpcProjectPath(ctx, payload) {
  * every request, so Sessions created after the bundle was built work without a
  * rebuild or a Desktop restart.
  */
-export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, updateSettings, settingsWritable, getLlm }) {
+export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logger, getMemoryConfig, updateSettings, settingsWritable, getLlm, resolveEmbeddingCredential }) {
   if (!connection || !connection.rpc || typeof connection.rpc.handle !== "function") {
     if (logger && typeof logger.warn === "function") {
       logger.warn("[dsh-project-brain] connection.rpc unavailable; runtime preview disabled");
@@ -163,9 +163,34 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
 
       // 插件级设置：不依赖 session workspace，放在此处在 workspace 校验之前处理。
       if (endpoint === "settings") {
-        const action = payload && payload.action === "update" ? "update" : "get";
+        const rawAction = payload && payload.action;
+        const action = rawAction === "update" || rawAction === "probe" ? rawAction : "get";
         const config = getMemoryConfig ? getMemoryConfig() : normalizeMemoryConfig({});
         const writable = settingsWritable ? settingsWritable() : false;
+        if (action === "probe") {
+          const target = payload && payload.target;
+          const overlay = payload && payload.config && typeof payload.config === "object" ? payload.config : {};
+          const merged = normalizeMemoryConfig(Object.assign({}, config, overlay));
+          if (target === "embedding") {
+            const probe = await probeEmbedding({
+              config: merged,
+              resolveCredential: resolveEmbeddingCredential,
+            });
+            return rpcOk({ probe: Object.assign({ target: "embedding" }, probe) });
+          }
+          if (target === "llm") {
+            const llm = getLlm ? getLlm() : null;
+            const route = resolveSessionRoute(getSession(ctx, payload && payload.sessionId));
+            const probe = await probeSessionLlm({
+              llm,
+              route,
+              sessionId: payload && payload.sessionId,
+              timeoutMs: 12000,
+            });
+            return rpcOk({ probe: Object.assign({ target: "llm" }, probe) });
+          }
+          return rpcError("bad-request", "未知探测目标，应为 embedding 或 llm", { target: target || null });
+        }
         if (action === "get") {
           return rpcOk({
             writable,

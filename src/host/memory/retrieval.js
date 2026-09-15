@@ -1,9 +1,9 @@
-import { isActiveMemory, memoryScore } from "../store/brain-logic.js";
+import { isRetrievableMemory, memoryScore } from "../store/brain-logic.js";
 
-export { isActiveMemory };
+export { isRetrievableMemory as isActiveMemory };
 
 export function activeMemories(memories) {
-  return (memories || []).filter(isActiveMemory);
+  return (memories || []).filter(isRetrievableMemory);
 }
 
 export function tokenizeMemoryText(value) {
@@ -196,33 +196,18 @@ function diverseSelect(ranked, topK) {
   return selected;
 }
 
-// ─── 主入口（v0.7.x 双路召回 + 自动 fallback） ─────────────────────────────
-//
-// 策略自动判定：
-//   当 query 非空 AND queryVector != null AND vectors.size > 0 时
-//     → 双路并行召回（BM25 + Vector） + RRF 融合
-//   否则（未配 embedding / 维度不一致 / 无 query）
-//     → 退回加权融合（v0.7.0 原有 5 因子权重，向后兼容）
+// ─── 主入口（Durable Core：加权融合；RRF 仅保留为可测算法，不作为 ask 主路径） ──
 //
 // 返回 hit 形状：{memory, relevance, score, keywordScore, vectorScore}
 //   - score: 多样性惩罚后的最终输出分（兼容 ask.js: hit.score）
-//   - relevance: 融合前分（RRF 值 或 加权和）
-//   - keywordScore / vectorScore: 各路原始分（RRF 模式下保留，余弦 / 归一 BM25）
+//   - relevance: 加权和
+//   - keywordScore / vectorScore: BM25 归一化分 / 余弦相似度
 
 export function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), vectors, queryVector, config = {} } = {}) {
   const candidates = activeMemories(memories);
   const hasQuery = tokenizeMemoryText(query).length > 0;
-  const hasVector = Boolean(queryVector) && Boolean(vectors) && (vectors instanceof Map ? vectors.size > 0 : Object.keys(vectors).length > 0);
 
-  // ── 路径 1：双路召回 + RRF 融合（仅在 query + embedding 同时可用时启动） ──
-  if (hasQuery && hasVector) {
-    const bm25List = bm25Recall(candidates, query);
-    const vecList = vectorRecall(candidates, vectors, queryVector);
-    const fused = rrfMerge([bm25List, vecList], { k: config.rrfK ?? DEFAULT_RRF_K });
-    return diverseSelect(fused, topK);
-  }
-
-  // ── 路径 2（fallback）：v0.7.0 加权融合（保持旧行为） ──────────────────────
+  // Ask 主路径始终是 BM25 + 重要度/时效加权；向量只作为可选加分，不用 RRF 当主合同。
   const keyword = normalizeScoreMap(bm25Scores(candidates, query));
   const vectorRaw = new Map();
   if (queryVector && vectors) {

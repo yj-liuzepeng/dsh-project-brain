@@ -243,13 +243,22 @@
           "dash.entry": "\u5F00\u53D1\u5165\u53E3",
           "dash.todo": "\u5F85\u529E\uFF08\u5168\u90E8\uFF09",
           "dash.timeline": "\u65F6\u95F4\u7EBF",
-          "dash.memory": "\u9879\u76EE\u8BB0\u5FC6\uFF08\u5168\u90E8\uFF09",
+          "dash.memory": "\u9879\u76EE\u8BB0\u5FC6",
+          "dash.memory.core": "\u5F53\u524D Core\uFF08\u6BCF\u8F6E\u6CE8\u5165\uFF09",
+          "dash.memory.dormant": "\u4F11\u7720\uFF08\u4E0D\u6CE8\u5165\uFF0C\u53EF\u7528 project_ask\uFF09",
+          "dash.memory.dormantShow": "\u5C55\u5F00\u4F11\u7720\u8BB0\u5FC6",
+          "dash.memory.dormantHide": "\u6536\u8D77\u4F11\u7720\u8BB0\u5FC6",
           "dash.tab.overview": "\u6982\u89C8",
           "dash.tab.architecture": "\u67B6\u6784",
           "dash.tab.work": "\u4EFB\u52A1\u52A8\u6001",
           "dash.tab.knowledge": "\u9879\u76EE\u8BB0\u5FC6",
           "dash.tab.git": "Git \u5386\u53F2",
           "dash.tab.settings": "\u8BBE\u7F6E",
+          "settings.probe.embedding": "\u6D4B\u8BD5\u5411\u91CF\u8FDE\u901A",
+          "settings.probe.llm": "\u6D4B\u8BD5\u4F1A\u8BDD LLM",
+          "settings.probe.embeddingHint": "\u7528\u5F53\u524D\u8868\u5355\u503C\u8BF7\u6C42\u4E00\u6B21 embeddings\uFF0C\u4E0D\u5199 cache\u3002\u672A\u4FDD\u5B58\u7684\u4FEE\u6539\u4E5F\u4F1A\u7528\u4E8E\u672C\u6B21\u6D4B\u8BD5\u3002",
+          "settings.probe.llmHint": "\u63A2\u6D4B\u5F53\u524D DSH \u4F1A\u8BDD\u7684\u6A21\u578B\u8DEF\u7531\uFF0C\u4F1A\u8BDD\u6458\u8981\u548C\u67B6\u6784\u589E\u5F3A\u7528\u7684\u662F\u540C\u4E00\u6761 LLM\u3002",
+          "settings.probe.running": "\u6D4B\u8BD5\u4E2D\u2026",
           "dash.snapshot": "\u6570\u636E\u5FEB\u7167 \xB7 {time}",
           "dash.none": "\uFF08\u7A7A\uFF09",
           "suggest.title": "\u{1F4A1} \u4F60\u4ECA\u5929\u53EF\u80FD\u60F3\u63A8\u8FDB",
@@ -368,13 +377,22 @@
           "dash.entry": "Entrypoints",
           "dash.todo": "TODO (all)",
           "dash.timeline": "Timeline",
-          "dash.memory": "Memories (all)",
+          "dash.memory": "Memories",
+          "dash.memory.core": "Core (injected every session)",
+          "dash.memory.dormant": "Dormant (askable, not injected)",
+          "dash.memory.dormantShow": "Show dormant memories",
+          "dash.memory.dormantHide": "Hide dormant memories",
           "dash.tab.overview": "Overview",
           "dash.tab.architecture": "Architecture",
           "dash.tab.work": "Work & activity",
           "dash.tab.knowledge": "Knowledge",
           "dash.tab.git": "Git history",
           "dash.tab.settings": "Settings",
+          "settings.probe.embedding": "Test embedding",
+          "settings.probe.llm": "Test session LLM",
+          "settings.probe.embeddingHint": "Sends one embeddings request with the form values. Does not write cache. Unsaved edits are included.",
+          "settings.probe.llmHint": "Pings the current DSH session model used by session summary and architecture enrichment.",
+          "settings.probe.running": "Testing\u2026",
           "dash.snapshot": "Data snapshot \xB7 {time}",
           "dash.none": "(empty)",
           "suggest.title": "\u{1F4A1} Today you may want to continue",
@@ -2465,10 +2483,10 @@
             },
             {
               key: "embeddingApiKeyEnv",
-              label: { "zh-CN": "API Key \u73AF\u5883\u53D8\u91CF", "en-US": "API Key env name" },
-              type: "string",
-              placeholder: "PROJECT_BRAIN_EMBEDDING_API_KEY",
-              hint: { "zh-CN": "\u73AF\u5883\u53D8\u91CF\u540D\uFF08\u4E0D\u662F key \u672C\u8EAB\uFF09", "en-US": "Environment variable name (not the key)" }
+              label: { "zh-CN": "API Key", "en-US": "API Key" },
+              type: "password",
+              placeholder: "sk-\u2026 \u6216 PROJECT_BRAIN_EMBEDDING_API_KEY",
+              hint: { "zh-CN": "\u4F18\u5148\u76F4\u63A5\u586B\u5199 API Key\u3002\u5982\u679C\u586B\u7684\u662F PROJECT_BRAIN_EMBEDDING_API_KEY \u8FD9\u7C7B\u5168\u5927\u5199\u540D\u5B57\uFF0C\u5219\u4E0D\u4F1A\u628A\u5B83\u5F53\u4F5C\u5BC6\u94A5\uFF0C\u800C\u662F\u8BFB\u53D6\u672C\u673A\u540C\u540D\u73AF\u5883\u53D8\u91CF\u7684\u503C\uFF1B\u8BF7\u5148\u5728\u7CFB\u7EDF\u6216\u7528\u6237\u73AF\u5883\u53D8\u91CF\u91CC\u914D\u597D\u8BE5\u9879\uFF0C\u5E76\u5B8C\u5168\u9000\u51FA\u518D\u6253\u5F00 DSH Desktop\u3002", "en-US": "Paste the API key to use it directly. An ALL_CAPS name like PROJECT_BRAIN_EMBEDDING_API_KEY is not the secret: the plugin reads the local environment variable of the same name. Set that env var on this machine, then fully quit and reopen DSH Desktop." }
             },
             {
               key: "embeddingDimensions",
@@ -2485,13 +2503,53 @@
           group: "weights",
           icon: "\u2696\uFE0F",
           title: { "zh-CN": "\u68C0\u7D22\u6743\u91CD", "en-US": "Retrieval weights" },
-          hint: { "zh-CN": "\u68C0\u7D22\u6DF7\u5408\u6253\u5206\u5404\u56E0\u5B50\u6743\u91CD\uFF1B\u603B\u548C\u4E0D\u9700\u8981\u4E3A 1\uFF0C\u4F1A\u81EA\u52A8\u5F52\u4E00\u5316\u3002", "en-US": "Weighted sum; not required to sum to 1 (auto-normalized)." },
+          hint: { "zh-CN": "\u53EA\u4F5C\u7528\u4E8E project_ask \u7684\u8BB0\u5FC6\u6392\u5E8F\uFF08\u4E0D\u7BA1\u5217\u8868\u548C\u4F1A\u8BDD\u6CE8\u5165\uFF09\u3002\u54EA\u9879\u66F4\u5927\u54EA\u9879\u66F4\u4F18\u5148\uFF0C\u4E94\u9879\u76F8\u5BF9\u5927\u5C0F\u5373\u53EF\uFF0C\u4E0D\u5FC5\u51D1\u6210 1\u3002\u4FDD\u5B58\u540E\u4E0B\u6B21\u63D0\u95EE\u751F\u6548\u3002", "en-US": "Applies only to project_ask memory ranking, not list or session inject. Higher = more influence; need not sum to 1. Takes effect on the next ask after save." },
           fields: [
-            { key: "keywordWeight", label: { "zh-CN": "\u5173\u952E\u8BCD\u6743\u91CD", "en-US": "Keyword" }, type: "number", min: 0, max: 1, step: 0.05 },
-            { key: "vectorWeight", label: { "zh-CN": "\u5411\u91CF\u6743\u91CD", "en-US": "Vector" }, type: "number", min: 0, max: 1, step: 0.05 },
-            { key: "importanceWeight", label: { "zh-CN": "\u91CD\u8981\u6027\u6743\u91CD", "en-US": "Importance" }, type: "number", min: 0, max: 1, step: 0.05 },
-            { key: "confidenceWeight", label: { "zh-CN": "\u53EF\u4FE1\u5EA6\u6743\u91CD", "en-US": "Confidence" }, type: "number", min: 0, max: 1, step: 0.05 },
-            { key: "recencyWeight", label: { "zh-CN": "\u65F6\u65B0\u6027\u6743\u91CD", "en-US": "Recency" }, type: "number", min: 0, max: 1, step: 0.05 }
+            {
+              key: "keywordWeight",
+              label: { "zh-CN": "\u5173\u952E\u8BCD\u6743\u91CD", "en-US": "Keyword" },
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              hint: { "zh-CN": "\u5B57\u9762\u5339\u914D\uFF08BM25\uFF09\u3002\u95EE\u9898\u91CC\u6709\u4E13\u6709\u540D\u8BCD\u3001\u6587\u4EF6\u540D\u3001\u672F\u8BED\u65F6\u8C03\u9AD8\u3002", "en-US": "Lexical BM25. Raise when the question contains names, files, or exact terms." }
+            },
+            {
+              key: "vectorWeight",
+              label: { "zh-CN": "\u5411\u91CF\u6743\u91CD", "en-US": "Vector" },
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              hint: { "zh-CN": "\u8BED\u4E49\u76F8\u8FD1\u3002\u540C\u4E49\u6539\u5199\u3001\u8BCD\u5BF9\u4E0D\u4E0A\u65F6\u9760\u8FD9\u9879\u3002\u672A\u5EFA\u5411\u91CF\u6216\u672A\u5F00 hybrid \u65F6\u6B64\u9879\u4E3A 0\u3002", "en-US": "Semantic similarity. Helps paraphrases. Stays 0 until vectors are indexed in hybrid mode." }
+            },
+            {
+              key: "importanceWeight",
+              label: { "zh-CN": "\u91CD\u8981\u6027\u6743\u91CD", "en-US": "Importance" },
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              hint: { "zh-CN": "\u8BB0\u5FC6\u81EA\u5E26\u7684\u91CD\u8981\u6027\u3002\u9ED8\u8BA4\u6700\u5927\uFF0C\u8BA9\u6807\u8FC7\u91CD\u8981\u7684\u51B3\u7B56\u6392\u524D\u9762\u3002", "en-US": "Memory importance. Highest by default so marked decisions rank first." }
+            },
+            {
+              key: "confidenceWeight",
+              label: { "zh-CN": "\u53EF\u4FE1\u5EA6\u6743\u91CD", "en-US": "Confidence" },
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              hint: { "zh-CN": "\u62BD\u53D6\u53EF\u4FE1\u5EA6\u3002\u4E00\u822C\u4FDD\u6301\u8F83\u4F4E\uFF0C\u907F\u514D\u6A21\u578B\u81EA\u8BC4\u6324\u6389\u4E8B\u5B9E\u3002", "en-US": "Extraction confidence. Keep low so model self-scores do not dominate." }
+            },
+            {
+              key: "recencyWeight",
+              label: { "zh-CN": "\u65F6\u65B0\u6027\u6743\u91CD", "en-US": "Recency" },
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              hint: { "zh-CN": "\u8D8A\u65B0\u8D8A\u9AD8\uFF1A\u7EA6 7 \u5929\u5185\u6EE1\u5206\uFF0C\u7EA6 180 \u5929\u964D\u5230 0\u3002", "en-US": "Newer ranks higher: full score within ~7 days, near 0 by ~180 days." }
+            }
           ]
         },
         {
@@ -2542,6 +2600,11 @@
         const locale = localeCode === "en-US" ? "en-US" : "zh-CN";
         const initial = { loaded: false, writable: false, config: {}, dirty: {}, saving: false, error: null, info: null };
         const [state, setState] = React.useState(initial);
+        const [probes, setProbes] = React.useState({
+          embedding: { status: "idle", message: "" },
+          llm: { status: "idle", message: "" }
+        });
+        const [revealSecrets, setRevealSecrets] = React.useState({});
         const loadSettings = React.useCallback(async () => {
           if (!rpc || typeof rpc.call !== "function") {
             setState(Object.assign({}, initial, { loaded: true, error: "DSH Runtime RPC unavailable" }));
@@ -2597,6 +2660,70 @@
         function discard() {
           setState((s) => Object.assign({}, s, { dirty: {}, error: null, info: "\u5DF2\u4E22\u5F03\u672C\u5730\u4FEE\u6539\uFF08\u70B9\u51FB\u300C\u91CD\u65B0\u8BFB\u53D6\u300D\u4F1A\u5237\u65B0\u670D\u52A1\u5668\u503C\uFF09" }));
         }
+        async function runProbe(target) {
+          if (!rpc || typeof rpc.call !== "function" || probes[target] && probes[target].status === "running") return;
+          setProbes((s) => Object.assign({}, s, { [target]: { status: "running", message: t("settings.probe.running") } }));
+          try {
+            const res = await rpc.call("/project-brain", "settings", {
+              sessionId,
+              action: "probe",
+              target,
+              config: state.config
+            });
+            const probe = res && res.ok && res.value && res.value.probe;
+            if (!probe) {
+              const msg = res && res.error && res.error.message || "RPC failed";
+              setProbes((s) => Object.assign({}, s, { [target]: { status: "fail", message: msg } }));
+              return;
+            }
+            const latency = probe.details && probe.details.latencyMs != null ? " \xB7 " + probe.details.latencyMs + "ms" : "";
+            setProbes((s) => Object.assign({}, s, {
+              [target]: { status: probe.ok ? "ok" : "fail", message: String(probe.message || probe.code || "") + latency }
+            }));
+          } catch (e) {
+            setProbes((s) => Object.assign({}, s, { [target]: { status: "fail", message: String(e && e.message || e) } }));
+          }
+        }
+        function renderProbe(target) {
+          const probe = probes[target] || { status: "idle", message: "" };
+          const running = probe.status === "running";
+          const color = probe.status === "ok" ? "var(--dsw-alias-state-success-primary)" : probe.status === "fail" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-secondary)";
+          const label = target === "embedding" ? t("settings.probe.embedding") : t("settings.probe.llm");
+          const hint = target === "embedding" ? t("settings.probe.embeddingHint") : t("settings.probe.llmHint");
+          return React.createElement(
+            "div",
+            { style: { marginTop: "8px", paddingTop: "10px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+            React.createElement(
+              "div",
+              { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" } },
+              React.createElement("button", {
+                type: "button",
+                "data-action": "probe-" + target,
+                "data-probe-btn": "compact",
+                disabled: running || !state.loaded,
+                onClick: () => runProbe(target),
+                style: {
+                  padding: "3px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  fontWeight: "500",
+                  fontFamily: "inherit",
+                  border: "1px solid rgb(186, 216, 238)",
+                  background: "rgb(236, 245, 252)",
+                  color: "rgb(56, 112, 168)",
+                  cursor: running ? "not-allowed" : "pointer",
+                  opacity: running ? 0.6 : 1
+                }
+              }, running ? t("settings.probe.running") : label),
+              probe.message ? React.createElement(
+                "span",
+                { "data-probe-status": probe.status, style: { fontSize: "11px", color } },
+                (probe.status === "ok" ? "\u2713 " : probe.status === "fail" ? "\u2717 " : "") + probe.message
+              ) : null
+            ),
+            React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "4px" } }, hint)
+          );
+        }
         function renderField(field, value) {
           const fieldLabel = settingsFieldLabel(field, locale);
           const hint = settingsFieldHint(field, locale);
@@ -2648,6 +2775,73 @@
               }, (field.options || []).map(
                 (opt) => React.createElement("option", { key: opt.v, value: opt.v }, settingsOptionLabel(opt, locale))
               )),
+              hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null
+            );
+          }
+          if (field.type === "password") {
+            const revealed = !!revealSecrets[field.key];
+            return React.createElement(
+              "div",
+              { key: field.key, style: { marginBottom: "10px" } },
+              React.createElement("label", { htmlFor: inputId, style: labelStyle }, fieldLabel),
+              React.createElement(
+                "div",
+                { style: { position: "relative" } },
+                React.createElement("input", {
+                  id: inputId,
+                  type: revealed ? "text" : "password",
+                  autoComplete: "off",
+                  disabled: !state.writable || state.saving,
+                  value: value == null ? "" : String(value),
+                  placeholder: field.placeholder || "",
+                  onChange: (e) => updateField(field.key, e.target.value),
+                  style: Object.assign({}, inputBase, { paddingRight: "36px", fontFamily: "ui-monospace, monospace" })
+                }),
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    "data-action": "toggle-secret",
+                    "aria-label": revealed ? locale === "en-US" ? "Hide API key" : "\u9690\u85CF\u5BC6\u94A5" : locale === "en-US" ? "Show API key" : "\u663E\u793A\u5BC6\u94A5",
+                    title: revealed ? locale === "en-US" ? "Hide" : "\u9690\u85CF" : locale === "en-US" ? "Show" : "\u663E\u793A",
+                    onClick: () => setRevealSecrets((s) => Object.assign({}, s, { [field.key]: !s[field.key] })),
+                    style: {
+                      position: "absolute",
+                      right: "6px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      width: "24px",
+                      height: "24px",
+                      padding: 0,
+                      border: "none",
+                      borderRadius: "4px",
+                      background: "transparent",
+                      color: "var(--dsw-alias-label-secondary)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }
+                  },
+                  React.createElement(
+                    "svg",
+                    {
+                      width: 16,
+                      height: 16,
+                      viewBox: "0 0 24 24",
+                      fill: "none",
+                      stroke: "currentColor",
+                      strokeWidth: 2,
+                      strokeLinecap: "round",
+                      strokeLinejoin: "round",
+                      "aria-hidden": "true"
+                    },
+                    React.createElement("path", { d: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" }),
+                    React.createElement("circle", { cx: 12, cy: 12, r: 3 }),
+                    revealed ? React.createElement("line", { x1: 3, y1: 3, x2: 21, y2: 21 }) : null
+                  )
+                )
+              ),
               hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "2px" } }, hint) : null
             );
           }
@@ -2710,7 +2904,7 @@
               color: state.writable ? "var(--dsw-alias-state-success-primary)" : "var(--dsw-alias-state-warn-primary)"
             } },
             React.createElement("span", null, state.writable ? "\u2705" : "\u26A0\uFE0F"),
-            React.createElement("span", null, state.writable ? locale === "en-US" ? "Settings writable. Changes persist immediately." : "\u914D\u7F6E\u53EF\u5199\uFF0C\u4FDD\u5B58\u540E\u5373\u65F6\u751F\u6548\u3002" : locale === "en-US" ? "Settings read-only in this runtime (DSH settings service unavailable). Configure via DSH settings panel or env vars." : "\u5F53\u524D\u8FD0\u884C\u65F6\u914D\u7F6E\u4E3A\u53EA\u8BFB\uFF08DSH settings \u670D\u52A1\u4E0D\u53EF\u7528\uFF09\u3002\u8BF7\u901A\u8FC7 DSH \u8BBE\u7F6E\u9762\u677F\u6216\u73AF\u5883\u53D8\u91CF\u914D\u7F6E\u3002"),
+            React.createElement("span", { style: { flex: "1 1 auto", lineHeight: "1.45" } }, state.writable ? locale === "en-US" ? "Settings are writable. After editing, scroll to the bottom of this page and click Save \u2014 unsaved changes do not take effect." : "\u914D\u7F6E\u53EF\u5199\u3002\u6539\u5B8C\u540E\u8BF7\u6EDA\u5230\u672C\u9875\u6700\u5E95\u90E8\u70B9\u300C\u4FDD\u5B58\u300D\uFF1B\u672A\u70B9\u4FDD\u5B58\u4E0D\u4F1A\u751F\u6548\u3002" : locale === "en-US" ? "Settings read-only in this runtime (DSH settings service unavailable). Configure via DSH settings panel or env vars." : "\u5F53\u524D\u8FD0\u884C\u65F6\u914D\u7F6E\u4E3A\u53EA\u8BFB\uFF08DSH settings \u670D\u52A1\u4E0D\u53EF\u7528\uFF09\u3002\u8BF7\u901A\u8FC7 DSH \u8BBE\u7F6E\u9762\u677F\u6216\u73AF\u5883\u53D8\u91CF\u914D\u7F6E\u3002"),
             React.createElement(
               "span",
               { style: { marginLeft: "auto", cursor: "pointer", opacity: 0.85 }, onClick: loadSettings, title: locale === "en-US" ? "Reload" : "\u91CD\u65B0\u8BFB\u53D6" },
@@ -2736,7 +2930,9 @@
                 React.createElement("span", null, settingsGroupTitle(group, locale))
               ),
               group.hint ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginBottom: "10px" } }, settingsFieldHint(group, locale)) : null,
-              group.fields.map((field) => renderField(field, state.config[field.key]))
+              group.fields.map((field) => renderField(field, state.config[field.key])),
+              group.group === "retrieval" ? renderProbe("embedding") : null,
+              group.group === "summary" ? renderProbe("llm") : null
             )
           ),
           React.createElement(
@@ -2805,6 +3001,7 @@
         const [quickActionState, setQuickActionState] = React.useState({});
         const [activeTab, setActiveTab] = React.useState("overview");
         const [memoryModal, setMemoryModal] = React.useState(null);
+        const [dormantOpen, setDormantOpen] = React.useState(false);
         const openMemoryModal = React.useCallback((m) => {
           setMemoryModal(m);
         }, []);
@@ -3477,67 +3674,99 @@
           const blocks = mdParse(src);
           return blocks.map((b, idx) => mdRenderBlock(b, React2, "md-" + idx));
         };
+        const renderMemoryCard = (m) => {
+          const contentStr = m.content ? String(m.content) : "";
+          const hasLongContent = contentStr.length > 200;
+          const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
+          return React.createElement(
+            "article",
+            {
+              key: m.id,
+              "data-mem-id": m.id,
+              "data-mem-status": m.status || "active",
+              onClick: () => openMemoryModal(m),
+              title: "\u70B9\u51FB\u67E5\u770B\u5B8C\u6574\u5185\u5BB9",
+              style: {
+                padding: "12px 14px",
+                background: "var(--dsw-alias-bg-layer-1)",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                borderLeft: "3px solid " + (m.status === "dormant" ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-border-l1)"),
+                borderRadius: "8px",
+                cursor: "pointer",
+                transition: "border-color 0.15s ease, transform 0.1s ease",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                minWidth: 0,
+                minHeight: "120px",
+                opacity: m.status === "dormant" ? 0.82 : 1
+              },
+              onMouseEnter: (e) => {
+                e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
+                e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
+              },
+              onMouseLeave: (e) => {
+                e.currentTarget.style.borderLeftColor = m.status === "dormant" ? "var(--dsw-alias-label-secondary)" : "var(--dsw-alias-border-l1)";
+                e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
+              }
+            },
+            React.createElement(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
+              React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
+              m.status === "dormant" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, "dormant") : null,
+              React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title)
+            ),
+            contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "\u2026" : "")) : null,
+            React.createElement(
+              "div",
+              { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
+              React.createElement(
+                "div",
+                { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
+                m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
+                m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
+                Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null
+              ),
+              contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "\u25B8 \u67E5\u770B\u8BE6\u60C5") : null
+            )
+          );
+        };
+        const coreMemList = memoriesAll.filter((m) => m && m.status !== "dormant");
+        const dormantMemList = memoriesAll.filter((m) => m && m.status === "dormant");
+        const memoryGrid = (items) => React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } }, items.slice(0, 20).map(renderMemoryCard));
         const memoryNode = memoriesAll.length > 0 ? React.createElement(
           "div",
-          { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } },
-          memoriesAll.slice(0, 20).map((m) => {
-            const contentStr = m.content ? String(m.content) : "";
-            const hasLongContent = contentStr.length > 200;
-            const summary = hasLongContent ? contentStr.slice(0, 200) : contentStr;
-            return React.createElement(
-              "article",
-              {
-                key: m.id,
-                "data-mem-id": m.id,
-                onClick: () => openMemoryModal(m),
-                title: "\u70B9\u51FB\u67E5\u770B\u5B8C\u6574\u5185\u5BB9",
-                style: {
-                  padding: "12px 14px",
-                  background: "var(--dsw-alias-bg-layer-1)",
-                  border: "1px solid var(--dsw-alias-border-l1)",
-                  borderLeft: "3px solid var(--dsw-alias-border-l1)",
-                  borderRadius: "8px",
-                  cursor: "pointer",
-                  transition: "border-color 0.15s ease, transform 0.1s ease",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "8px",
-                  minWidth: 0,
-                  minHeight: "120px"
-                },
-                onMouseEnter: (e) => {
-                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-brand-primary)";
-                  e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
-                },
-                onMouseLeave: (e) => {
-                  e.currentTarget.style.borderLeftColor = "var(--dsw-alias-border-l1)";
-                  e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
-                }
-              },
-              // 顶部：type chip + title（标题允许多行，不再 ellipsis）
-              React.createElement(
-                "div",
-                { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
-                React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
-                React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title)
-              ),
-              // 内容区：3 行摘要（不可展开，避免撑爆页面）
-              contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "\u2026" : "")) : null,
-              // 底部：importance + 时间 + tags + 查看按钮
-              React.createElement(
-                "div",
-                { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", marginTop: "auto", paddingTop: "4px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } },
-                React.createElement(
-                  "div",
-                  { style: { display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
-                  m.importance ? React.createElement("span", { title: "importance " + m.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(m.importance)) : null,
-                  m.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(m.createdAt)) : null,
-                  Array.isArray(m.tags) && m.tags.length > 0 ? React.createElement("span", { style: { maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: m.tags.map((tag) => "#" + tag).join(" ") }, m.tags.slice(0, 3).map((tag) => "#" + tag).join(" ")) : null
-                ),
-                contentStr ? React.createElement("span", { style: { fontSize: "10px", padding: "2px 9px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)", flex: "0 0 auto" } }, "\u25B8 \u67E5\u770B\u8BE6\u60C5") : null
-              )
-            );
-          })
+          { style: { display: "flex", flexDirection: "column", gap: "12px" } },
+          React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)" } }, t("dash.memory.core") + " \xB7 " + coreMemList.length),
+          coreMemList.length ? memoryGrid(coreMemList) : emptyNode,
+          dormantMemList.length ? React.createElement(
+            "div",
+            { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            React.createElement("button", {
+              type: "button",
+              "data-action": "toggle-dormant-memories",
+              onClick: () => setDormantOpen((open) => !open),
+              style: {
+                alignSelf: "flex-start",
+                background: "transparent",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontWeight: "600",
+                color: "var(--dsw-alias-label-secondary)",
+                padding: "4px 10px",
+                fontFamily: "inherit"
+              }
+            }, (dormantOpen ? t("dash.memory.dormantHide") : t("dash.memory.dormantShow")) + " \xB7 " + dormantMemList.length),
+            dormantOpen ? React.createElement(
+              "div",
+              null,
+              React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", marginBottom: "8px" } }, t("dash.memory.dormant")),
+              memoryGrid(dormantMemList)
+            ) : null
+          ) : null
         ) : emptyNode;
         const memoryModalNode = memoryModal ? React.createElement(
           "div",
