@@ -1,6 +1,6 @@
 # 发布检查清单
 
-当前发布版本：`1.2.0`（v1.1.1 的 minor 版本，6 项客户端/Host 修复 + 功能）。
+当前发布版本：`1.3.0`（v1.2.0 的 minor 版本，Durable Core 站立记忆 + 架构并列泳道 + 技术栈分层重构 + 截图从 7 张扩到 10 张）。
 
 ## 自动检查
 
@@ -35,7 +35,7 @@ npm audit
 - [x] LLM 不可用、超时或 JSON 异常时正确降级为本地分析（host-acceptance AC-9，4/4）
 - [x] 默认关键词检索正常；可选 Embedding 配置后混合检索正常（smoke-memory-retrieval）
 - [x] 卸载插件不会删除 workspace 中的 `.project-brain/`（host-acceptance AC-11，3/3 + verify:release 文件白名单）
-- [x] 在 DSH Web 或承载 Web Client 的 Desktop 环境验证 Dashboard 与 TodoStrip（用户 2026-09-09 实测通过；流程详见 `USER_VERIFICATION.md`）
+- [x] 在 DSH Web 或承载 Web Client 的 Desktop 环境验证 Dashboard 与 TodoStrip（用户 2026-09-15 实测通过；流程详见 `USER_VERIFICATION.md`）
 - [x] 在至少一个非 Web profile 验证 Host 工具兼容性，或明确记录缺失的 required service（**已知限制**：DSH Desktop 0.1.1-rc.2 当前仅支持 `desktop` / `web` / `headless` profile，无 `cli` / `tui` profile，待 DSH 添加后再验证）
 
 ## 发布分级

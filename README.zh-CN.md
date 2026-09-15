@@ -2,7 +2,7 @@
 
 [English](./README.md) · **简体中文**
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
@@ -11,39 +11,51 @@
 
 它的目标不是让每个新对话重新理解仓库，而是把重要知识沉淀在项目内部，随着持续开发越来越熟悉项目。
 
-> 当前版本：`1.2.0` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（17 个 smoke suite + 30 runtime-workspace + 56 project-memory + 39 host-acceptance + 14 release-verify + DSH Desktop UI 实测）。
+> 当前版本：`1.3.0` 稳定版。核心流程、发布构建、项目隔离、隐私检查和端到端人工验收全部通过自动化验证（19 个 smoke suite + 30 runtime-workspace + 59 project-memory + 39 host-acceptance + 14 release-verify + 1 clean tarball install + DSH Desktop UI 实测）。
 
-[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.2.0) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.3.0) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## 界面预览
 
-### 实时 Dashboard + 智能续接建议 + 快捷操作
+### 项目大脑启动入口（首次扫描前）
 
-![Dashboard 总览、项目状态卡、SuggestionCard「你今天可能想推进」、四个 Quick Action、页签导航到架构 / 任务 / 记忆 / 设置 / Git 历史](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/01.png)
+![启动前引导页：列出三项核心能力（读懂项目 / 跨会话记住 / 接着往下做），底部展示当前 workspace 路径与大号「启动项目大脑」按钮](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/01.png)
 
-### 跨 6 语言技术栈识别
+### 项目状态卡 + 实时数字
 
-![概览 tab：自动识别结构（Monorepo / GitHub Actions）、语言清单（JS / C / Go / Java / Python / Rust）、开发入口（npm run build / src/index.js）](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/02.png)
+![项目卡片：项目名、自动识别的技术栈 chip（GitHub Actions / Monorepo）、项目描述、上次更新时间，下方三栏数字（待办 0 / 项目记忆 3 / 已完成 3）+ 当前阶段进度条 100%](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/02.png)
 
-### 项目定位 + 架构风格 + 分层架构图
+### Dashboard 概览 + 智能续接建议 + Quick Action
 
-![架构 tab：项目定位、架构风格说明、概念分层图（接口层 / 宿主注入层 / 扫描与分析层 / 记忆与检索层），右下角标记 DSH LLM 增强](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/03.png)
+![Dashboard · 项目全景顶栏 + SuggestionCard「你今天可能想推进 · AI 推荐 · 置信度 45%」+ 四个 Quick Action（重新扫描 / 整理待办 / 整理记忆 / 项目全景）+ 概览 tab 的技术栈 / 语言 / 开发入口三列](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/03.png)
 
-### 项目待办与开发时间线
+### 架构 tab · 并列泳道分层图
 
-![任务动态 tab：待办列表为空时显示空状态，时间线展示 project_init / project_rescan 事件](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/04.png)
+![架构 tab：项目定位、架构风格标签、「插件式分层架构」+「DSH LLM 增强」徽标，5 层泳道（接口与桥接层 / 工具与扫描层 / 存储层 / 记忆子系统 / 构建与脚本层），层名靠左、组件靠右](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/04.png)
 
-### 项目记忆（含类型徽章）
+### 架构 tab · 单层展开运行路径
 
-![项目记忆 tab：一条 type=change 记忆，含完整内容与切换说明](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/05.png)
+![点选「会话抽取与混合检索」层后展开的运行路径：横向编号步骤（记忆子系统 → 记忆子系统 → 记忆子系统 → 记忆子系统 → Brain 存储），每步一句职责说明，下方附属文件/风险](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/05.png)
 
-### Dashboard 自建设置（默认本地检索 + 可选 Embedding）
+### 任务动态 · 待办 + 时间线
 
-![设置 tab：检索模式混合、启用向量检索开关、Embedding 地址 / 模型 / API Key 环境变量名、向量维度、批大小、单次最大索引条目，顶部绿色提示"配置可写，保存后即时生效"](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/06.png)
+![任务动态 tab：左侧已完成待办（实时交互记忆 / 会话摘要重构 / 跨对话高保真续接）+ 右侧时间线，按时间倒序展示记忆整理、项目重扫、新增记忆条目](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/06.png)
 
-### Git 历史视图（VSCode 风格时间线）
+### 项目记忆 · 类型徽章 + 重要度星级
 
-![Git 历史 tab：分支切换器（public-main，HEAD 4d5fd15）、自动刷新开关、commit 时间线（提交信息 / hash / 作者 / 时间 / 改动文件数）](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/07.png)
+![项目记忆 tab：当前 Core（每轮注入）· 7 张卡片网格，每张卡片含类型 chip（决策 / Bug / 架构 / 教训 / 备注）、重要度星级、一行摘要、日期、查看详情按钮；底部可展开休眠记忆](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/07.png)
+
+### 设置 · 向量检索 + Embedding 配置
+
+![设置 tab · 检索与向量区域：混合检索模式、启用向量检索开关、Embedding 地址 / 模型 / API Key 输入框、向量维度，顶部绿色提示「配置可写，未点保存不会生效」](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/08.png)
+
+### 设置 · 检索权重 + 测试连通
+
+![设置 tab · 检索权重区域：关键词 / 向量 / 重要性 / 可信度 / 时新性五项权重输入（0.15 / 0.25 / 0.3 / 0.1 / 0.2），每项下方一行配置提示；右下角小号浅蓝「测试向量连通」按钮一键探测 Embedding 端点](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/09.png)
+
+### Git 历史 tab · VSCode 风格时间线
+
+![Git 历史 tab：分支切换器（main · 32 个提交 · 1 个其他分支）、HEAD bd3df6、自动刷新 30s 开关；下方 commit 时间线含 graph 圆点、提交标题、short hash、作者、相对时间、改动文件数摘要；右侧分支 chip](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/10.png)
 
 ## 为什么需要它
 

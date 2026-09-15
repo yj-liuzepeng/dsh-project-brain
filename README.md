@@ -2,7 +2,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
@@ -11,39 +11,51 @@
 
 Instead of making every new conversation rediscover the repository, dsh-project-brain stores structured knowledge inside the project itself and keeps getting more useful as the project evolves.
 
-> Current release: `1.2.0`. The core workflows, release build, isolation checks, privacy checks, and end-to-end acceptance pass automatically across 156 assertions (17 smoke suites + 30 runtime-workspace + 56 project-memory + 39 host-acceptance + 14 release-verify). DSH Desktop UI verified by user on 2026-09-09.
+> Current release: `1.3.0`. The core workflows, release build, isolation checks, privacy checks, and end-to-end acceptance pass automatically across 162 suite-level checks (19 smoke suites + 30 runtime-workspace + 59 project-memory + 39 host-acceptance + 14 release-verify + 1 clean tarball install). DSH Desktop UI verified by user on 2026-09-15.
 
-[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.2.0) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
+[GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.3.0) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
 ## Preview
 
-### Live dashboard with intelligent suggestions and quick actions
+### Project Brain activation entry (before first scan)
 
-![Dashboard overview with live status, SuggestionCard, four quick actions, and tabs to architecture / timeline / memories / settings / Git history](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/01.png)
+![Initial activation screen showing the three core capabilities (read project / remember across sessions / continue from where you left off) and the Start Project Brain button on the current workspace path](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/01.png)
 
-### Tech stack detection across 6 languages
+### Project card with detected stack and live status
 
-![Overview tab showing detected tech stack (Monorepo, GitHub Actions), languages (JS / C / Go / Java / Python / Rust), and dev entry points](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/02.png)
+![Project card showing project name, detected stack chips (GitHub Actions / Monorepo), description, last-updated timestamp, and a three-stat summary (pending TODOs / project memories / completed) with phase progress bar](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/02.png)
 
-### Conceptual architecture layers and runtime flow
+### Dashboard overview with SuggestionCard and Quick Actions
 
-![Architecture tab showing project positioning, architectural style, and a layered architecture diagram (interface / host injection / scan & analysis / memory & retrieval)](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/03.png)
+![Dashboard header (Dashboard · project overview), SuggestionCard with AI recommendation and confidence score, four Quick Actions (rescan / organize TODOs / organize memories / project overview), and the Overview tab showing detected tech stack / language usage / dev entry points](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/03.png)
 
-### TODOs and project timeline
+### Architecture tab — lane-based layered overview
 
-![Activity tab showing empty TODO list and the development timeline with project_init / project_rescan events](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/04.png)
+![Architecture tab with project positioning, architectural style tags, plugin-style layered architecture, and DSH LLM enhancement badge; layers shown as left-label + right-component lanes (interface / tools / storage / memory / build)](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/04.png)
 
-### Project memories with type badges
+### Architecture tab — expanded runtime path for a single layer
 
-![Memories tab showing a persisted change-type memory entry with full content and reasoning](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/05.png)
+![Selecting the session-extraction-and-hybrid-retrieval layer reveals its runtime path: a horizontal numbered flow (memory subsystem → embedding → hybrid retrieval → config-gated vector lookup → Brain storage) with a step-by-step description, files, and risks](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/05.png)
 
-### In-Dashboard settings (BM25 default + optional Embedding)
+### TODOs and development timeline
 
-![Settings tab showing retrieval mode, Embedding URL / model / API key environment variable name, vector dimension, batch size, and max items per call](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/06.png)
+![Activity tab: completed TODOs on the left (real-time memory, session summary, cross-session continuation), and the timeline on the right showing memory-organize events, project_rescan events, and recent memory-add entries with timestamps](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/06.png)
 
-### Git history view (VSCode-style)
+### Project memories with type badges and importance stars
 
-![Git history tab showing branch switcher, commit timeline with messages, hashes, authors, timestamps, and changed file counts](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/2850ae6/docs/screenshots/07.png)
+![Memories tab: Current Core (per-round injection) section with type chips (decision / bug / architecture / lesson / note), importance stars, summary line, date, and View Details button per card; dormant memories collapsible at the bottom](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/07.png)
+
+### Settings — vector retrieval and Embedding config
+
+![Settings tab · Retrieval and Embedding section: hybrid retrieval mode, enable vector switch, Embedding URL / model / API key input fields, vector dimension; top green banner reminds users that unsaved changes do not take effect](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/08.png)
+
+### Settings — retrieval weights and probe button
+
+![Settings tab · Retrieval weights section: keyword / vector / importance / confidence / recency weight inputs (0.15 / 0.25 / 0.3 / 0.1 / 0.2), each with a one-line hint describing what it does; small light-blue Test Vector Connection button probes the live embedding endpoint](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/09.png)
+
+### Git history tab (VSCode-style)
+
+![Git history tab: branch switcher (main, 32 commits, 1 other branch), HEAD hash, auto-refresh 30s toggle; commit timeline with graph dots, commit subject, short hash, author, relative time, and changed-file summary; branch chips on the right](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/10.png)
 
 ## Why use it?
 

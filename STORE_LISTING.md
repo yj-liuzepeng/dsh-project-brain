@@ -1,6 +1,6 @@
 # DSH 插件市场文案
 
-> 发布状态：`1.2.0` 稳定版（v1.1.1 的 minor 版本，6 项客户端/Host 修复 + 功能）。
+> 发布状态：`1.3.0` 稳定版（v1.2.0 的 minor 版本，Durable Core 站立记忆 + 架构并列泳道 + 技术栈分层重构 + 截图从 7 张扩到 10 张）。
 
 ## 名称
 
@@ -52,5 +52,5 @@ dsh-project-brain 为每个 DSH workspace 建立独立的本地“项目大脑�
 - [x] 发布隐私自动检查：无本机路径、Session ID、凭据或 `.project-brain/` 数据
 - [x] `npm audit`：0 vulnerabilities
 - [x] MIT License
-- [x] README 已包含 Dashboard 总览、技术栈识别、架构分层、任务时间线、项目记忆、自建设置和 Git 历史截图（共 7 张）
+- [x] README 已包含项目大脑启动入口、项目状态卡、Dashboard 概览、架构并列泳道（概览 + 展开）、任务动态、项目记忆、自建设置（向量 + 权重）和 Git 历史截图（共 10 张）
 - [ ] 在目标 DSH profile 与客户端环境完成一次真实安装和跨项目切换验收

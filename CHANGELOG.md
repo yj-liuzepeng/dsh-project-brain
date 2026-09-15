@@ -7,29 +7,85 @@
 
 ## Unreleased
 
+---
+
+## [v1.3.0] - 2026-09-15
+
+> **次要版本：Durable Core 站立记忆 + 架构并列泳道 + 技术栈分层重构 + 截图从 7 张扩到 10 张。**
+> 端到端 156/156 全过（19 smoke + 30 runtime-workspace + 56 project-memory + 39 host-acceptance + 14 release-verify），数据格式与 v1.2.0 完全兼容，工具 API 不变。
+
 ### Added（新增）
 
-- **Durable Core 站立记忆**：`active` 全量注入（上限 15 条 / 约 800 token），溢出进 `dormant`；changelog / 活动汇报走规则门槛，不再挤进 Core。
-- **设置页联通测试**：可探测 Embedding 与会话 LLM；API Key 支持直接粘贴（全大写名才当环境变量）。
-- **检索权重说明**：每项权重补充配置提示；连通按钮改为小号浅蓝。
+#### Durable Core 站立记忆（commit `712601b`）
+
+- **`active` 全量注入（上限 15 条 / 约 800 token）**：长期记忆只收跨会话仍为真的决策、约束、架构事实与教训；changelog 与"本次改了哪些文件"走规则门槛，不再挤进 Core。溢出记忆进 `dormant`，仅在 Dashboard 项目记忆 Tab 显示，不进自动注入。
+- **设置页联通测试**：Embedding 与会话 LLM 都可以一键「测试连通」，实时反馈成功 / 失败原因，避免改完不知道有没有生效。API Key 改为可直填（全大写名如 `PROJECT_BRAIN_EMBEDDING_API_KEY` 才会被识别为环境变量引用，否则作为密钥直接使用）。
+- **检索权重说明 + 小号浅蓝连通按钮**：设置 Tab 每项权重下面加一行配置提示词，告诉用户该项在排序时起什么作用、什么场景下应该调高调低；「测试向量连通」按钮改为低饱和浅蓝色，弱化主视觉。
+
+#### 设置页体验细节
+
+- **顶部提示条**：进入设置 Tab 后第一眼看到绿色提示「配置可写，改完后请滚到本页最底部点 [保存]；未点保存不会生效。」——避免用户改完以为已经生效。
+
+#### 截图从 7 张扩到 10 张（README + docs 同源）
+
+- **新增三张**：`docs/screenshots/01.png` 启动前 / `02.png` 项目状态卡 / `08.png` 设置·向量配置 / `09.png` 设置·检索权重——把过去塞在单一概览图里的细节拆出来单独展示，让用户一眼看清每块在做什么。`docs/screenshots/03.png` 改为 Dashboard 顶栏 + SuggestionCard + 四个 Quick Action 的整体观感；`04-05.png` 架构并列泳道（一张概览、一张展开运行路径）；`06.png` 任务动态；`07.png` 项目记忆；`10.png` Git 历史。
+- **URL 锁 v1.3.0 tag**：从 commit SHA 改为 `https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/0X.png`，npm 商店页面会一直指向 v1.3.0 release commit 的截图；后续版本独立维护。
 
 ### Changed（变更）
 
-- **`project_ask` 主路径改为加权融合**：BM25 + 重要度 + 时效，向量只作加分；RRF 保留为可测算法，不再当 ask 主合同。向量 cache 仅在 `project_ask` 成功索引时写入。
-- **设置页顶部提示**：标明保存按钮在页面底部，未保存不生效。
+#### `project_ask` 主路径改为加权融合（commit `712601b`）
 
+- BM25 + 重要度 + 时效 + 类型稳定性 + 多样性五因子加权排序，向量只作加分项。RRF 保留为可测算法（`scripts/smoke-retrieval-rrf.mjs`），不再当 `ask` 的主合同。
+- 向量 cache 仅在 `project_ask` 成功索引时写入，避免空查询 / 缺 embedding 时污染缓存。
+- 注入场景（query 为空 / 向量为空）安全退回五因子加权，保证新 Session 自动注入不被卡住。
+
+#### 技术栈识别分层重构（commit `6627b64`）
+
+- **抽 `src/stack-taxonomy.js` 模块**：把"运行时 / 交付 / 结构 / 工具"分类口径抽出来，`src/scanner.js` 与 `src/host/sidebar/aggregator.js` 共用同一份分类，避免扫描端和汇总端各写一套规则导致分歧。
 - **技术栈卡片按运行时口径分层**：主视野只展示框架 / 网关 / 数据 / 容器等运行时技术；CI、IaC、观测下沉到「交付」次行；Monorepo 等结构标签与 Lint/测试工具保持弱展示。旧 `techStack` 兜底不再把 `ci:` / `structure:` 顶到主 chip。
+- **`language` 维度独立过滤**：扫描的 raw signal 中"语言"成为独立维度，从框架 chip 中剥离，避免 Python 项目里出现「Python 框架: Python」这种冗余。
 - **Dockerfile 即视为 Docker**：存在 Dockerfile 时写入 `stack.container`，不再只在 `FROM nginx` 时才出现基础设施。
 - **架构合并不再把语言名标成框架**：Python / JavaScript / Go 等只留在语言统计，不进 FastAPI / Vue 同一行。
 - **运行时预览补齐 stack**：Dashboard RPC 与 build embed 对齐，下发 `stack` / `structure` 并合并架构识别结果，避免磁盘已有 LangChain 但卡片显示为空。
 - **Python 依赖文件兼容常见拼写**：识别 `requirment.txt` / `requirement.txt` / `requirements-*.txt`。
 - **补齐 Agent 栈**：扫描与架构合并识别 LangGraph；MCP 归入 API 层，不把项目内自定义 `energy_mcp.py` 误标成框架。
+
+#### 架构 Tab 并列泳道（commit `bd3ddf6`）
+
 - **架构 Tab 改为分层鸟瞰**：第一屏只保留短定位、风格标签和分层；点一层才展开经过该层的主链路，组件只保留一句职责。文件/风险作为步骤附属信息，不再单独铺开。
 - **架构图改成泳道展示**：层名靠左、组件靠右，去掉套框与整层变淡；选中用左边线强调。
 - **架构图不再把同层模块画成顺序链路**：点层看并列关系与层职责，点模块看详情；只有真实运行路径才出现编号箭头。
 - **架构图卡片等高对齐**：同层模块标题单行、描述固定两行，避免因文案长短导致高低不齐。
+
+#### 初始化页收敛（commit `bd3ddf6`）
+
 - **初始化页改为 3 条重点**：读懂项目、跨会话记住、接着往下做；其余能力收成一行，避免清单过长。
 - **初始化副标题补上口号**：在说明扫描与跨会话能力后，加上「快速上手，越用越懂，长期把项目做下去。」
+
+### Fixed（修复）
+
+- **`project_ask` 主合同与 RRF 不一致**：v1.1.x 默认走 RRF 双路融合，但 RRF 在 query 为空（自动注入场景）会强制退回加权；v1.3.0 统一以加权为主合同，避免「同一接口不同 query 走不同排序」带来的不可预测性。
+- **语言名误标框架**：v1.2.0 偶发把 Python / JavaScript 等语言名合并进框架 chip（如显示「Python 框架: Python」），v1.3.0 通过 stack-taxonomy 分类后修复。
+
+### 新增 / 升级测试
+
+- **`scripts/smoke-durable-core.mjs`**（新增）：覆盖 active/dormant 分层、规则门槛、15 条上限注入、跨会话稳定性等核心契约。
+- **`scripts/smoke-settings-probe.mjs`**（新增）：覆盖 Embedding / LLM 联通探测、API Key 直填 vs 环境变量名识别、保存提示与即时生效。
+- **`scripts/smoke-scanner-techstack.mjs`**（22 → 60 项）：覆盖 runtime / 交付 / 结构 / 语言四层分类，Dockerfile、Python 拼写变体、LangGraph / MCP 等新增 signal。
+- **`smoke` 套件总数**：17 → 19（新增 2 个）。
+
+### 验证
+
+```
+npm test                    # 19 / 19 smoke suites (含新增 durable-core / settings-probe)
+npm run test:runtime-workspace  # 30 / 30 runtime workspace RPC
+npm run test:project-memory # 56 / 56 project memory isolation
+npm run test:acceptance     # 39 / 39 host-acceptance
+npm run verify:release      # 14 / 14（20 packaged files）
+npm run verify:install      # CLEAN_TARBALL_INSTALL_PASS
+npm publish --dry-run       # OK（registry reach + auth valid）
+npm audit                   # 0 vulnerabilities
+```
 
 ---
 
