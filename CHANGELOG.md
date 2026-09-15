@@ -5,6 +5,19 @@
 
 ---
 
+## Unreleased
+
+### Changed（变更）
+
+- **技术栈卡片按运行时口径分层**：主视野只展示框架 / 网关 / 数据 / 容器等运行时技术；CI、IaC、观测下沉到「交付」次行；Monorepo 等结构标签与 Lint/测试工具保持弱展示。旧 `techStack` 兜底不再把 `ci:` / `structure:` 顶到主 chip。
+- **Dockerfile 即视为 Docker**：存在 Dockerfile 时写入 `stack.container`，不再只在 `FROM nginx` 时才出现基础设施。
+- **架构合并不再把语言名标成框架**：Python / JavaScript / Go 等只留在语言统计，不进 FastAPI / Vue 同一行。
+- **运行时预览补齐 stack**：Dashboard RPC 与 build embed 对齐，下发 `stack` / `structure` 并合并架构识别结果，避免磁盘已有 LangChain 但卡片显示为空。
+- **Python 依赖文件兼容常见拼写**：识别 `requirment.txt` / `requirement.txt` / `requirements-*.txt`。
+- **补齐 Agent 栈**：扫描与架构合并识别 LangGraph；MCP 归入 API 层，不把项目内自定义 `energy_mcp.py` 误标成框架。
+
+---
+
 ## 升级到 v1.2.0（Migration Guide）
 
 从 `v1.1.0` / `v1.1.1` 升级到 `v1.2.0`：
@@ -68,6 +81,7 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.2.0
 - **`src/client.js`**：新增 8 项能力清单的国际化文案；新增 Modal 组件；语言 chip 改用实时排序函数
 - **`src/host/rpc/sidebar.js`**：连接 RPC 改为基于 `connection.session()` 而非本地 `Map` 缓存
 - **`src/host/architecture/analyzer.js`**：兜底条改为可重试，业务文案与按钮注入
+- **`src/client.js` 记忆详情弹框**：v1.2.0 弹框内 `memory.content` 原本以 `whiteSpace: pre-wrap` 展示原始 markdown 文本（`##` / `**` 等符号不渲染）。v1.2.0 patch 新增轻量 markdown 渲染器（`renderMarkdown`，零依赖、纯 React.createElement、支持 `#`/`##`/`###` 标题、`**bold**`/`*italic*`/`` `inline code` ``/`[text](url)`/列表/引用/fenced code/段落/分割线），弹框内容改为渲染输出。同时「复制全文」按钮复制内容从 `[type] title\n\ncontent` 改为 `title\n\ncontent`（去掉 type 前缀，保证复制出去的是最干净的原始 markdown 字符串，未走任何 HTML 转义）。
 
 ### 验证
 

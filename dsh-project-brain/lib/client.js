@@ -1,4 +1,144 @@
 (() => {
+  // src/stack-taxonomy.js
+  var RUNTIME_STACK_FIELDS = [
+    "framework-frontend",
+    "framework-backend",
+    "framework-fullstack",
+    "webserver",
+    "database",
+    "cache",
+    "queue",
+    "search",
+    "container",
+    "mobile",
+    "desktop",
+    "auth",
+    "api",
+    "payment",
+    "ai",
+    "orm"
+  ];
+  var DEVOPS_STACK_FIELDS = ["iac", "ci", "observability"];
+  var LANGUAGE_NAMES = /* @__PURE__ */ new Set([
+    "JavaScript",
+    "TypeScript",
+    "Python",
+    "Go",
+    "Rust",
+    "Java",
+    "C",
+    "C++",
+    "Kotlin",
+    "Scala",
+    "Swift",
+    "Dart",
+    "C#",
+    ".NET",
+    "PHP",
+    "Ruby"
+  ]);
+  var TECHSTACK_TO_STACK_FIELD = {
+    frontend: "framework-frontend",
+    backend: "framework-backend",
+    fullstack: "framework-fullstack",
+    webserver: "webserver",
+    database: "database",
+    cache: "cache",
+    queue: "queue",
+    search: "search",
+    container: "container",
+    mobile: "mobile",
+    desktop: "desktop",
+    auth: "auth",
+    api: "api",
+    payment: "payment",
+    ai: "ai",
+    orm: "orm",
+    iac: "iac",
+    ci: "ci",
+    observability: "observability"
+  };
+  function isLanguageTech(name) {
+    return LANGUAGE_NAMES.has(name);
+  }
+  function itemsOf(map, field) {
+    const value = map && map[field];
+    if (Array.isArray(value)) return value.filter(Boolean).map(String);
+    return value ? [String(value)] : [];
+  }
+  function pushUnique(target, field, item) {
+    if (!item) return;
+    if (!Array.isArray(target[field])) target[field] = [];
+    if (!target[field].includes(item)) target[field].push(item);
+  }
+  function extraOf(map) {
+    return itemsOf(map, "_extra").filter((item) => !isLanguageTech(item));
+  }
+  function partitionStack(stack) {
+    const runtime = {};
+    const devops = {};
+    for (const field of RUNTIME_STACK_FIELDS) {
+      const items = itemsOf(stack, field);
+      if (items.length) runtime[field] = items;
+    }
+    for (const field of DEVOPS_STACK_FIELDS) {
+      const items = itemsOf(stack, field);
+      if (items.length) devops[field] = items;
+    }
+    return { runtime, devops, extra: extraOf(stack) };
+  }
+  function fallbackFromTechStack(techStack, existingStructure) {
+    const runtime = {};
+    const devops = {};
+    const structure = Array.isArray(existingStructure) ? existingStructure.slice() : [];
+    for (const [key, raw] of Object.entries(techStack || {})) {
+      if (key === "_extra") continue;
+      const values = Array.isArray(raw) ? raw.filter(Boolean).map(String) : raw ? [String(raw)] : [];
+      if (key === "structure") {
+        for (const item of values) {
+          if (!structure.includes(item)) structure.push(item);
+        }
+        continue;
+      }
+      const field = TECHSTACK_TO_STACK_FIELD[key];
+      if (!field) continue;
+      const target = DEVOPS_STACK_FIELDS.includes(field) ? devops : runtime;
+      for (const item of values) {
+        if (isLanguageTech(item)) continue;
+        pushUnique(target, field, item);
+      }
+    }
+    return { runtime, devops, extra: extraOf(techStack), structure };
+  }
+  function mergeStructure(structure, techStack) {
+    const out = [];
+    for (const item of [...Array.isArray(structure) ? structure : [], ...itemsOf(techStack, "structure")]) {
+      if (!out.includes(item)) out.push(item);
+    }
+    return out;
+  }
+  function previewStackLayers({ stack, techStack, structure }) {
+    const partitioned = partitionStack(stack || {});
+    const hasRuntime = Object.keys(partitioned.runtime).length > 0;
+    const hasDevops = Object.keys(partitioned.devops).length > 0;
+    const hasExtra = partitioned.extra.length > 0;
+    const mergedStructure = mergeStructure(structure, techStack);
+    if (hasRuntime || hasDevops || hasExtra) {
+      return {
+        runtime: partitioned.runtime,
+        devops: partitioned.devops,
+        extra: partitioned.extra,
+        structure: mergedStructure,
+        usedFallback: false
+      };
+    }
+    const fallback = fallbackFromTechStack(techStack || {}, mergedStructure);
+    return Object.assign({ usedFallback: true }, fallback);
+  }
+  var STACK_FIELD_TO_TECHSTACK = Object.fromEntries(
+    Object.entries(TECHSTACK_TO_STACK_FIELD).map(([legacy, field]) => [field, legacy])
+  );
+
   // src/client.js
   window.__ModuleLoader__.load({
     id: "dsh-project-brain",
@@ -85,6 +225,7 @@
           "st.cancelled": "\u5DF2\u53D6\u6D88",
           "dash.title": "Dashboard \xB7 \u9879\u76EE\u5168\u666F",
           "dash.tech": "\u6280\u672F\u6808",
+          "dash.devops": "\u4EA4\u4ED8",
           "dash.entry": "\u5F00\u53D1\u5165\u53E3",
           "dash.todo": "\u5F85\u529E\uFF08\u5168\u90E8\uFF09",
           "dash.timeline": "\u65F6\u95F4\u7EBF",
@@ -195,6 +336,7 @@
           "st.cancelled": "cancelled",
           "dash.title": "Dashboard \xB7 Full view",
           "dash.tech": "Tech stack",
+          "dash.devops": "Delivery",
           "dash.entry": "Entrypoints",
           "dash.todo": "TODO (all)",
           "dash.timeline": "Timeline",
@@ -2609,23 +2751,145 @@
             [qa.id]: { status: "success", message: resultMessage(action, value) }
           }));
         }
-        const techChips = Object.entries(p.techStack || {}).flatMap(([k, v]) => {
-          const values = Array.isArray(v) ? v : [v];
-          return values.filter(Boolean).map(
-            (item, idx) => React.createElement(
-              "span",
-              { key: k + "-" + idx, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-              React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
-              React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
-              React.createElement("span", { style: { fontWeight: "600" } }, String(item))
-            )
-          );
+        const STACK_ICON = {
+          "framework-frontend": "\u{1F3A8}",
+          "framework-backend": "\u2699\uFE0F",
+          "framework-fullstack": "\u{1F9E9}",
+          "webserver": "\u{1F310}",
+          "database": "\u{1F4BE}",
+          "cache": "\u26A1",
+          "queue": "\u{1F4EC}",
+          "search": "\u{1F50D}",
+          "container": "\u{1F433}",
+          "mobile": "\u{1F4F1}",
+          "desktop": "\u{1F5A5}\uFE0F",
+          "iac": "\u{1F3D7}\uFE0F",
+          "ci": "\u{1F501}",
+          "observability": "\u{1F4CA}",
+          "auth": "\u{1F510}",
+          "api": "\u{1F50C}",
+          "payment": "\u{1F4B3}",
+          "ai": "\u{1F916}",
+          "orm": "\u{1F5C4}\uFE0F"
+        };
+        const stackLayers = previewStackLayers({
+          stack: p.stack || {},
+          techStack: p.techStack || {},
+          structure: p.structure || []
         });
+        const stackChips = [];
+        for (const field of RUNTIME_STACK_FIELDS) {
+          const items = stackLayers.runtime[field] || [];
+          for (const item of items) {
+            stackChips.push(React.createElement(
+              "span",
+              {
+                key: "stack-" + field + "-" + item,
+                title: field,
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "3px 10px",
+                  background: "var(--dsw-alias-bg-layer-2)",
+                  borderRadius: "10px",
+                  fontSize: "11px",
+                  fontWeight: "500",
+                  marginRight: "4px",
+                  marginBottom: "4px",
+                  border: "1px solid var(--dsw-alias-border-l1)"
+                }
+              },
+              React.createElement("span", {
+                style: {
+                  fontSize: "10px",
+                  lineHeight: 1,
+                  opacity: 0.85
+                }
+              }, STACK_ICON[field] || "\u2022"),
+              React.createElement("span", {
+                style: { fontWeight: "600", color: "var(--dsw-alias-label-primary)" }
+              }, String(item))
+            ));
+          }
+        }
+        const devopsChips = [];
+        for (const field of DEVOPS_STACK_FIELDS) {
+          const items = stackLayers.devops[field] || [];
+          for (const item of items) {
+            devopsChips.push(React.createElement(
+              "span",
+              {
+                key: "devops-" + field + "-" + item,
+                title: t("dash.devops") + " \xB7 " + field,
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "2px 8px",
+                  background: "transparent",
+                  borderRadius: "8px",
+                  fontSize: "10px",
+                  fontWeight: "500",
+                  marginRight: "4px",
+                  marginBottom: "4px",
+                  color: "var(--dsw-alias-label-secondary)",
+                  border: "1px solid var(--dsw-alias-border-l1)"
+                }
+              },
+              React.createElement("span", {
+                style: { fontSize: "10px", lineHeight: 1, opacity: 0.85 }
+              }, STACK_ICON[field] || "\u2022"),
+              React.createElement("span", null, String(item))
+            ));
+          }
+        }
+        const structureChips = (stackLayers.structure || []).map(
+          (s) => React.createElement("span", {
+            key: "struct-" + s,
+            title: "\u4EE3\u7801\u7ED3\u6784",
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "3px",
+              padding: "2px 8px",
+              borderRadius: "8px",
+              fontSize: "10px",
+              fontWeight: "500",
+              marginRight: "4px",
+              marginBottom: "4px",
+              background: "transparent",
+              color: "var(--dsw-alias-label-secondary)",
+              border: "1px dashed var(--dsw-alias-border-l1)"
+            }
+          }, "\u{1F4E6}", String(s))
+        );
+        const extraChips = (stackLayers.extra || []).map(
+          (item) => React.createElement("span", {
+            key: "extra-" + item,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "3px 10px",
+              borderRadius: "10px",
+              fontSize: "11px",
+              fontWeight: "500",
+              marginRight: "4px",
+              marginBottom: "4px",
+              background: "transparent",
+              color: "var(--dsw-alias-label-secondary)",
+              border: "1px solid var(--dsw-alias-border-l1)",
+              borderStyle: "dashed"
+            }
+          }, "+", String(item))
+        );
+        const techChips = stackChips;
         const toolingChips = (p.tooling || []).map(
           (tool) => React.createElement(
             "span",
-            { key: "tool-" + tool, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-            React.createElement("span", null, "\u{1F6E0}\uFE0F"),
+            { key: "tool-" + tool, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 7px", background: "transparent", borderRadius: "8px", fontSize: "10px", fontWeight: "500", marginRight: "3px", marginBottom: "4px", color: "var(--dsw-alias-label-secondary)", border: "1px solid var(--dsw-alias-border-l1)" } },
+            React.createElement("span", null, "\u{1F6E0}"),
             React.createElement("span", null, String(tool))
           )
         );
@@ -2719,6 +2983,309 @@
         const importanceStars = (imp) => {
           const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
           return "\u2605".repeat(stars) + "\u2606".repeat(5 - stars);
+        };
+        const mdEscape = (s) => String(s == null ? "" : s);
+        const mdBaseFont = "13.5px";
+        const mdInlineStyle = {
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: "0.88em",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-primary)",
+          padding: "1px 6px",
+          borderRadius: "4px",
+          margin: "0 2px",
+          wordBreak: "break-word"
+        };
+        const mdLinkStyle = {
+          color: "var(--dsw-alias-brand-primary)",
+          textDecoration: "none",
+          borderBottom: "1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent)",
+          wordBreak: "break-word",
+          transition: "border-color 0.15s ease"
+        };
+        const mdStrongStyle = { fontWeight: "700", color: "var(--dsw-alias-label-primary)" };
+        const mdEmStyle = { fontStyle: "italic", color: "var(--dsw-alias-label-primary)" };
+        const mdRenderInline = (text, React2, keyPrefix) => {
+          const re = /(\*\*([^*\n][^*]*?)\*\*)|(\*([^*\n][^*]*?)\*)|(`([^`\n]+)`)|(\[([^\]\n]+)\]\(([^)\s]+)\))/g;
+          const nodes = [];
+          let lastIndex = 0;
+          let m;
+          let i = 0;
+          while ((m = re.exec(text)) !== null) {
+            if (m.index > lastIndex) nodes.push(React2.createElement(React2.Fragment, { key: keyPrefix + "-" + i++ }, text.slice(lastIndex, m.index)));
+            if (m[1] !== void 0) {
+              nodes.push(React2.createElement("strong", { key: keyPrefix + "-" + i++, style: mdStrongStyle }, m[2]));
+            } else if (m[3] !== void 0) {
+              nodes.push(React2.createElement("em", { key: keyPrefix + "-" + i++, style: mdEmStyle }, m[4]));
+            } else if (m[5] !== void 0) {
+              nodes.push(React2.createElement("code", { key: keyPrefix + "-" + i++, style: mdInlineStyle }, m[6]));
+            } else if (m[7] !== void 0) {
+              nodes.push(React2.createElement("a", {
+                key: keyPrefix + "-" + i++,
+                href: m[9],
+                target: "_blank",
+                rel: "noopener noreferrer",
+                style: mdLinkStyle
+              }, m[8]));
+            }
+            lastIndex = re.lastIndex;
+          }
+          if (lastIndex < text.length) nodes.push(React2.createElement(React2.Fragment, { key: keyPrefix + "-" + i++ }, text.slice(lastIndex)));
+          if (nodes.length === 0) nodes.push(React2.createElement(React2.Fragment, { key: keyPrefix + "-0" }, text));
+          return nodes;
+        };
+        const mdRenderBlock = (block, React2, keyPrefix) => {
+          const k = keyPrefix;
+          if (block.kind === "code") {
+            return React2.createElement("pre", {
+              key: k,
+              style: {
+                background: "var(--dsw-alias-bg-base)",
+                borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+                borderRadius: "0 6px 6px 0",
+                padding: "10px 14px",
+                overflowX: "auto",
+                margin: "14px 0",
+                fontSize: "12px",
+                lineHeight: 1.6,
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)"
+              }
+            }, React2.createElement("code", {
+              style: {
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                color: "var(--dsw-alias-label-primary)",
+                whiteSpace: "pre",
+                fontSize: "12px"
+              }
+            }, block.text));
+          }
+          if (block.kind === "heading") {
+            const isMajor = block.level <= 2;
+            const sizeMap = { 1: "20px", 2: "17px", 3: "15px", 4: "14px" };
+            const marginMap = {
+              1: { t: "20px", b: "12px" },
+              2: { t: "18px", b: "10px" },
+              3: { t: "14px", b: "8px" },
+              4: { t: "12px", b: "6px" }
+            };
+            const m = marginMap[block.level] || { t: "12px", b: "6px" };
+            return React2.createElement("div", {
+              key: k,
+              style: {
+                fontSize: sizeMap[block.level] || "14px",
+                fontWeight: "700",
+                lineHeight: 1.35,
+                letterSpacing: block.level === 1 ? "-0.2px" : "0",
+                margin: block.level === 1 ? "0 0 " + m.b : m.t + " 0 " + m.b,
+                color: "var(--dsw-alias-label-primary)",
+                paddingBottom: isMajor ? "6px" : "0",
+                borderBottom: isMajor ? "1px solid var(--dsw-alias-border-l1)" : "none"
+              }
+            }, mdRenderInline(block.text, React2, k + "-h"));
+          }
+          if (block.kind === "hr") {
+            return React2.createElement("div", {
+              key: k,
+              role: "separator",
+              "aria-orientation": "horizontal",
+              style: {
+                height: "1px",
+                background: "linear-gradient(90deg, transparent 0%, var(--dsw-alias-border-l1) 50%, transparent 100%)",
+                margin: "18px 0"
+              }
+            });
+          }
+          if (block.kind === "ul" || block.kind === "ol") {
+            const isOrdered = block.kind === "ol";
+            const Tag = isOrdered ? "ol" : "ul";
+            const listStyle = {
+              listStyle: "none",
+              padding: "0",
+              margin: "10px 0 12px",
+              counterReset: isOrdered ? "md-ol-" + k : void 0
+            };
+            const startIdx = block.start || 1;
+            return React2.createElement(Tag, {
+              key: k,
+              start: isOrdered ? startIdx : void 0,
+              style: listStyle
+            }, block.items.map((item, idx) => {
+              const markerStyle = {
+                flex: "0 0 auto",
+                width: "22px",
+                fontSize: "12px",
+                lineHeight: "1.7",
+                color: "var(--dsw-alias-brand-primary)",
+                fontWeight: "600",
+                textAlign: "right",
+                paddingRight: "10px",
+                boxSizing: "border-box",
+                userSelect: "none",
+                fontVariantNumeric: "tabular-nums"
+              };
+              let markerNode;
+              if (isOrdered) {
+                markerNode = React2.createElement("span", { style: markerStyle }, String(startIdx + idx) + ".");
+              } else {
+                markerNode = React2.createElement("span", {
+                  style: {
+                    flex: "0 0 auto",
+                    width: "22px",
+                    height: "1.7em",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    paddingRight: "10px",
+                    boxSizing: "border-box"
+                  }
+                }, React2.createElement("span", {
+                  style: {
+                    width: "5px",
+                    height: "5px",
+                    borderRadius: "50%",
+                    background: "var(--dsw-alias-brand-primary)",
+                    display: "inline-block"
+                  }
+                }));
+              }
+              return React2.createElement("li", {
+                key: k + "-li-" + idx,
+                style: {
+                  display: "flex",
+                  alignItems: "flex-start",
+                  margin: "0 0 6px",
+                  fontSize: mdBaseFont,
+                  lineHeight: 1.75,
+                  color: "var(--dsw-alias-label-primary)"
+                }
+              }, markerNode, React2.createElement("span", {
+                style: { flex: "1 1 auto", minWidth: 0, wordBreak: "break-word" }
+              }, mdRenderInline(item, React2, k + "-li-" + idx)));
+            }));
+          }
+          if (block.kind === "quote") {
+            return React2.createElement("blockquote", {
+              key: k,
+              style: {
+                margin: "14px 0",
+                padding: "8px 14px",
+                background: "var(--dsw-alias-bg-layer-2)",
+                borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+                borderRadius: "0 6px 6px 0",
+                color: "var(--dsw-alias-label-secondary)",
+                fontSize: "13px",
+                lineHeight: 1.7,
+                fontStyle: "italic"
+              }
+            }, block.lines.map((ln, idx) => React2.createElement("div", {
+              key: k + "-q-" + idx,
+              style: { marginBottom: idx === block.lines.length - 1 ? 0 : "4px" }
+            }, mdRenderInline(ln, React2, k + "-q-" + idx))));
+          }
+          return React2.createElement("div", {
+            key: k,
+            style: {
+              margin: "10px 0",
+              fontSize: mdBaseFont,
+              lineHeight: 1.75,
+              color: "var(--dsw-alias-label-primary)",
+              wordBreak: "break-word",
+              letterSpacing: "0.01em"
+            }
+          }, mdRenderInline(block.text, React2, k + "-p"));
+        };
+        const mdParse = (src) => {
+          const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
+          const blocks = [];
+          let i = 0;
+          while (i < lines.length) {
+            const line = lines[i];
+            const fence = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
+            if (fence) {
+              const fenceCh = fence[2][0];
+              const fenceLen = fence[2].length;
+              const codeLines = [];
+              i++;
+              while (i < lines.length) {
+                const close = lines[i].match(new RegExp("^\\s*`{3,}|~{3,}\\s*$"));
+                if (close && close[0].trim()[0] === fenceCh && close[0].trim().length >= fenceLen) {
+                  i++;
+                  break;
+                }
+                codeLines.push(lines[i]);
+                i++;
+              }
+              blocks.push({ kind: "code", text: codeLines.join("\n") });
+              continue;
+            }
+            if (line.trim() === "") {
+              i++;
+              continue;
+            }
+            if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+              blocks.push({ kind: "hr" });
+              i++;
+              continue;
+            }
+            const h = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+            if (h) {
+              blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
+              i++;
+              continue;
+            }
+            if (/^\s*>\s?/.test(line)) {
+              const qlines = [];
+              while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+                qlines.push(lines[i].replace(/^\s*>\s?/, ""));
+                i++;
+              }
+              blocks.push({ kind: "quote", lines: qlines });
+              continue;
+            }
+            if (/^\s*[-*+]\s+/.test(line)) {
+              const items = [];
+              while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+                items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
+                i++;
+              }
+              blocks.push({ kind: "ul", items });
+              continue;
+            }
+            const ol = line.match(/^\s*(\d+)\.\s+(.*)$/);
+            if (ol) {
+              const items = [];
+              const start = parseInt(ol[1], 10);
+              while (i < lines.length) {
+                const m2 = lines[i].match(/^\s*(\d+)\.\s+(.*)$/);
+                if (!m2) break;
+                items.push(m2[2]);
+                i++;
+              }
+              blocks.push({ kind: "ol", items, start });
+              continue;
+            }
+            const paraLines = [line];
+            i++;
+            while (i < lines.length) {
+              const nxt = lines[i];
+              if (nxt.trim() === "") break;
+              if (/^(\s*)(`{3,}|~{3,})/.test(nxt)) break;
+              if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(nxt)) break;
+              if (/^(#{1,6})\s+/.test(nxt)) break;
+              if (/^\s*>\s?/.test(nxt)) break;
+              if (/^\s*[-*+]\s+/.test(nxt)) break;
+              if (/^\s*\d+\.\s+/.test(nxt)) break;
+              paraLines.push(nxt);
+              i++;
+            }
+            blocks.push({ kind: "paragraph", text: paraLines.join("\n") });
+          }
+          return blocks;
+        };
+        const renderMarkdown = (src, React2) => {
+          if (!src) return null;
+          const blocks = mdParse(src);
+          return blocks.map((b, idx) => mdRenderBlock(b, React2, "md-" + idx));
         };
         const memoryNode = memoriesAll.length > 0 ? React.createElement(
           "div",
@@ -2849,8 +3416,11 @@
                 }
               }, "\xD7")
             ),
-            // 主体：完整内容（pre-wrap + 滚动）
-            React.createElement("div", { style: { padding: "16px 18px", overflowY: "auto", flex: "1 1 auto", fontSize: "13px", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--dsw-alias-label-primary)" } }, memoryModal.content ? String(memoryModal.content) : "\uFF08\u65E0\u5185\u5BB9\uFF09"),
+            // 主体：完整内容（v1.2.x 走 markdown 渲染：标题/列表/代码块/链接等）
+            React.createElement("div", {
+              "data-block": "memory-modal-body",
+              style: { padding: "20px 24px 24px", overflowY: "auto", flex: "1 1 auto", color: "var(--dsw-alias-label-primary)" }
+            }, memoryModal.content ? renderMarkdown(String(memoryModal.content), React) : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "\uFF08\u65E0\u5185\u5BB9\uFF09")),
             // 底部：importance + 时间 + tags + 复制
             React.createElement(
               "div",
@@ -2863,7 +3433,7 @@
                 type: "button",
                 "data-action": "memory-modal-copy",
                 onClick: (e) => {
-                  const text = "[" + typeLabel(memoryModal.type) + "] " + memoryModal.title + "\n\n" + (memoryModal.content || "");
+                  const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
                   copyPrompt(text, e, "\u2713 \u5DF2\u590D\u5236", "\u590D\u5236\u5931\u8D25");
                 },
                 style: {
@@ -2981,7 +3551,15 @@
             activeTab === "overview" ? React.createElement(
               "div",
               { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
-              dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, techChips, toolingChips) : emptyNode),
+              dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + devopsChips.length + toolingChips.length + structureChips.length + extraChips.length > 0 ? React.createElement(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                techChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px" } }, techChips) : null,
+                extraChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, extraChips) : null,
+                devopsChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, devopsChips) : null,
+                structureChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, structureChips) : null,
+                toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, toolingChips) : null
+              ) : emptyNode),
               dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
               dashSection("\u{1F6AA}", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode)
             ) : null,

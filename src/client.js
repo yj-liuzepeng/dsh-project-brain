@@ -1,3 +1,5 @@
+import { previewStackLayers, RUNTIME_STACK_FIELDS, DEVOPS_STACK_FIELDS } from "./stack-taxonomy.js";
+
 // dsh-project-brain Client 入口（v0.5.1：Connection RPC 实时数据 + 离线快照降级）
 // DSH 浏览器侧模块加载格式：window.__ModuleLoader__.load({id, factory})
 //
@@ -94,6 +96,7 @@ window.__ModuleLoader__.load({
         "st.cancelled": "已取消",
         "dash.title": "Dashboard · 项目全景",
         "dash.tech": "技术栈",
+        "dash.devops": "交付",
         "dash.entry": "开发入口",
         "dash.todo": "待办（全部）",
         "dash.timeline": "时间线",
@@ -204,6 +207,7 @@ window.__ModuleLoader__.load({
         "st.cancelled": "cancelled",
         "dash.title": "Dashboard · Full view",
         "dash.tech": "Tech stack",
+        "dash.devops": "Delivery",
         "dash.entry": "Entrypoints",
         "dash.todo": "TODO (all)",
         "dash.timeline": "Timeline",
@@ -2500,20 +2504,141 @@ window.__ModuleLoader__.load({
           [qa.id]: { status: "success", message: resultMessage(action, value) },
         }));
       }
-      const techChips = Object.entries(p.techStack || {}).flatMap(([k, v]) => {
-        // v 可能是 string 或 array（多语言栈并存）；统一展平为多个 chip
-        const values = Array.isArray(v) ? v : [v];
-        return values.filter(Boolean).map((item, idx) =>
-          React.createElement("span", { key: k + "-" + idx, style: { display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-            React.createElement("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-brand-primary)" } }),
-            React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)" } }, k + ":"),
-            React.createElement("span", { style: { fontWeight: "600" } }, String(item)),
-          ),
-        );
+      // 技术栈三层：运行时主视野 → 交付（CI/IaC/观测）→ 工程工具；结构作小角标
+      const STACK_ICON = {
+        "framework-frontend": "🎨",
+        "framework-backend": "⚙️",
+        "framework-fullstack": "🧩",
+        "webserver": "🌐",
+        "database": "💾",
+        "cache": "⚡",
+        "queue": "📬",
+        "search": "🔍",
+        "container": "🐳",
+        "mobile": "📱",
+        "desktop": "🖥️",
+        "iac": "🏗️",
+        "ci": "🔁",
+        "observability": "📊",
+        "auth": "🔐",
+        "api": "🔌",
+        "payment": "💳",
+        "ai": "🤖",
+        "orm": "🗄️",
+      };
+      const stackLayers = previewStackLayers({
+        stack: p.stack || {},
+        techStack: p.techStack || {},
+        structure: p.structure || [],
       });
+      const stackChips = [];
+      for (const field of RUNTIME_STACK_FIELDS) {
+        const items = stackLayers.runtime[field] || [];
+        for (const item of items) {
+          stackChips.push(React.createElement("span", {
+            key: "stack-" + field + "-" + item,
+            title: field,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "3px 10px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              borderRadius: "10px",
+              fontSize: "11px",
+              fontWeight: "500",
+              marginRight: "4px",
+              marginBottom: "4px",
+              border: "1px solid var(--dsw-alias-border-l1)",
+            },
+          },
+            React.createElement("span", {
+              style: {
+                fontSize: "10px",
+                lineHeight: 1,
+                opacity: 0.85,
+              },
+            }, STACK_ICON[field] || "•"),
+            React.createElement("span", {
+              style: { fontWeight: "600", color: "var(--dsw-alias-label-primary)" },
+            }, String(item)),
+          ));
+        }
+      }
+      const devopsChips = [];
+      for (const field of DEVOPS_STACK_FIELDS) {
+        const items = stackLayers.devops[field] || [];
+        for (const item of items) {
+          devopsChips.push(React.createElement("span", {
+            key: "devops-" + field + "-" + item,
+            title: t("dash.devops") + " · " + field,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "2px 8px",
+              background: "transparent",
+              borderRadius: "8px",
+              fontSize: "10px",
+              fontWeight: "500",
+              marginRight: "4px",
+              marginBottom: "4px",
+              color: "var(--dsw-alias-label-secondary)",
+              border: "1px solid var(--dsw-alias-border-l1)",
+            },
+          },
+            React.createElement("span", {
+              style: { fontSize: "10px", lineHeight: 1, opacity: 0.85 },
+            }, STACK_ICON[field] || "•"),
+            React.createElement("span", null, String(item)),
+          ));
+        }
+      }
+      const structureChips = (stackLayers.structure || []).map((s) =>
+        React.createElement("span", {
+          key: "struct-" + s,
+          title: "代码结构",
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            padding: "2px 8px",
+            borderRadius: "8px",
+            fontSize: "10px",
+            fontWeight: "500",
+            marginRight: "4px",
+            marginBottom: "4px",
+            background: "transparent",
+            color: "var(--dsw-alias-label-secondary)",
+            border: "1px dashed var(--dsw-alias-border-l1)",
+          },
+        }, "📦", String(s)),
+      );
+      const extraChips = (stackLayers.extra || []).map((item) =>
+        React.createElement("span", {
+          key: "extra-" + item,
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "3px 10px",
+            borderRadius: "10px",
+            fontSize: "11px",
+            fontWeight: "500",
+            marginRight: "4px",
+            marginBottom: "4px",
+            background: "transparent",
+            color: "var(--dsw-alias-label-secondary)",
+            border: "1px solid var(--dsw-alias-border-l1)",
+            borderStyle: "dashed",
+          },
+        }, "+", String(item)),
+      );
+      const techChips = stackChips;
+      // 工程工具（构建/Lint/测试/类型/包管理）—— 折叠到小字一行
       const toolingChips = (p.tooling || []).map((tool) =>
-        React.createElement("span", { key: "tool-" + tool, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "10px", fontSize: "11px", fontWeight: "500", marginRight: "4px", marginBottom: "4px", border: "1px solid var(--dsw-alias-border-l1)" } },
-          React.createElement("span", null, "🛠️"),
+        React.createElement("span", { key: "tool-" + tool, style: { display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 7px", background: "transparent", borderRadius: "8px", fontSize: "10px", fontWeight: "500", marginRight: "3px", marginBottom: "4px", color: "var(--dsw-alias-label-secondary)", border: "1px solid var(--dsw-alias-border-l1)" } },
+          React.createElement("span", null, "🛠"),
           React.createElement("span", null, String(tool)),
         ),
       );
@@ -2595,6 +2720,331 @@ window.__ModuleLoader__.load({
       const importanceStars = (imp) => {
         const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
         return "★".repeat(stars) + "☆".repeat(5 - stars);
+      };
+      // v1.2.x：记忆详情弹框 markdown 渲染（轻量纯函数，零依赖）
+      //   支持：# ## ### #### 标题、**粗体**、*斜体*、`行内代码`、[text](url) 链接、
+      //         - 无序列表、1. 有序列表、> 引用、--- 分割线、```fenced``` 代码块、段落
+      //   设计要点：
+      //   1) 全部输出走 React.createElement，不用 dangerouslySetInnerHTML → 天然 XSS 免疫
+      //   2) inline 解析用单一正则按 token 切分，避免手写状态机出错
+      //   3) block 解析按行扫描，相同前缀连续行合并成同一 block（list/quote）
+      //   4) 不引第三方库：DSH 客户端 esbuild bundle 产物 < 5KB，CSS 复用现有主题变量
+      //   5) v1.2.x-patch 美化：黄金比例 type scale、克制留白、自定义 list marker、暗色 code block
+      const mdEscape = (s) => String(s == null ? "" : s);
+      // ── 共享样式 ──
+      const mdBaseFont = "13.5px";
+      const mdInlineStyle = {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: "0.88em",
+        background: "var(--dsw-alias-bg-layer-2)",
+        color: "var(--dsw-alias-label-primary)",
+        padding: "1px 6px",
+        borderRadius: "4px",
+        margin: "0 2px",
+        wordBreak: "break-word",
+      };
+      const mdLinkStyle = {
+        color: "var(--dsw-alias-brand-primary)",
+        textDecoration: "none",
+        borderBottom: "1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent)",
+        wordBreak: "break-word",
+        transition: "border-color 0.15s ease",
+      };
+      const mdStrongStyle = { fontWeight: "700", color: "var(--dsw-alias-label-primary)" };
+      const mdEmStyle = { fontStyle: "italic", color: "var(--dsw-alias-label-primary)" };
+      const mdRenderInline = (text, React, keyPrefix) => {
+        // 单一正则：**|*|`|[text](url) 四类 inline 标签；其他原样作为 text token
+        const re = /(\*\*([^*\n][^*]*?)\*\*)|(\*([^*\n][^*]*?)\*)|(`([^`\n]+)`)|(\[([^\]\n]+)\]\(([^)\s]+)\))/g;
+        const nodes = [];
+        let lastIndex = 0;
+        let m;
+        let i = 0;
+        while ((m = re.exec(text)) !== null) {
+          if (m.index > lastIndex) nodes.push(React.createElement(React.Fragment, { key: keyPrefix + "-" + (i++) }, text.slice(lastIndex, m.index)));
+          if (m[1] !== undefined) {
+            nodes.push(React.createElement("strong", { key: keyPrefix + "-" + (i++), style: mdStrongStyle }, m[2]));
+          } else if (m[3] !== undefined) {
+            nodes.push(React.createElement("em", { key: keyPrefix + "-" + (i++), style: mdEmStyle }, m[4]));
+          } else if (m[5] !== undefined) {
+            nodes.push(React.createElement("code", { key: keyPrefix + "-" + (i++), style: mdInlineStyle }, m[6]));
+          } else if (m[7] !== undefined) {
+            nodes.push(React.createElement("a", {
+              key: keyPrefix + "-" + (i++),
+              href: m[9],
+              target: "_blank",
+              rel: "noopener noreferrer",
+              style: mdLinkStyle,
+            }, m[8]));
+          }
+          lastIndex = re.lastIndex;
+        }
+        if (lastIndex < text.length) nodes.push(React.createElement(React.Fragment, { key: keyPrefix + "-" + (i++) }, text.slice(lastIndex)));
+        if (nodes.length === 0) nodes.push(React.createElement(React.Fragment, { key: keyPrefix + "-0" }, text));
+        return nodes;
+      };
+      const mdRenderBlock = (block, React, keyPrefix) => {
+        const k = keyPrefix;
+        if (block.kind === "code") {
+          return React.createElement("pre", {
+            key: k,
+            style: {
+              background: "var(--dsw-alias-bg-base)",
+              borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+              borderRadius: "0 6px 6px 0",
+              padding: "10px 14px",
+              overflowX: "auto",
+              margin: "14px 0",
+              fontSize: "12px",
+              lineHeight: 1.6,
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
+            },
+          }, React.createElement("code", {
+            style: {
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              color: "var(--dsw-alias-label-primary)",
+              whiteSpace: "pre",
+              fontSize: "12px",
+            },
+          }, block.text));
+        }
+        if (block.kind === "heading") {
+          // 黄金比例 type scale: h1=20 / h2=17 / h3=15 / h4=13.5（正文）
+          // h1/h2 加下边线 brand-primary 渐隐做章节感；h3/h4 纯字号 + 字重
+          const isMajor = block.level <= 2;
+          const sizeMap = { 1: "20px", 2: "17px", 3: "15px", 4: "14px" };
+          const marginMap = {
+            1: { t: "20px", b: "12px" },
+            2: { t: "18px", b: "10px" },
+            3: { t: "14px", b: "8px" },
+            4: { t: "12px", b: "6px" },
+          };
+          const m = marginMap[block.level] || { t: "12px", b: "6px" };
+          return React.createElement("div", {
+            key: k,
+            style: {
+              fontSize: sizeMap[block.level] || "14px",
+              fontWeight: "700",
+              lineHeight: 1.35,
+              letterSpacing: block.level === 1 ? "-0.2px" : "0",
+              margin: (block.level === 1 ? "0 0 " + m.b : m.t + " 0 " + m.b),
+              color: "var(--dsw-alias-label-primary)",
+              paddingBottom: isMajor ? "6px" : "0",
+              borderBottom: isMajor ? "1px solid var(--dsw-alias-border-l1)" : "none",
+            },
+          }, mdRenderInline(block.text, React, k + "-h"));
+        }
+        if (block.kind === "hr") {
+          // 渐隐分割线：用 linear-gradient 让两端融于背景（inline style 支持）
+          return React.createElement("div", {
+            key: k,
+            role: "separator",
+            "aria-orientation": "horizontal",
+            style: {
+              height: "1px",
+              background: "linear-gradient(90deg, transparent 0%, var(--dsw-alias-border-l1) 50%, transparent 100%)",
+              margin: "18px 0",
+            },
+          });
+        }
+        if (block.kind === "ul" || block.kind === "ol") {
+          const isOrdered = block.kind === "ol";
+          const Tag = isOrdered ? "ol" : "ul";
+          // 自定义 marker：flex 布局，左列固定宽度放 marker，右列放内容
+          const listStyle = {
+            listStyle: "none",
+            padding: "0",
+            margin: "10px 0 12px",
+            counterReset: isOrdered ? ("md-ol-" + k) : undefined,
+          };
+          const startIdx = block.start || 1;
+          return React.createElement(Tag, {
+            key: k,
+            start: isOrdered ? startIdx : undefined,
+            style: listStyle,
+          }, block.items.map((item, idx) => {
+            const markerStyle = {
+              flex: "0 0 auto",
+              width: "22px",
+              fontSize: "12px",
+              lineHeight: "1.7",
+              color: "var(--dsw-alias-brand-primary)",
+              fontWeight: "600",
+              textAlign: "right",
+              paddingRight: "10px",
+              boxSizing: "border-box",
+              userSelect: "none",
+              fontVariantNumeric: "tabular-nums",
+            };
+            let markerNode;
+            if (isOrdered) {
+              markerNode = React.createElement("span", { style: markerStyle }, String(startIdx + idx) + ".");
+            } else {
+              markerNode = React.createElement("span", {
+                style: {
+                  flex: "0 0 auto",
+                  width: "22px",
+                  height: "1.7em",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  paddingRight: "10px",
+                  boxSizing: "border-box",
+                },
+              }, React.createElement("span", {
+                style: {
+                  width: "5px",
+                  height: "5px",
+                  borderRadius: "50%",
+                  background: "var(--dsw-alias-brand-primary)",
+                  display: "inline-block",
+                },
+              }));
+            }
+            return React.createElement("li", {
+              key: k + "-li-" + idx,
+              style: {
+                display: "flex",
+                alignItems: "flex-start",
+                margin: "0 0 6px",
+                fontSize: mdBaseFont,
+                lineHeight: 1.75,
+                color: "var(--dsw-alias-label-primary)",
+              },
+            }, markerNode, React.createElement("span", {
+              style: { flex: "1 1 auto", minWidth: 0, wordBreak: "break-word" },
+            }, mdRenderInline(item, React, k + "-li-" + idx)));
+          }));
+        }
+        if (block.kind === "quote") {
+          return React.createElement("blockquote", {
+            key: k,
+            style: {
+              margin: "14px 0",
+              padding: "8px 14px",
+              background: "var(--dsw-alias-bg-layer-2)",
+              borderLeft: "3px solid var(--dsw-alias-brand-primary)",
+              borderRadius: "0 6px 6px 0",
+              color: "var(--dsw-alias-label-secondary)",
+              fontSize: "13px",
+              lineHeight: 1.7,
+              fontStyle: "italic",
+            },
+          }, block.lines.map((ln, idx) => React.createElement("div", {
+            key: k + "-q-" + idx,
+            style: { marginBottom: idx === block.lines.length - 1 ? 0 : "4px" },
+          }, mdRenderInline(ln, React, k + "-q-" + idx))));
+        }
+        // paragraph（默认）
+        return React.createElement("div", {
+          key: k,
+          style: {
+            margin: "10px 0",
+            fontSize: mdBaseFont,
+            lineHeight: 1.75,
+            color: "var(--dsw-alias-label-primary)",
+            wordBreak: "break-word",
+            letterSpacing: "0.01em",
+          },
+        }, mdRenderInline(block.text, React, k + "-p"));
+      };
+      const mdParse = (src) => {
+        // 块级解析：按行扫描，识别 fenced code / heading / hr / list / quote / paragraph
+        const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
+        const blocks = [];
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          // fenced code: ``` 或 ~~~ 开头
+          const fence = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
+          if (fence) {
+            const fenceCh = fence[2][0];
+            const fenceLen = fence[2].length;
+            const codeLines = [];
+            i++;
+            while (i < lines.length) {
+              const close = lines[i].match(new RegExp("^\\s*`{3,}|~{3,}\\s*$"));
+              if (close && close[0].trim()[0] === fenceCh && close[0].trim().length >= fenceLen) {
+                i++;
+                break;
+              }
+              codeLines.push(lines[i]);
+              i++;
+            }
+            blocks.push({ kind: "code", text: codeLines.join("\n") });
+            continue;
+          }
+          // 空行：跳过（段落分隔）
+          if (line.trim() === "") { i++; continue; }
+          // hr: --- *** ___ 3+ 连续
+          if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+            blocks.push({ kind: "hr" });
+            i++;
+            continue;
+          }
+          // heading: # ~ ######
+          const h = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+          if (h) {
+            blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
+            i++;
+            continue;
+          }
+          // blockquote: > 开头连续行
+          if (/^\s*>\s?/.test(line)) {
+            const qlines = [];
+            while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+              qlines.push(lines[i].replace(/^\s*>\s?/, ""));
+              i++;
+            }
+            blocks.push({ kind: "quote", lines: qlines });
+            continue;
+          }
+          // unordered list: - * + 开头连续行
+          if (/^\s*[-*+]\s+/.test(line)) {
+            const items = [];
+            while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+              items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
+              i++;
+            }
+            blocks.push({ kind: "ul", items: items });
+            continue;
+          }
+          // ordered list: 数字. 开头连续行
+          const ol = line.match(/^\s*(\d+)\.\s+(.*)$/);
+          if (ol) {
+            const items = [];
+            const start = parseInt(ol[1], 10);
+            while (i < lines.length) {
+              const m2 = lines[i].match(/^\s*(\d+)\.\s+(.*)$/);
+              if (!m2) break;
+              items.push(m2[2]);
+              i++;
+            }
+            blocks.push({ kind: "ol", items: items, start: start });
+            continue;
+          }
+          // paragraph: 收集到下一个空行 / block 起始为止
+          const paraLines = [line];
+          i++;
+          while (i < lines.length) {
+            const nxt = lines[i];
+            if (nxt.trim() === "") break;
+            if (/^(\s*)(`{3,}|~{3,})/.test(nxt)) break;
+            if (/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/.test(nxt)) break;
+            if (/^(#{1,6})\s+/.test(nxt)) break;
+            if (/^\s*>\s?/.test(nxt)) break;
+            if (/^\s*[-*+]\s+/.test(nxt)) break;
+            if (/^\s*\d+\.\s+/.test(nxt)) break;
+            paraLines.push(nxt);
+            i++;
+          }
+          blocks.push({ kind: "paragraph", text: paraLines.join("\n") });
+        }
+        return blocks;
+      };
+      const renderMarkdown = (src, React) => {
+        if (!src) return null;
+        const blocks = mdParse(src);
+        return blocks.map((b, idx) => mdRenderBlock(b, React, "md-" + idx));
       };
       const memoryNode = memoriesAll.length > 0
         ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } },
@@ -2711,8 +3161,11 @@ window.__ModuleLoader__.load({
               },
             }, "×"),
           ),
-          // 主体：完整内容（pre-wrap + 滚动）
-          React.createElement("div", { style: { padding: "16px 18px", overflowY: "auto", flex: "1 1 auto", fontSize: "13px", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--dsw-alias-label-primary)" } }, memoryModal.content ? String(memoryModal.content) : "（无内容）"),
+          // 主体：完整内容（v1.2.x 走 markdown 渲染：标题/列表/代码块/链接等）
+          React.createElement("div", {
+            "data-block": "memory-modal-body",
+            style: { padding: "20px 24px 24px", overflowY: "auto", flex: "1 1 auto", color: "var(--dsw-alias-label-primary)" },
+          }, memoryModal.content ? renderMarkdown(String(memoryModal.content), React) : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "（无内容）")),
           // 底部：importance + 时间 + tags + 复制
           React.createElement("div", { style: { padding: "10px 18px", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-2)" } },
             memoryModal.importance ? React.createElement("span", { title: "importance " + memoryModal.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(memoryModal.importance)) : null,
@@ -2723,7 +3176,8 @@ window.__ModuleLoader__.load({
               type: "button",
               "data-action": "memory-modal-copy",
               onClick: (e) => {
-                const text = "[" + typeLabel(memoryModal.type) + "] " + memoryModal.title + "\n\n" + (memoryModal.content || "");
+                // 复制原始 markdown 字符串：title 一行 + 空行 + 原文（content 本身就是带 markdown 格式的原文，未做任何转换）
+                const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
                 copyPrompt(text, e, "✓ 已复制", "复制失败");
               },
               style: {
@@ -2825,7 +3279,25 @@ window.__ModuleLoader__.load({
         ),
         React.createElement("div", { style: { padding: "12px" }, "data-dashboard-panel": activeTab },
           activeTab === "overview" ? React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
-            dashSection("🛠️", "dash.tech", techChips.length + toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, techChips, toolingChips) : emptyNode),
+            dashSection("🛠️", "dash.tech", (techChips.length + devopsChips.length + toolingChips.length + structureChips.length + extraChips.length) > 0
+              ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                techChips.length > 0
+                  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px" } }, techChips)
+                  : null,
+                extraChips.length > 0
+                  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, extraChips)
+                  : null,
+                devopsChips.length > 0
+                  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, devopsChips)
+                  : null,
+                structureChips.length > 0
+                  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, structureChips)
+                  : null,
+                toolingChips.length > 0
+                  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, toolingChips)
+                  : null,
+              )
+              : emptyNode),
             dashSection("🗂️", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
             dashSection("🚪", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode),
           ) : null,

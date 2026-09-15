@@ -139,6 +139,13 @@ const suggestDismiss = bundle.includes('"data-action": "suggest-dismiss"')
   && bundle.includes('"data-action": "suggest-show"');
 checks.push({ name: "SuggestionCard dismiss + re-show is bundled", ok: suggestDismiss });
 
+// 21) 技术栈主视野不含 CI；交付层与 Dockerfile→Docker 分层文案打进 bundle
+const techStackLayers = bundle.includes("previewStackLayers")
+  && bundle.includes('"dash.devops"')
+  && bundle.includes("framework-backend")
+  && !/RUNTIME_STACK_FIELDS\s*=\s*\[[^\]]*"ci"/.test(bundle);
+checks.push({ name: "tech stack runtime chips exclude CI; delivery row is bundled", ok: techStackLayers });
+
 let pass = 0;
 let fail = 0;
 console.log("=== dsh-project-brain TodoStrip smoke test ===");

@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { todoStats, recentTimeline, techStackToType, activeTodos, isActiveMemory } from "../store/brain-logic.js";
 import { sanitizeProjectDescription } from "../../scanner.js";
+import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "../../stack-taxonomy.js";
 
 const CACHE_TTL_MS = 5000;
 const cache = new Map(); // projectPath -> { ts, data }
@@ -189,8 +190,8 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
     };
   }
 
-  const timeline = timelineAll.slice().sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
-  const visibleMemories = memoriesAll.filter(isActiveMemory);
+  const timeline = (Array.isArray(timelineAll) ? timelineAll : []).filter(Boolean).slice().sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+  const visibleMemories = (Array.isArray(memoriesAll) ? memoriesAll : []).filter(isActiveMemory);
   const recentActivity = timeline.slice(0, 5).map((e) => ({ id: e.id, title: e.title, occurredAt: e.occurredAt, eventType: e.eventType }));
   const memories = visibleMemories.slice().sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 3);
   const stats = todoStats(todosAll);
@@ -218,7 +219,9 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       name: p.name || "(unnamed)",
       type: techStackToType(p.techStack),
       description: sanitizeProjectDescription(p.description) || "",
-      techStack: p.techStack || {},
+      techStack: mergeTechStackWithArchitecture(p.techStack || {}, architecture),
+      stack: mergeStackWithArchitecture(p.stack || {}, architecture),
+      structure: p.structure || [],
       tooling: p.tooling || [],
       languages: p.languages || {},
       entrypoints: p.entrypoints || [],
