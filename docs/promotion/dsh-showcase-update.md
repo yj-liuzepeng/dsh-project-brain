@@ -14,7 +14,9 @@
 
 ## dsh-project-brain · v1.3.0 stable
 
-Persistent project intelligence and memory plugin for [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness). For every DSH workspace, dsh-project-brain builds an independent "project brain" — so AI assistants stop losing context every time you start a new Session.
+Persistent project intelligence and memory plugin for [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness).
+
+**Get started fast. Learn as you go. Stay with the project for the long haul.**
 
 - Repository: https://github.com/yj-liuzepeng/dsh-project-brain
 - npm: https://www.npmjs.com/package/dsh-project-brain
@@ -24,13 +26,13 @@ Persistent project intelligence and memory plugin for [DSH (DeepSeek Harness)](h
 
 ## What it does
 
-- Scans the **current runtime workspace**, recognizing 6 languages (JS/TS / Python / Go / Java / Rust / C-C++), frameworks, entry points, CI, and module layout. Tech stack is layered as **runtime / delivery / structure / language** (v1.3.0 `stack-taxonomy`): main view shows runtime frameworks only; CI, IaC, and observability fall to the "delivery" row.
-- Produces a semantic architecture report (project purpose, architecture style, layers, responsibilities, relationships, runtime flows, key files, reading order). The Architecture tab uses a **lane-based** layout (layer name on the left, components on the right; click a layer to expand the runtime path through it). Uses the current DSH LLM route when available, falls back to deterministic local analysis otherwise.
-- Persists **8 structured memory types** (`decision` / `change` / `bug` / `lesson` / `requirement` / `architecture` / `issue` / `context`) under `<workspace>/.project-brain/`, isolated per workspace.
-- **Durable Core standing memory** (v1.3.0): each new Session automatically gets the full `active` memory set injected (cap: 15 entries / ~800 tokens); overflow goes to `dormant`. Changelog / activity reports follow a rule-based gate and no longer crowd into Core — so injected context stays focused on cross-session facts (decisions, constraints, architecture notes, lessons).
-- **Weighted retrieval by default** (v1.3.0): `project_ask` uses a **5-factor weighted rank** (BM25 + importance + recency + type-stability + diversity); vectors only add a bonus. When hybrid retrieval is enabled (optional Embedding), RRF (k=60) stays as a measurable algorithm (`scripts/smoke-retrieval-rrf.mjs`) — not the `ask` main contract. This avoids "same endpoint, different rank depending on the query".
-- Session-end automatically extracts up to 4 stable semantic memories from current DSH LLM, with privacy filtering, length limits, deduplication, and failure fallback (no crash if LLM is unavailable).
-- Interactive Dashboard (**6 tabs**: Overview / Architecture / Activity / Memories / Settings / Git History) + project-brain activation entry + SuggestionCard for next-step suggestions + 4 Quick Actions (rescan / organize TODOs / organize memories / project overview) for status, cleanup, and activity inspection.
+- **Workspace scan**: 6-language detection (JS/TS / Python / Go / Java / Rust / C-C++), tech stack layered as runtime / delivery / structure / language.
+- **Architecture analysis**: positioning, layers, components, runtime flow; lane-based Architecture tab; LLM-enhanced with local fallback.
+- **8 structured long-term memory types** (`decision` / `change` / `bug` / `lesson` / `requirement` / `architecture` / `issue` / `context`), isolated per workspace.
+- **Durable Core standing memory** (v1.3.0): each new Session automatically gets cross-session-stable facts injected (active cap 15 / ~800 tokens, overflow → dormant); changelog follows a rule-based gate.
+- **Weighted retrieval by default** (v1.3.0): 5-factor rank (BM25 + importance + recency + type-stability + diversity); vectors add a bonus; optional Embedding enables hybrid recall.
+- **Real-time interaction memory** + Session-end LLM extraction of stable semantic memories (with privacy scrubbing, length limits, dedup, and failure fallback).
+- **Dashboard**: 6 tabs (Overview / Architecture / Activity / Memories / Settings / Git History) + activation entry + SuggestionCard for next steps + 4 Quick Actions.
 
 ## Tool surface
 

@@ -17,7 +17,9 @@
 
 ## dsh-project-brain · v1.3.0 稳定版
 
-为 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness) 设计的持久化项目智能与记忆插件。在每个 DSH workspace 里建立独立的"项目大脑"，让 AI 助手在新 Session 里不再失忆。
+[DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness) 的持久化项目智能与记忆插件。
+
+**快速上手，越用越懂，长期把项目做下去。**
 
 - 仓库地址：https://github.com/yj-liuzepeng/dsh-project-brain
 - npm：https://www.npmjs.com/package/dsh-project-brain
@@ -27,13 +29,13 @@
 
 ## 核心功能
 
-- 扫描**当前运行的工作区**，自动识别 6 种语言（JS/TS / Python / Go / Java / Rust / C-C++）、框架、入口文件、CI 配置、模块布局；技术栈按 **runtime / 交付 / 结构 / 语言** 四层口径分层，主视野只展示运行时技术，CI、IaC、观测下沉到「交付」次行（v1.3.0 `stack-taxonomy` 模块）
-- 生成语义化的架构报告（项目定位、架构风格、分层、组件职责、关系、运行流程、关键文件、阅读顺序）。架构 Tab 采用**并列泳道**展示（层名靠左、组件靠右；点层才展开经过该层的主链路）。可用当前 DSH LLM 时走 LLM 增强路径，否则自动降级为本地确定性分析
-- 持久化 **8 种结构化记忆类型**（`decision` / `change` / `bug` / `lesson` / `requirement` / `architecture` / `issue` / `context`）到 `<workspace>/.project-brain/`，按 workspace 隔离
-- **Durable Core 站立记忆**（v1.3.0）：新 Session 开始时自动注入 `active` 记忆（全量，上限 15 条 / 约 800 token），溢出进 `dormant`；changelog / 活动汇报走规则门槛，不再挤 Core——注入始终是跨会话仍为真的决策、约束、架构事实与教训
-- **主路径加权检索**（v1.3.0）：`project_ask` 默认按 BM25 + 重要度 + 时效 + 类型稳定性 + 多样性**五因子加权**排序，向量只作加分项。可选 Embedding 启用混合召回时，RRF（k=60）仍保留为可测算法（`scripts/smoke-retrieval-rrf.mjs`）——不再当 ask 主合同，避免「同一接口不同 query 走不同排序」
-- Session 结束自动从当前 DSH LLM 抽取最多 4 条稳定语义记忆，含隐私清洗、长度限制、去重、失败兜底（LLM 不可用不崩）
-- 交互式 Dashboard（**6 个 Tab**：概览 / 架构 / 任务动态 / 项目记忆 / 设置 / Git 历史）+ 启动入口 + SuggestionCard 智能续接建议 + 4 个 Quick Action（重新扫描 / 整理待办 / 整理记忆 / 项目全景），支持重扫、状态查询、整理记忆、查看工作活动
+- **工作区扫描**：6 语言识别（JS/TS / Python / Go / Java / Rust / C-C++），技术栈按 runtime / 交付 / 结构 / 语言分层
+- **架构分析**：项目定位、分层、组件职责、运行流程；架构 Tab 采用并列泳道（LLM 增强 / 本地降级）
+- **8 种结构化长期记忆**（`decision` / `change` / `bug` / `lesson` / `requirement` / `architecture` / `issue` / `context`），按 workspace 隔离
+- **Durable Core 站立记忆**（v1.3.0）：新 Session 自动注入跨会话仍为真的事实（active 15 条 / 800 token，溢出 dormant）；changelog 走规则门槛
+- **主路径加权检索**（v1.3.0）：5 因子加权（BM25 + 重要度 + 时效 + 类型稳定性 + 多样性），向量作加分；可选 Embedding 启用混合召回
+- **实时交互记忆** + Session 结束 LLM 抽取稳定语义记忆（含隐私清洗、长度限制、去重、失败兜底）
+- **Dashboard**：6 Tab（概览 / 架构 / 任务动态 / 项目记忆 / 设置 / Git 历史）+ 启动入口 + SuggestionCard 智能续接 + 4 个 Quick Action
 
 ## 工具清单
 
