@@ -83,7 +83,7 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.3.0
 
 装完完全退出 DSH Desktop，重新打开。在我的能效诊断项目里点"启动项目大脑"，10 秒后整个 Dashboard 出来了：
 
-![Dashboard 顶栏：SuggestionCard 智能续接建议、4 个 Quick Action、5 个 Tab 导航，概览 tab 同时展示技术栈 / 语言 / 开发入口](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/03.png)
+![Dashboard 顶栏：SuggestionCard 智能续接建议、4 个 Quick Action、6 个 Tab 导航，概览 tab 同时展示技术栈 / 语言 / 开发入口](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/03.png)
 
 顶部那行"💡 你今天可能想推进：验证 1.0.0 本地安装后的核心流程"是 SuggestionCard，结合活跃 TODO / 近期记忆 / 最近活动生成。下面 4 个 Quick Action（重新扫描 / 整理待办 / 整理记忆 / 项目全景）一键调用后台工具。
 

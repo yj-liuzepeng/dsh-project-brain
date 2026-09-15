@@ -72,7 +72,7 @@ dsh plugin --profile web add github:yj-liuzepeng/dsh-project-brain#v1.3.0
 
 ![02](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/02.png)
 
-**Dashboard 概览**（SuggestionCard「你今天可能想推进」+ 4 个 Quick Action + 5 个 Tab 导航 + 概览 tab 的技术栈 / 语言 / 开发入口）：
+**Dashboard 概览**（SuggestionCard「你今天可能想推进」+ 4 个 Quick Action + 6 个 Tab 导航 + 概览 tab 的技术栈 / 语言 / 开发入口）：
 
 ![03](https://raw.githubusercontent.com/yj-liuzepeng/dsh-project-brain/v1.3.0/docs/screenshots/03.png)
 
