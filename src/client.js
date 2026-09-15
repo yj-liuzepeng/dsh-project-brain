@@ -43,10 +43,17 @@ window.__ModuleLoader__.load({
         "arch.edges": "依赖",
         "arch.local": "本地分析",
         "arch.hybrid": "DSH LLM 增强",
-        "arch.select": "点击模块查看职责与文件",
-        "arch.flows": "关键流程",
-        "arch.risks": "架构提示",
+        "arch.select": "点一层看同层模块，点模块看职责",
+        "arch.flows": "运行路径",
+        "arch.flowEmpty": "还没有可展示的运行路径",
+        "arch.peersHint": "同层模块是并列关系，没有固定先后顺序",
+        "arch.inspectLayer": "层详情",
+        "arch.inspectModule": "模块详情",
+        "arch.related": "协作",
+        "arch.runtime": "运行路径",
+        "arch.empty": "还没有可展示的分层",
         "arch.purpose": "项目定位",
+        "arch.risks": "架构提示",
         "arch.style": "架构风格",
         "arch.layers": "架构分层",
         "arch.components": "核心组件",
@@ -72,8 +79,15 @@ window.__ModuleLoader__.load({
         "todostrip.close": "收起",
         "todostrip.empty": "🎉 暂无活跃待办",
         "onboarding.title": "项目大脑未启动",
-        "onboarding.body": "把这个项目的「长期记忆」交给 DSH，每次开新 Session 不用再重复介绍背景。",
-        "onboarding.cta": "一键启动 /project_init",
+        "onboarding.body": "启动后会扫描项目、生成架构，并在之后的对话里自动带上记忆和待办。快速上手，越用越懂，长期把项目做下去。",
+        "onboarding.cta": "启动项目大脑",
+        "onboarding.f1.title": "读懂项目",
+        "onboarding.f1.desc": "识别技术栈与入口，生成分层架构",
+        "onboarding.f2.title": "跨会话记住",
+        "onboarding.f2.desc": "新对话自动带上项目上下文，不用重复介绍",
+        "onboarding.f3.title": "接着往下做",
+        "onboarding.f3.desc": "待办和记忆留在项目里，回来就能续上",
+        "onboarding.more": "记忆沉淀、Git 历史可在启动后使用",
         "onboarding.copyPrompt": "请扫描本项目：调用 project_init 工具生成项目大脑",
         "onboarding.copied": "已复制启动指令，粘贴发送即可",
         "loading": "加载中…",
@@ -154,10 +168,17 @@ window.__ModuleLoader__.load({
         "arch.edges": "edges",
         "arch.local": "Local analysis",
         "arch.hybrid": "DSH LLM enriched",
-        "arch.select": "Select a module to inspect responsibilities and files",
-        "arch.flows": "Key flows",
-        "arch.risks": "Architecture notes",
+        "arch.select": "Click a layer for peer modules, or a module for its duty",
+        "arch.flows": "Runtime path",
+        "arch.flowEmpty": "No runtime path to show yet",
+        "arch.peersHint": "Modules in a layer are peers, not a sequence",
+        "arch.inspectLayer": "Layer",
+        "arch.inspectModule": "Module",
+        "arch.related": "Collaborates with",
+        "arch.runtime": "Runtime path",
+        "arch.empty": "No layers to show yet",
         "arch.purpose": "Project purpose",
+        "arch.risks": "Architecture notes",
         "arch.style": "Architecture style",
         "arch.layers": "Architecture layers",
         "arch.components": "Core components",
@@ -183,8 +204,15 @@ window.__ModuleLoader__.load({
         "todostrip.close": "Collapse",
         "todostrip.empty": "🎉 No active TODOs",
         "onboarding.title": "Project Brain not started",
-        "onboarding.body": "Hand this project's \"long-term memory\" to DSH — no more re-explaining the background when you open a new session.",
-        "onboarding.cta": "Start /project_init",
+        "onboarding.body": "Scan the project, map the architecture, and carry memory and todos into later chats. Get up to speed fast, understand more as you go, and keep the project moving long-term.",
+        "onboarding.cta": "Start Project Brain",
+        "onboarding.f1.title": "Understand the project",
+        "onboarding.f1.desc": "Detect stack and entry points, then map layers",
+        "onboarding.f2.title": "Remember across sessions",
+        "onboarding.f2.desc": "New chats pick up project context automatically",
+        "onboarding.f3.title": "Pick up where you left off",
+        "onboarding.f3.desc": "Todos and memories stay with the project",
+        "onboarding.more": "Memory capture and Git history are available after start",
         "onboarding.copyPrompt": "Please scan this project: call the project_init tool to build the project brain",
         "onboarding.copied": "Command copied, paste & send",
         "loading": "Loading…",
@@ -777,160 +805,346 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function clipPurpose(text) {
+      const raw = String(text || "").replace(/\s+/g, " ").trim();
+      if (!raw) return "";
+      const parts = [];
+      let buf = "";
+      for (let i = 0; i < raw.length; i++) {
+        buf += raw[i];
+        if (/[。！？.!?]/.test(raw[i])) {
+          parts.push(buf);
+          buf = "";
+          if (parts.length >= 2) break;
+        }
+      }
+      const out = (parts.length ? parts.join("") : raw).trim();
+      return out.length > 160 ? out.slice(0, 159) + "…" : out;
+    }
+    function clipStyleTag(text) {
+      const raw = String(text || "").replace(/\s+/g, " ").trim();
+      if (!raw) return "";
+      const clause = raw.split(/[（(，,。；;]/)[0].trim();
+      return clause.length > 18 ? clause.slice(0, 17) + "…" : clause;
+    }
+    function oneLine(text, max) {
+      const raw = String(text || "").replace(/\s+/g, " ").trim();
+      if (!raw) return "";
+      const cut = raw.split(/[。！？.!\n]/)[0].trim() || raw;
+      return cut.length > max ? cut.slice(0, max - 1) + "…" : cut;
+    }
+    function stepComponentId(step) {
+      if (!step) return null;
+      return typeof step === "string" ? step : (step.componentId || step.component || null);
+    }
+    const ARCH_DIAGRAM_CSS = [
+      ".dsh-arch-head{display:flex;align-items:center;gap:8px;margin:0 0 8px}",
+      ".dsh-arch-head h3{margin:0}",
+      ".dsh-arch-pills{margin-left:auto;display:flex;gap:6px;flex:0 0 auto;align-items:center}",
+      ".dsh-arch-pill,.dsh-arch-chip{font-size:10px;line-height:1.2;padding:3px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);background:transparent;font:inherit;cursor:default}",
+      ".dsh-arch-chip{cursor:pointer}",
+      ".dsh-arch-pill.is-brand,.dsh-arch-chip.is-active{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-purpose{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-secondary);margin:0 0 12px}",
+      ".dsh-arch-llm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--dsw-alias-state-warn-primary);margin:0 0 10px}",
+      ".dsh-arch-board{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}",
+      ".dsh-arch-lane{display:grid;grid-template-columns:88px minmax(0,1fr);align-items:start;width:100%;margin:0;padding:0;border:0;border-bottom:1px solid var(--dsw-alias-border-l1);border-left:3px solid transparent;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}",
+      ".dsh-arch-lane:last-child{border-bottom:0}",
+      ".dsh-arch-lane:hover{background:var(--dsw-alias-bg-layer-2)}",
+      ".dsh-arch-lane.is-active{background:var(--dsw-alias-bg-layer-2);border-left-color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-lane.is-active .dsh-arch-rail{color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-rail{display:flex;align-items:flex-start;padding:14px 10px 12px;font-size:11px;font-weight:600;line-height:1.35;color:var(--dsw-alias-label-secondary);border-right:1px dashed var(--dsw-alias-border-l1)}",
+      ".dsh-arch-nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(156px,1fr));gap:8px;padding:10px 12px;align-items:stretch}",
+      ".dsh-arch-node{display:flex;flex-direction:column;box-sizing:border-box;height:100%;min-height:72px;margin:0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}",
+      ".dsh-arch-lane.is-active .dsh-arch-node{background:var(--dsw-alias-bg-layer-1)}",
+      ".dsh-arch-node:hover,.dsh-arch-node.is-picked{border-color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-node.is-picked{background:var(--dsw-alias-bg-layer-2)}",
+      ".dsh-arch-board.is-flowing .dsh-arch-node{opacity:.42}",
+      ".dsh-arch-board.is-flowing .dsh-arch-node.is-in-flow{opacity:1;border-color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-node-name{display:block;height:16px;line-height:16px;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".dsh-arch-node-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;height:28px;margin-top:6px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary)}",
+      ".dsh-arch-step-card{display:flex;flex-direction:column;box-sizing:border-box;width:156px;min-height:72px;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1)}",
+      ".dsh-arch-step-name{height:16px;line-height:16px;font-size:12px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".dsh-arch-step-action{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;height:28px;margin-top:4px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary)}",
+      ".dsh-arch-inspect{margin-top:12px;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}",
+      ".dsh-arch-inspect-kicker{font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--dsw-alias-label-secondary);margin:0 0 6px}",
+      ".dsh-arch-inspect-title{font-size:13px;font-weight:600;margin:0 0 4px}",
+      ".dsh-arch-inspect-body{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);margin:0}",
+      ".dsh-arch-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}",
+      ".dsh-arch-link{font-size:10px;line-height:1.4;padding:4px 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}",
+      ".dsh-arch-file{display:block;font-size:10px;color:var(--dsw-alias-label-secondary);margin-top:6px;word-break:break-all}",
+      ".dsh-arch-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}",
+      ".dsh-arch-steps{display:flex;flex-wrap:nowrap;overflow-x:auto;align-items:stretch;gap:0;padding:8px 0 4px}",
+      ".dsh-arch-step{display:flex;align-items:stretch;flex:0 0 auto}",
+      ".dsh-arch-step-num{font-size:9px;font-weight:700;letter-spacing:.04em;color:var(--dsw-alias-brand-primary)}",
+      ".dsh-arch-arrow{display:flex;align-items:center;color:var(--dsw-alias-label-secondary);padding:0 6px;font-size:12px;line-height:1}",
+      ".dsh-arch-hint{margin-top:10px;font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      "@media(max-width:760px){.dsh-arch-head{align-items:flex-start;flex-wrap:wrap}.dsh-arch-pills{margin-left:0}.dsh-arch-lane{grid-template-columns:1fr}.dsh-arch-rail{border-right:0;border-bottom:1px dashed var(--dsw-alias-border-l1);padding:8px 12px 0}}",
+    ].join("");
+
     function ArchitectureGraphBlock({ data, t, embedded, onRescan }) {
       const architecture = data && data.architecture;
-      const [selectedId, setSelectedId] = React.useState(null);
+      const [selectedLayerId, setSelectedLayerId] = React.useState(null);
+      const [selectedComponentId, setSelectedComponentId] = React.useState(null);
+      const [selectedFlowId, setSelectedFlowId] = React.useState(null);
       const [retryState, setRetryState] = React.useState({ status: "idle", message: null });
-      if (!architecture) return null;
-      const components = (architecture.components || architecture.nodes || []).slice(0, 24);
-      if (!components.length) return null;
-      const layers = (architecture.layers || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
-      const relationships = (architecture.relationships || architecture.edges || []).slice(0, 40);
-      const flows = (architecture.runtimeFlows || architecture.flows || []).slice(0, 6);
-      const overview = architecture.overview || { purpose: architecture.summary || "", architectureStyle: "" };
-      const selected = components.find((item) => item.id === selectedId) || components[0];
+      const components = ((architecture && (architecture.components || architecture.nodes)) || []).slice(0, 24);
+      const layers = ((architecture && architecture.layers) || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      const flows = ((architecture && (architecture.runtimeFlows || architecture.flows)) || []).slice(0, 8);
+      const relationships = ((architecture && (architecture.relationships || architecture.edges)) || []).slice(0, 36);
+      const keyFiles = (architecture && architecture.keyFiles) || [];
+      const risks = (architecture && architecture.risks) || [];
+      const overview = (architecture && architecture.overview) || {};
+      const purpose = clipPurpose(overview.purpose || (architecture && architecture.summary) || "");
+      const styleLabel = clipStyleTag(overview.architectureStyle || "");
+      const sourceLabel = architecture && architecture.source === "hybrid" ? t("arch.hybrid") : t("arch.local");
+      const layerRows = layers.length ? layers : (components.length ? [{ id: "all", name: t("arch.components"), responsibility: "", order: 0 }] : []);
+      const componentsForLayer = (layer) => layer.id === "all" || !layers.length
+        ? components
+        : components.filter((item) => item.layerId === layer.id);
+      const selectedLayer = layerRows.find((layer) => layer.id === selectedLayerId) || null;
+      const selectedComponent = components.find((item) => item.id === selectedComponentId) || null;
       const byId = new Map(components.map((item) => [item.id, item]));
-      const related = relationships.filter((item) => item.from === selected.id || item.to === selected.id);
-      const sourceLabel = architecture.source === "hybrid" ? t("arch.hybrid") : t("arch.local");
-      const typeIcons = { presentation: "🖥️", ui: "🖥️", interface: "🔌", api: "🔌", application: "🧭", service: "⚙️", domain: "🧠", core: "🧠", data: "🗄️", integration: "🔗", support: "🛠️" };
-      const layerRows = layers.length ? layers : [{ id: "all", name: t("arch.components"), responsibility: "", order: 0 }];
-      const componentsForLayer = (layer) => layers.length ? components.filter((item) => item.layerId === layer.id) : components;
-      const panelStyle = { border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "9px", background: "var(--dsw-alias-bg-layer-2)", padding: "10px" };
-      const smallTitle = { fontSize: "11px", fontWeight: 700, marginBottom: "6px", color: "var(--dsw-alias-label-primary)" };
 
-      return React.createElement("section", { style: embedded ? { color: "var(--dsw-alias-label-primary)" } : sectionStyle, "data-block": "architecture-graph", "data-architecture-schema": architecture.schemaVersion || 1 },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" } },
-          React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { flex: "1 1 auto", margin: 0 }) }, "🏛️ " + t("arch.title")),
-          React.createElement("span", { style: { fontSize: "10px", padding: "3px 8px", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", color: architecture.source === "hybrid" ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, sourceLabel),
-        ),
-        architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error
-          ? (function () {
-              const err = architecture.llm.error || {};
-              const reasonText = err.reasonText || err.message || (err.code || "LLM_ERROR");
-              const actionKey = err.actionKey || "retry_scan";
-              // 动作区：retry_scan → 重新扫描按钮；send_message / check_settings → 文案提示
-              let actionNode = null;
-              if (actionKey === "retry_scan") {
-                const busy = retryState.status === "loading";
-                actionNode = React.createElement("button", {
-                  type: "button",
-                  disabled: busy || typeof onRescan !== "function",
-                  onClick: async () => {
-                    if (typeof onRescan !== "function") return;
-                    setRetryState({ status: "loading", message: null });
-                    try {
-                      const out = await onRescan();
-                      setRetryState({ status: "success", message: out && out.message ? out.message : t("arch.retryDone") });
-                    } catch (e) {
-                      setRetryState({ status: "error", message: String((e && e.message) || e) });
-                    }
-                  },
-                  style: {
-                    fontSize: "10px", padding: "3px 8px", borderRadius: "6px",
-                    background: "transparent", border: "1px solid var(--dsw-alias-state-warn-primary)",
-                    color: "var(--dsw-alias-state-warn-primary)", cursor: busy ? "wait" : "pointer", fontWeight: 600,
-                  },
-                }, busy ? t("arch.retrying") : "🔄 " + t("arch.actionRetry"));
-              } else if (actionKey === "send_message") {
-                actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "💬 " + t("arch.actionChat"));
-              } else if (actionKey === "check_settings") {
-                actionNode = React.createElement("span", { style: { fontSize: "10px", fontWeight: 600 } }, "⚙️ " + t("arch.actionSettings"));
-              }
-              const statusNode = retryState.status === "success"
-                ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-success-primary)" } }, "✓ " + (retryState.message || ""))
-                : retryState.status === "error"
-                  ? React.createElement("span", { style: { marginLeft: "8px", fontSize: "10px", color: "var(--dsw-alias-state-warn-primary)" } }, "✗ " + (retryState.message || ""))
-                  : null;
-              return React.createElement("div", {
-                title: err.message || err.code || "",
-                style: { fontSize: "11px", padding: "8px 10px", marginBottom: "10px", borderRadius: "7px", color: "var(--dsw-alias-state-warn-primary)", border: "1px solid var(--dsw-alias-state-warn-primary)", background: "rgba(255,180,0,0.06)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", lineHeight: 1.5 },
-              },
-                React.createElement("span", { style: { fontWeight: 700 } }, "⚠️ " + t("arch.llmFallback")),
-                React.createElement("span", { style: { flex: "1 1 auto", minWidth: "180px" } }, reasonText),
-                actionNode,
-                statusNode,
+      function isGenuineRuntimeFlow(flow) {
+        const steps = (flow && flow.steps) || [];
+        if (steps.length < 2) return false;
+        const name = String(flow.name || "");
+        if (/本地推断|local inference/i.test(name)) return false;
+        const ids = steps.map(stepComponentId);
+        if (ids.length === components.length && ids.every((id, index) => id === components[index].id)) return false;
+        const actions = steps.map((step) => (typeof step === "object" && step && step.action) || "");
+        const generic = actions.length > 0 && actions.every((action) => action === "接收请求" || action === "完成处理" || action === "处理并传递");
+        return !generic;
+      }
+
+      const genuineFlows = flows.filter(isGenuineRuntimeFlow);
+      const selectedFlow = genuineFlows.find((flow) => flow.id === selectedFlowId) || null;
+      const flowIds = selectedFlow
+        ? new Set((selectedFlow.steps || []).map(stepComponentId).filter(Boolean))
+        : null;
+
+      function componentFile(component) {
+        if (!component) return "";
+        return ((component.importantFiles || component.files) || [])[0]
+          || ((keyFiles.find((item) => (component.importantFiles || []).indexOf(item.path) >= 0) || {}).path)
+          || "";
+      }
+
+      function componentRisk(component) {
+        if (!component) return "";
+        const hit = risks.find((item) => String(item).indexOf(component.name || component.label || "") >= 0);
+        return hit ? oneLine(hit, 72) : "";
+      }
+
+      function relatedOf(component) {
+        if (!component) return [];
+        return relationships.map((rel) => {
+          const from = rel.from || rel.source;
+          const to = rel.to || rel.target;
+          if (from === component.id && byId.get(to)) return { id: to, name: byId.get(to).name || byId.get(to).label, label: rel.label || t("arch.related") };
+          if (to === component.id && byId.get(from)) return { id: from, name: byId.get(from).name || byId.get(from).label, label: rel.label || t("arch.related") };
+          return null;
+        }).filter(Boolean).slice(0, 6);
+      }
+
+      function relatedInLayer(layer) {
+        const ids = new Set(componentsForLayer(layer).map((item) => item.id));
+        return relationships.map((rel) => {
+          const from = rel.from || rel.source;
+          const to = rel.to || rel.target;
+          if (!ids.has(from) || !ids.has(to) || from === to) return null;
+          const left = byId.get(from);
+          const right = byId.get(to);
+          if (!left || !right) return null;
+          return (left.name || left.label) + " · " + (rel.label || t("arch.related")) + " · " + (right.name || right.label);
+        }).filter(Boolean).slice(0, 6);
+      }
+
+      function stepMeta(step) {
+        const id = stepComponentId(step);
+        const component = byId.get(id);
+        const name = component ? (component.name || component.label) : id;
+        const action = typeof step === "object" && step && step.action ? oneLine(step.action, 48) : "";
+        return { id, name, action };
+      }
+
+      const sectionProps = { style: embedded ? { color: "var(--dsw-alias-label-primary)" } : sectionStyle, "data-block": "architecture-graph", "data-architecture-schema": architecture && architecture.schemaVersion || 1 };
+
+      if (!architecture || !components.length) {
+        return React.createElement("section", sectionProps,
+          React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { margin: 0 }) }, t("arch.title")),
+          React.createElement("div", { style: { marginTop: "10px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" } }, t("arch.empty")),
+        );
+      }
+
+      const llmBar = architecture.llm && architecture.llm.requested && !architecture.llm.used && architecture.llm.error
+        ? (function () {
+            const err = architecture.llm.error || {};
+            const actionKey = err.actionKey || "retry_scan";
+            const busy = retryState.status === "loading";
+            let actionNode = null;
+            if (actionKey === "retry_scan") {
+              actionNode = React.createElement("button", {
+                type: "button",
+                disabled: busy || typeof onRescan !== "function",
+                onClick: async () => {
+                  if (typeof onRescan !== "function") return;
+                  setRetryState({ status: "loading", message: null });
+                  try {
+                    const out = await onRescan();
+                    setRetryState({ status: "success", message: out && out.message ? out.message : t("arch.retryDone") });
+                  } catch (e) {
+                    setRetryState({ status: "error", message: String((e && e.message) || e) });
+                  }
+                },
+                style: { fontSize: "10px", padding: "2px 7px", borderRadius: "6px", background: "transparent", border: "1px solid var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-state-warn-primary)", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" },
+              }, busy ? t("arch.retrying") : t("arch.actionRetry"));
+            } else if (actionKey === "send_message") {
+              actionNode = React.createElement("span", { style: { fontSize: "10px" } }, t("arch.actionChat"));
+            } else if (actionKey === "check_settings") {
+              actionNode = React.createElement("span", { style: { fontSize: "10px" } }, t("arch.actionSettings"));
+            }
+            return React.createElement("div", {
+              title: err.message || err.code || "",
+              className: "dsh-arch-llm",
+            },
+              React.createElement("span", null, t("arch.llmFallback")),
+              actionNode,
+              retryState.status === "success" ? React.createElement("span", { style: { color: "var(--dsw-alias-state-success-primary)" } }, retryState.message) : null,
+              retryState.status === "error" ? React.createElement("span", null, retryState.message) : null,
+            );
+          })()
+        : null;
+
+      let inspect = null;
+      if (selectedFlow) {
+        const flowSteps = (selectedFlow.steps || []).slice(0, 7);
+        inspect = React.createElement("div", { className: "dsh-arch-inspect", "data-architecture-flow": selectedFlow.id },
+          React.createElement("div", { className: "dsh-arch-inspect-kicker" }, t("arch.runtime")),
+          React.createElement("div", { className: "dsh-arch-inspect-title" }, selectedFlow.name || t("arch.flows")),
+          selectedFlow.trigger ? React.createElement("p", { className: "dsh-arch-inspect-body" }, selectedFlow.trigger) : null,
+          React.createElement("div", { className: "dsh-arch-steps" },
+            flowSteps.map((step, index) => {
+              const meta = stepMeta(step);
+              return React.createElement("div", { key: (meta.id || "step") + "-" + index, className: "dsh-arch-step" },
+                React.createElement("div", { className: "dsh-arch-step-card" },
+                  React.createElement("div", { className: "dsh-arch-step-num" }, String(index + 1).padStart(2, "0")),
+                  React.createElement("div", { className: "dsh-arch-step-name" }, meta.name),
+                  meta.action ? React.createElement("div", { className: "dsh-arch-step-action" }, meta.action) : null,
+                ),
+                index < flowSteps.length - 1 ? React.createElement("span", { className: "dsh-arch-arrow", "aria-hidden": "true" }, "→") : null,
               );
-            })()
-          : null,
-        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(180px, 1fr)", gap: "8px", marginBottom: "10px" } },
-          React.createElement("div", { style: panelStyle },
-            React.createElement("div", { style: smallTitle }, "🎯 " + t("arch.purpose")),
-            React.createElement("div", { style: { fontSize: "13px", lineHeight: 1.65 } }, overview.purpose || architecture.summary || ""),
-            overview.value ? React.createElement("div", { style: { marginTop: "6px", fontSize: "11px", lineHeight: 1.5, color: "var(--dsw-alias-label-secondary)" } }, overview.value) : null,
+            }),
           ),
-          React.createElement("div", { style: panelStyle },
-            React.createElement("div", { style: smallTitle }, "🏗️ " + t("arch.style")),
-            React.createElement("div", { style: { fontSize: "13px", fontWeight: 700 } }, overview.architectureStyle || "—"),
-            React.createElement("div", { style: { marginTop: "6px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, [overview.category, overview.audience].filter(Boolean).join(" · ")),
+        );
+      } else if (selectedComponent) {
+        const desc = oneLine(selectedComponent.responsibility || selectedComponent.description || selectedComponent.details, 120);
+        const file = componentFile(selectedComponent);
+        const risk = componentRisk(selectedComponent);
+        const related = relatedOf(selectedComponent);
+        inspect = React.createElement("div", { className: "dsh-arch-inspect", "data-architecture-inspect": selectedComponent.id },
+          React.createElement("div", { className: "dsh-arch-inspect-kicker" }, t("arch.inspectModule")),
+          React.createElement("div", { className: "dsh-arch-inspect-title" }, selectedComponent.name || selectedComponent.label),
+          desc ? React.createElement("p", { className: "dsh-arch-inspect-body" }, desc) : null,
+          file ? React.createElement("code", { className: "dsh-arch-file" }, file) : null,
+          risk ? React.createElement("p", { className: "dsh-arch-inspect-body", style: { marginTop: "6px" } }, risk) : null,
+          related.length ? React.createElement("div", { className: "dsh-arch-links" },
+            related.map((item) => React.createElement("span", { key: item.id, className: "dsh-arch-link" }, item.label + " · " + item.name)),
+          ) : null,
+        );
+      } else if (selectedLayer) {
+        const layerDesc = oneLine(selectedLayer.responsibility || selectedLayer.description, 120);
+        const related = relatedInLayer(selectedLayer);
+        inspect = React.createElement("div", { className: "dsh-arch-inspect", "data-architecture-flow": selectedLayer.id },
+          React.createElement("div", { className: "dsh-arch-inspect-kicker" }, t("arch.inspectLayer")),
+          React.createElement("div", { className: "dsh-arch-inspect-title" }, selectedLayer.name),
+          React.createElement("p", { className: "dsh-arch-inspect-body" }, layerDesc || t("arch.peersHint")),
+          related.length ? React.createElement("div", { className: "dsh-arch-links" },
+            related.map((text, index) => React.createElement("span", { key: String(index), className: "dsh-arch-link" }, text)),
+          ) : null,
+        );
+      }
+
+      return React.createElement("section", sectionProps,
+        React.createElement("style", null, ARCH_DIAGRAM_CSS),
+        React.createElement("div", { className: "dsh-arch-head" },
+          React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { margin: 0 }) }, t("arch.title")),
+          React.createElement("div", { className: "dsh-arch-pills" },
+            styleLabel ? React.createElement("span", { className: "dsh-arch-pill", title: overview.architectureStyle || styleLabel }, styleLabel) : null,
+            React.createElement("span", { className: "dsh-arch-pill" + (architecture.source === "hybrid" ? " is-brand" : "") }, sourceLabel),
           ),
         ),
-        architecture.summary && architecture.summary !== overview.purpose ? React.createElement("div", { style: { fontSize: "12px", lineHeight: 1.65, color: "var(--dsw-alias-label-secondary)", margin: "0 2px 10px" } }, architecture.summary) : null,
-
-        React.createElement("div", { style: Object.assign({}, panelStyle, { padding: "10px 10px 4px", background: "var(--dsw-alias-bg-layer-1)" }), "data-architecture-diagram": "semantic-layers" },
-          React.createElement("div", { style: Object.assign({}, smallTitle, { marginBottom: "9px" }) }, "🧱 " + t("arch.layers")),
-          layerRows.map((layer, layerIndex) => {
+        purpose ? React.createElement("p", { className: "dsh-arch-purpose" }, purpose) : null,
+        llmBar,
+        React.createElement("div", {
+          className: "dsh-arch-board" + (selectedFlow ? " is-flowing" : ""),
+          "data-architecture-diagram": "semantic-layers",
+        },
+          layerRows.map((layer) => {
             const items = componentsForLayer(layer);
             if (!items.length) return null;
-            return React.createElement("div", { key: layer.id, style: { display: "grid", gridTemplateColumns: "150px minmax(0, 1fr)", gap: "10px", padding: "9px", marginBottom: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "8px", background: layerIndex % 2 === 0 ? "var(--dsw-alias-bg-layer-2)" : "var(--dsw-alias-bg-layer-1)" } },
-              React.createElement("div", { style: { borderRight: "1px solid var(--dsw-alias-border-l1)", paddingRight: "9px" } },
-                React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, layer.name),
-                React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, layer.responsibility || ""),
-              ),
-              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "7px" } },
+            const active = selectedLayerId === layer.id;
+            return React.createElement("div", {
+              key: layer.id,
+              role: "button",
+              tabIndex: 0,
+              className: "dsh-arch-lane" + (active ? " is-active" : ""),
+              "data-architecture-layer": layer.id,
+              onClick: () => {
+                setSelectedFlowId(null);
+                if (selectedLayerId === layer.id && !selectedComponentId) setSelectedLayerId(null);
+                else {
+                  setSelectedLayerId(layer.id);
+                  setSelectedComponentId(null);
+                }
+              },
+              onKeyDown: (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.currentTarget.click();
+                }
+              },
+            },
+              React.createElement("div", { className: "dsh-arch-rail" }, layer.name),
+              React.createElement("div", { className: "dsh-arch-nodes" },
                 items.map((component) => {
-                  const active = component.id === selected.id;
-                  return React.createElement("button", { key: component.id, type: "button", onClick: () => setSelectedId(component.id), "data-architecture-component": component.id, style: { textAlign: "left", padding: "9px 10px", borderRadius: "8px", border: (active ? "2px solid " : "1px solid ") + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l2)"), background: "var(--dsw-alias-bg-layer-1)", color: "var(--dsw-alias-label-primary)", cursor: "pointer", fontFamily: "inherit", minHeight: "76px" } },
-                    React.createElement("div", { style: { fontSize: "12px", fontWeight: 750, marginBottom: "4px" } }, (typeIcons[component.type] || "◆") + " " + (component.name || component.label)),
-                    React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, String(component.responsibility || component.description || "").slice(0, 150)),
+                  const desc = oneLine(component.responsibility || component.description, 80);
+                  const picked = selectedComponentId === component.id;
+                  const inFlow = flowIds ? flowIds.has(component.id) : false;
+                  return React.createElement("button", {
+                    key: component.id,
+                    type: "button",
+                    className: "dsh-arch-node" + (picked ? " is-picked" : "") + (inFlow ? " is-in-flow" : ""),
+                    "data-architecture-component": component.id,
+                    onClick: (event) => {
+                      event.stopPropagation();
+                      setSelectedFlowId(null);
+                      setSelectedLayerId(layer.id);
+                      setSelectedComponentId(picked ? null : component.id);
+                    },
+                  },
+                    React.createElement("span", { className: "dsh-arch-node-name", title: component.name || component.label }, component.name || component.label),
+                    React.createElement("span", { className: "dsh-arch-node-desc", title: desc || "" }, desc || "\u00a0"),
                   );
                 }),
               ),
             );
           }),
-          relationships.length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px", padding: "2px 0 7px" } }, relationships.slice(0, 14).map((relation) => {
-            const from = byId.get(relation.from); const to = byId.get(relation.to);
-            if (!from || !to) return null;
-            const active = relation.from === selected.id || relation.to === selected.id;
-            return React.createElement("span", { key: relation.id, title: relation.description || relation.label, style: { fontSize: "9px", padding: "3px 7px", borderRadius: "10px", border: "1px solid " + (active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l1)"), color: active ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-label-secondary)" } }, (from.name || from.label) + " → " + (relation.label || "调用") + " → " + (to.name || to.label));
-          })) : null,
         ),
-
-        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(260px, .8fr)", gap: "9px", marginTop: "9px" } },
-          React.createElement("div", { style: panelStyle },
-            React.createElement("div", { style: { fontSize: "14px", fontWeight: 750, marginBottom: "5px" } }, (typeIcons[selected.type || selected.kind] || "◆") + " " + (selected.name || selected.label)),
-            React.createElement("div", { style: { fontSize: "11px", lineHeight: 1.6 } }, selected.responsibility || selected.description || ""),
-            selected.details ? React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, marginTop: "5px" } }, selected.details) : null,
-            (selected.technologies || []).length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "7px" } }, selected.technologies.map((item) => React.createElement("span", { key: item, style: { fontSize: "9px", padding: "2px 6px", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" } }, item))) : null,
-            (selected.importantFiles || selected.files || []).length ? React.createElement("div", { style: { marginTop: "8px" } },
-              React.createElement("div", { style: smallTitle }, "📄 " + t("arch.keyFiles")),
-              (selected.importantFiles || selected.files || []).slice(0, 8).map((file) => React.createElement("code", { key: file, style: { display: "block", fontSize: "9px", padding: "3px 6px", marginBottom: "3px", borderRadius: "4px", background: "var(--dsw-alias-bg-layer-1)", wordBreak: "break-all" } }, file)),
-            ) : null,
-            related.length ? React.createElement("div", { style: { marginTop: "7px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, related.slice(0, 5).map((item) => item.description || item.label).filter(Boolean).join("；")) : null,
-          ),
-          React.createElement("div", { style: panelStyle },
-            React.createElement("div", { style: smallTitle }, "➡️ " + t("arch.flows")),
-            flows.length ? flows.map((flow) => React.createElement("div", { key: flow.id, style: { padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" } },
-              React.createElement("div", { style: { fontSize: "11px", fontWeight: 700 } }, flow.name || flow.label),
-              React.createElement("div", { style: { fontSize: "9px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.5, marginTop: "3px" } }, [flow.trigger ? t("arch.trigger") + "：" + flow.trigger : "", flow.outcome ? t("arch.outcome") + "：" + flow.outcome : ""].filter(Boolean).join(" · ")),
-              React.createElement("div", { style: { fontSize: "9px", lineHeight: 1.5, marginTop: "3px" } }, (flow.steps || []).map((step) => typeof step === "string" ? (byId.get(step) && (byId.get(step).name || byId.get(step).label)) : ((byId.get(step.componentId) && (byId.get(step.componentId).name || byId.get(step.componentId).label)) + (step.action ? "：" + step.action : ""))).filter(Boolean).join(" → ")),
-            )) : React.createElement("div", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, t("dash.none")),
-          ),
-        ),
-
-        (architecture.keyFiles || []).length ? React.createElement("div", { style: Object.assign({}, panelStyle, { marginTop: "9px" }) },
-          React.createElement("div", { style: smallTitle }, "🗺️ " + t("arch.keyFiles")),
-          React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "6px" } }, architecture.keyFiles.slice(0, 12).map((file) => React.createElement("div", { key: file.path, style: { padding: "7px", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "7px", background: "var(--dsw-alias-bg-layer-1)" } },
-            React.createElement("code", { style: { fontSize: "10px", fontWeight: 700, wordBreak: "break-all" } }, file.path),
-            React.createElement("div", { style: { fontSize: "10px", marginTop: "3px", lineHeight: 1.45 } }, file.role),
-            React.createElement("div", { style: { fontSize: "9px", marginTop: "2px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.45 } }, file.whyImportant),
-          )))
+        genuineFlows.length ? React.createElement("div", { className: "dsh-arch-chips" },
+          genuineFlows.map((flow) => React.createElement("button", {
+            key: flow.id,
+            type: "button",
+            className: "dsh-arch-chip" + (selectedFlowId === flow.id ? " is-active" : ""),
+            onClick: () => {
+              setSelectedComponentId(null);
+              setSelectedLayerId(null);
+              setSelectedFlowId(selectedFlowId === flow.id ? null : flow.id);
+            },
+          }, flow.name || t("arch.flows"))),
         ) : null,
-        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "8px", marginTop: "9px" } },
-          (architecture.gettingStarted || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "🚀 " + t("arch.start")), architecture.gettingStarted.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, (index + 1) + ". " + item))) : null,
-          (architecture.designHighlights || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "✨ " + t("arch.highlights")), architecture.designHighlights.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "• " + item))) : null,
-          (architecture.risks || []).length ? React.createElement("div", { style: panelStyle }, React.createElement("div", { style: smallTitle }, "⚠️ " + t("arch.risks")), architecture.risks.slice(0, 6).map((item, index) => React.createElement("div", { key: index, style: { fontSize: "10px", lineHeight: 1.55, marginBottom: "3px" } }, "• " + item))) : null,
-        ),
-        React.createElement("div", { style: { marginTop: "7px", fontSize: "9px", color: "var(--dsw-alias-label-secondary)" } }, (architecture.stats.layers || layers.length) + " " + t("arch.layers") + " · " + (architecture.stats.components || architecture.stats.modules || components.length) + " " + t("arch.components") + " · " + t("arch.select")),
+        inspect,
+        !inspect ? React.createElement("div", { className: "dsh-arch-hint" }, genuineFlows.length ? t("arch.select") : t("arch.select") + " · " + t("arch.peersHint")) : null,
       );
     }
 
@@ -996,18 +1210,10 @@ window.__ModuleLoader__.load({
       { key: "done", icon: "✅", label: "架构与项目脑已生成" },
     ];
 
-    // v1.1.x：项目大脑 8 项核心能力清单（按用户感知价值排序）
-    //   替换原"3 步骤"展示：原列表只提了 project_init/memory_add/todo_add 三个命令，
-    //   容易让用户低估项目脑真实能力范围。
     const ONBOARDING_FEATURES = [
-      { icon: "📁", title: "项目结构", desc: "自动识别技术栈、入口文件、依赖、目录布局" },
-      { icon: "🗺️", title: "代码图谱", desc: "模块依赖关系图，支持 JS / TS / Python / Go / Java / Rust / C/C++" },
-      { icon: "🏛️", title: "架构图", desc: "语义分层 + 关键流程 + 设计要点（DSH LLM 可选增强）" },
-      { icon: "🧠", title: "项目记忆", desc: "沉淀决策 / Bug / 教训 / 需求 / 变更，手动 + 自动捕获" },
-      { icon: "📋", title: "待办管理", desc: "活跃任务跨 Session 跟踪，优先级与状态一目了然" },
-      { icon: "✨", title: "智能续接", desc: "基于活跃待办 + 近期记忆 + Git 变化，AI 推荐今天最该推进什么" },
-      { icon: "🔄", title: "跨 Session 上下文", desc: "项目信息、记忆、待办跨会话自动恢复，不丢上下文" },
-      { icon: "📜", title: "Git 时间线", desc: "提交历史、分支、工作树状态可视化" },
+      { icon: "⌘", titleKey: "onboarding.f1.title", descKey: "onboarding.f1.desc" },
+      { icon: "◇", titleKey: "onboarding.f2.title", descKey: "onboarding.f2.desc" },
+      { icon: "✓", titleKey: "onboarding.f3.title", descKey: "onboarding.f3.desc" },
     ];
 
     function OnboardingBlock({ t, path, sessionId, onComplete, connection }) {
@@ -1258,27 +1464,26 @@ window.__ModuleLoader__.load({
           React.createElement(
             "div",
             null,
-            React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { margin: 0, fontSize: "15px" }) }, "🪴 " + t("onboarding.title")),
+            React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { margin: 0, fontSize: "15px" }) }, t("onboarding.title")),
             React.createElement("p", { style: { margin: "2px 0 0", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.5" } }, t("onboarding.body")),
           ),
         ),
-        // 核心能力清单（v1.1.x-fix：原"3 步骤"太简化，让用户误以为只能记决策/管理待办）
-        //   现在列出项目大脑真实能做的 8 件事，让用户建立正确预期。
         React.createElement(
           "div",
           {
             "data-block": "onboarding-features",
-            style: { margin: "12px 0 4px", padding: "12px 16px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" },
+            style: { margin: "12px 0 4px", padding: "10px 14px", background: "var(--dsw-alias-bg-layer-2)", borderRadius: "8px", border: "1px solid var(--dsw-alias-border-l1)" },
           },
           ...ONBOARDING_FEATURES.map((f, idx) => React.createElement(
             "div",
-            { key: idx, style: { display: "flex", gap: "10px", padding: "5px 0", alignItems: "flex-start" } },
-            React.createElement("span", { style: { fontSize: "16px", flex: "0 0 auto", lineHeight: "1.35", width: "20px", textAlign: "center" } }, f.icon),
+            { key: f.titleKey, style: { display: "flex", gap: "10px", padding: idx === 0 ? "2px 0 6px" : "6px 0", alignItems: "flex-start" } },
+            React.createElement("span", { style: { fontSize: "14px", flex: "0 0 auto", lineHeight: "1.35", width: "18px", textAlign: "center" } }, f.icon),
             React.createElement("div", null,
-              React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.4" } }, f.title),
-              React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.45", marginTop: "1px" } }, f.desc),
+              React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", lineHeight: "1.4" } }, t(f.titleKey)),
+              React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: "1.45", marginTop: "1px" } }, t(f.descKey)),
             ),
           )),
+          React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "6px", paddingTop: "8px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, t("onboarding.more")),
         ),
         // path 提示（让用户知道会扫哪个目录）
         // v0.5.1：即使 build-time map miss，只要 sessionId 存在，host 端 initProject RPC
@@ -3633,9 +3838,10 @@ window.__ModuleLoader__.load({
         React.createElement("style", null, [
           ".dsh-project-brain-preview *{box-sizing:border-box}",
           ".dsh-brain-summary-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr);gap:10px;margin:8px 12px}",
-          "@media(max-width:760px){.dsh-brain-summary-grid{grid-template-columns:1fr}.dsh-project-brain-preview [data-architecture-diagram=semantic-layers]>div{grid-template-columns:1fr!important}}",
+          "@media(max-width:760px){.dsh-brain-summary-grid{grid-template-columns:1fr}}",
           ".dsh-project-brain-preview button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}",
           ".dsh-project-brain-preview button:not(:disabled):active{transform:translateY(1px)}",
+          ".dsh-project-brain-preview button.dsh-arch-lane:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-node:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-chip:not(:disabled):active{transform:none}",
         ].join("\n")),
         headerWithBadge,
         React.createElement(HeaderBlock, { data: dataWithLocale, t }),

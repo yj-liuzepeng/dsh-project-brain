@@ -91,14 +91,16 @@ const dreamConfirmation = bundle.includes('action === "dreamCommit"')
   && bundle.includes('previous.status === "confirm"');
 checks.push({ name: "memory organization requires preview then confirmation", ok: dreamConfirmation });
 
-// 14) Dashboard 架构图使用语义分层，并可点击概念组件查看详情。
+// 14) Dashboard 架构图使用语义分层；点层/点模块看结构详情，不把并列模块画成顺序链路。
 const architectureSvg = bundle.includes("function ArchitectureGraphBlock")
   && bundle.includes('"data-block": "architecture-graph"')
   && bundle.includes('"data-architecture-diagram": "semantic-layers"')
-  && bundle.includes('"data-architecture-component"')
-  && bundle.includes("setSelectedId(component.id)")
-  && bundle.includes("architecture.keyFiles");
-checks.push({ name: "interactive semantic-layer architecture report is bundled", ok: architectureSvg });
+  && bundle.includes('"data-architecture-layer"')
+  && bundle.includes("setSelectedLayerId")
+  && bundle.includes("setSelectedComponentId")
+  && bundle.includes('"arch.peersHint"')
+  && bundle.includes('"arch.flowEmpty"');
+checks.push({ name: "architecture tab shows peer layers and click-to-inspect modules", ok: architectureSvg });
 
 // 15) 架构图明确区分本地分析与当前 DSH LLM 增强结果。
 checks.push({ name: "architecture source badges are bundled", ok: bundle.includes('"arch.hybrid"') && bundle.includes('"arch.local"') });
