@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dsh-project-brain": {
+      "command": "node",
+      "args": ["src/mcp/server.js"]
+    }
+  }
+}

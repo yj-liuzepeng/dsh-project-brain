@@ -19,6 +19,11 @@ Instead of making every new conversation rediscover the repository, dsh-project-
 - 导入前自动预览影响清单（即将覆盖的脑 / 旧脑备份路径 / rootPath 改写）；主按钮文案「覆盖并恢复」明确提醒
 - 每次导入/回滚前自动备份当前脑到 `.project-brain.backup-<ts>/`；可随时回滚到任一历史备份
 - 4 个新 Tool：`project_export` / `project_import` / `project_rollback_backup` / `project_cleanup_backups`
+- **Cursor same-machine MCP:** this repo ships `.cursor/mcp.json`. Open the project in Cursor and enable the `dsh-project-brain` MCP server (it runs `node src/mcp/server.js` from the workspace root).
+- **Claude Code:** this repo ships `.mcp.json`. Open the project in Claude Code and approve the `dsh-project-brain` project MCP (it runs `node src/mcp/server.js` from the workspace root).
+- **Codex:** this repo ships `.codex/config.toml`. Trust this project first (project-scoped Codex config loads only then), then start Codex; same command `node src/mcp/server.js`.
+- Cursor, Claude Code, Codex, and DSH share the same `.project-brain/` on this machine. A matching CLI must be installed for that client; CI does not launch Claude Code or Codex.
+- Embedding API keys and other secrets stay in environment variables; they are not stored in `.cursor/mcp.json`, `.mcp.json`, or `.codex/config.toml`.
 
 [GitHub release](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.3.1) · [DSH community showcase](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH listing](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 

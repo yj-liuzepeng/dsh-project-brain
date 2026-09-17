@@ -7,6 +7,9 @@
 
 ## Unreleased
 
+- Cursor 可通过项目 MCP（`src/mcp/server.js`）读写同一份 `.project-brain/`，无需打开 DSH。
+- Claude Code（`.mcp.json`）与 Codex（`.codex/config.toml`）可通过同一 `src/mcp/server.js` 读写这份 `.project-brain/`；Codex 需先信任项目。需本机已装对应 CLI。
+
 ---
 
 ## [v1.3.1] - 2026-09-15

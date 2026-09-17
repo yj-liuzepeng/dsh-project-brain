@@ -1,0 +1,6 @@
+# Project-scoped MCP. Codex loads this only after the project is trusted.
+# https://developers.openai.com/codex/config-reference
+
+[mcp_servers.dsh-project-brain]
+command = "node"
+args = ["src/mcp/server.js"]

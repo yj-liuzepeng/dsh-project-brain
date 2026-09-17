@@ -19,6 +19,11 @@
 - 导入前自动预览影响清单（即将覆盖的脑 / 旧脑备份路径 / rootPath 改写）；主按钮文案「覆盖并恢复」明确提�?
 - 每次导入/回滚前自动备份当前脑�?`.project-brain.backup-<ts>/`；可随时回滚到任一历史备份
 - 4 个新 Tool：`project_export` / `project_import` / `project_rollback_backup` / `project_cleanup_backups`
+- **Cursor 同机 MCP：** 本仓库已包含 `.cursor/mcp.json`。用 Cursor 打开本仓库并启用 `dsh-project-brain` MCP（从工作区根执行 `node src/mcp/server.js`）。
+- **Claude Code：** 本仓库已包含 `.mcp.json`。在项目根打开 Claude Code，批准项目 MCP `dsh-project-brain`（从工作区根执行 `node src/mcp/server.js`）。
+- **Codex：** 本仓库已包含 `.codex/config.toml`。先信任本项目（项目级配置仅在信任后加载），再打开 Codex；命令同样是 `node src/mcp/server.js`。
+- Cursor、Claude Code、Codex 与 DSH 共用同一份 `.project-brain/`。对应客户端需本机已安装；CI 不启动 Claude Code / Codex。
+- Embedding API Key 等密钥仍走环境变量，不写入 `mcp.json`。
 
 [GitHub 预发布](https://github.com/yj-liuzepeng/dsh-project-brain/releases/tag/v1.3.1) · [DSH 社区展示帖](https://github.com/deepseek-ai/deepseek-harness/discussions/5121) · [MyDSH 插件详情](https://mydsh.dev/plugin?repo=yj-liuzepeng%2Fdsh-project-brain)
 
