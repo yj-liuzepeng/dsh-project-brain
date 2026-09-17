@@ -1,8 +1,1172 @@
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
 var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
 }) : x)(function(x) {
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
+});
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
+var __export = (target, all) => {
+  for (var name2 in all)
+    __defProp(target, name2, { get: all[name2], enumerable: true });
+};
+
+// src/host/store/brain-files.js
+var brain_files_exports = {};
+__export(brain_files_exports, {
+  appendJsonl: () => appendJsonl,
+  appendLine: () => appendLine,
+  assertSafeProjectPath: () => assertSafeProjectPath,
+  brainPath: () => brainPath2,
+  parseJsonl: () => parseJsonl,
+  readBrain: () => readBrain,
+  readJson: () => readJson,
+  readJsonl: () => readJsonl,
+  readText: () => readText2,
+  serializeJsonl: () => serializeJsonl,
+  writeJson: () => writeJson,
+  writeJsonl: () => writeJsonl,
+  writeText: () => writeText
+});
+function assertSafeProjectPath(projectPath) {
+  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
+  if (!rawBase || rawBase === "." || rawBase.includes("\0") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase) || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
+    const error = new Error("Refusing Project Brain access without a concrete workspace root");
+    error.code = "E_UNSAFE_PROJECT_PATH";
+    throw error;
+  }
+  return rawBase.replace(/[\\/]+$/, "");
+}
+function brainPath2(projectPath, file) {
+  const base = assertSafeProjectPath(projectPath);
+  const relativeFile = String(file || "").replace(/\\/g, "/");
+  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
+    const error = new Error("Refusing Project Brain path outside .project-brain");
+    error.code = "E_UNSAFE_BRAIN_FILE";
+    throw error;
+  }
+  return base + "/.project-brain/" + relativeFile;
+}
+async function readText2(fs, path7) {
+  try {
+    const target = await fs.resolve(path7);
+    return await fs.readText(target);
+  } catch (e) {
+    return null;
+  }
+}
+function resolveWritePolicy(fs, writePolicy) {
+  if (writePolicy) return writePolicy;
+  try {
+    const sp = fs && (fs.sandboxPolicy || fs.ctx && fs.ctx.sandboxPolicy);
+    if (sp && typeof sp.resolve === "function") {
+      try {
+        return sp.resolve({ mode: "danger-full-access" });
+      } catch (e) {
+      }
+    }
+  } catch (e) {
+  }
+  return null;
+}
+async function writeText(fs, path7, content, writePolicy) {
+  const policy = resolveWritePolicy(fs, writePolicy);
+  try {
+    try {
+      const idx = path7.lastIndexOf("/");
+      if (idx > 0 && typeof fs.mkdir === "function") {
+        const dirTarget = await fs.resolve(path7.slice(0, idx));
+        if (policy && fs.mkdir.length >= 2) {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true }, { sandboxPolicy: policy });
+          } catch (e) {
+          }
+        } else if (policy) {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true });
+          } catch (e) {
+          }
+        } else {
+          try {
+            await fs.mkdir(dirTarget, { recursive: true });
+          } catch (e) {
+          }
+        }
+      }
+    } catch (e) {
+    }
+    const target = await fs.resolve(path7);
+    if (policy) {
+      try {
+        await fs.writeText(target, content, void 0, void 0, policy);
+        return true;
+      } catch (e) {
+      }
+    }
+    await fs.writeText(target, content);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function appendLine(fs, path7, line, writePolicy) {
+  if (line == null) return false;
+  const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
+  try {
+    const target = await fs.resolve(path7);
+    let existing = null;
+    try {
+      existing = await fs.readText(target);
+    } catch (e) {
+    }
+    let next;
+    if (existing == null || existing === "") {
+      next = normalizedLine;
+    } else if (existing.endsWith("\n")) {
+      next = existing + normalizedLine;
+    } else {
+      next = existing + "\n" + normalizedLine;
+    }
+    return writeText(fs, path7, next, writePolicy);
+  } catch (e) {
+    return false;
+  }
+}
+function parseJsonl(text) {
+  if (!text) return [];
+  let t = String(text);
+  if (t.charCodeAt(0) === 65279) t = t.slice(1);
+  const out = [];
+  for (const line of t.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    try {
+      out.push(JSON.parse(s));
+    } catch (e) {
+    }
+  }
+  return out;
+}
+function serializeJsonl(items) {
+  if (!items || items.length === 0) return "";
+  return items.map((i) => JSON.stringify(i)).join("\n") + "\n";
+}
+async function readJsonl(fs, path7) {
+  return parseJsonl(await readText2(fs, path7));
+}
+async function appendJsonl(fs, path7, entry, writePolicy) {
+  return appendLine(fs, path7, JSON.stringify(entry) + "\n", writePolicy);
+}
+async function writeJsonl(fs, path7, items, writePolicy) {
+  return writeText(fs, path7, serializeJsonl(items || []), writePolicy);
+}
+async function readJson(fs, path7) {
+  const text = await readText2(fs, path7);
+  if (text == null) return null;
+  let t = text;
+  if (typeof t === "string" && t.charCodeAt(0) === 65279) t = t.slice(1);
+  try {
+    return JSON.parse(t);
+  } catch (e) {
+    return { __error: String(e && e.message || e) };
+  }
+}
+async function writeJson(fs, path7, obj, writePolicy) {
+  return writeText(fs, path7, JSON.stringify(obj, null, 2), writePolicy);
+}
+async function readBrain(fs, projectPath) {
+  const [project, timeline, memories, todos] = await Promise.all([
+    readJson(fs, brainPath2(projectPath, "project.json")),
+    readJsonl(fs, brainPath2(projectPath, "timeline.jsonl")),
+    readJsonl(fs, brainPath2(projectPath, "memory.jsonl")),
+    readJsonl(fs, brainPath2(projectPath, "todo.jsonl"))
+  ]);
+  return { projectPath, project, timeline, memories, todos };
+}
+var init_brain_files = __esm({
+  "src/host/store/brain-files.js"() {
+  }
+});
+
+// src/host/transfer/confirm-tokens.js
+var confirm_tokens_exports = {};
+__export(confirm_tokens_exports, {
+  _resetTokenStoreForTest: () => _resetTokenStoreForTest,
+  createTokenStore: () => createTokenStore,
+  getTokenStore: () => getTokenStore
+});
+import { randomBytes } from "node:crypto";
+function createTokenStore({ ttlMs = DEFAULT_TTL_MS } = {}) {
+  const store = /* @__PURE__ */ new Map();
+  function sweep(now = Date.now()) {
+    for (const [key, entry] of store.entries()) {
+      if (now - entry.createdAt > ttlMs) {
+        store.delete(key);
+      }
+    }
+  }
+  return {
+    /**
+     * 发放一个 confirmToken，附带 payload。
+     * @param {{ kind: string, payload: any }} args
+     * @returns {string} token
+     */
+    issue({ kind, payload }) {
+      if (!kind) throw new Error("confirm-tokens: kind is required");
+      const token = randomBytes(16).toString("hex");
+      store.set(token, { kind, payload, createdAt: Date.now() });
+      return token;
+    },
+    /**
+     * 校验并消费 token。成功返回 payload，失败返回 null。
+     * @param {string} token
+     * @param {{ kind?: string }} args 期待的操作类型（可选）
+     * @returns {any} payload 或 null
+     */
+    consume(token, { kind } = {}) {
+      if (!token || typeof token !== "string") return null;
+      const entry = store.get(token);
+      if (!entry) return null;
+      store.delete(token);
+      if (kind && entry.kind !== kind) return null;
+      return entry.payload;
+    },
+    /**
+     * 仅校验（不消费），用于 dryRun 显示 / 调试。
+     */
+    peek(token, { kind } = {}) {
+      const entry = store.get(token);
+      if (!entry) return null;
+      if (kind && entry.kind !== kind) return null;
+      if (Date.now() - entry.createdAt > ttlMs) {
+        store.delete(token);
+        return null;
+      }
+      return entry.payload;
+    },
+    /** 主动清理过期（测试 / 健康检查用） */
+    sweep,
+    /** 当前活跃 token 数（调试用） */
+    get size() {
+      sweep();
+      return store.size;
+    }
+  };
+}
+function getTokenStore() {
+  if (!_singleton) _singleton = createTokenStore();
+  return _singleton;
+}
+function _resetTokenStoreForTest() {
+  _singleton = createTokenStore();
+}
+var DEFAULT_TTL_MS, _singleton;
+var init_confirm_tokens = __esm({
+  "src/host/transfer/confirm-tokens.js"() {
+    DEFAULT_TTL_MS = 5 * 60 * 1e3;
+    _singleton = null;
+  }
+});
+
+// src/host/transfer/backup.js
+var backup_exports = {};
+__export(backup_exports, {
+  BACKUP_DIR_RE: () => BACKUP_DIR_RE,
+  BACKUP_DIR_RE_LEGACY: () => BACKUP_DIR_RE_LEGACY,
+  applyRollback: () => applyRollback,
+  cleanupBackups: () => cleanupBackups,
+  createBackup: () => createBackup,
+  extractTsFromDirName: () => extractTsFromDirName,
+  generateBackupName: () => generateBackupName,
+  issueImportConfirmToken: () => issueImportConfirmToken,
+  issueRollbackConfirmToken: () => issueRollbackConfirmToken,
+  listBackups: () => listBackups,
+  matchBackupDir: () => matchBackupDir,
+  previewRollback: () => previewRollback
+});
+import { promises as fsp } from "node:fs";
+import path from "node:path";
+async function readJsonlFile(filePath) {
+  try {
+    const text = await fsp.readFile(filePath, "utf8");
+    const out = [];
+    for (const line of text.split("\n")) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        out.push(JSON.parse(s));
+      } catch (e) {
+      }
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+async function readJsonFile(filePath) {
+  try {
+    const text = await fsp.readFile(filePath, "utf8");
+    return JSON.parse(text);
+  } catch (e) {
+    return { __error: String(e && e.message || e) };
+  }
+}
+function generateBackupName(now = /* @__PURE__ */ new Date()) {
+  const y = now.getFullYear();
+  const mo = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const h = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
+  const s = String(now.getSeconds()).padStart(2, "0");
+  const ms = String(now.getMilliseconds()).padStart(3, "0");
+  return `.project-brain.backup-${y}${mo}${d}-${h}${mi}${s}-${ms}`;
+}
+function matchBackupDir(name2) {
+  if (typeof name2 !== "string") return null;
+  const neu = name2.match(BACKUP_DIR_RE);
+  if (neu) return { ts: `${neu[1]}-${neu[2]}-${neu[3]}`, legacy: false };
+  const old = name2.match(BACKUP_DIR_RE_LEGACY);
+  if (old) return { ts: `${old[1]}-${old[2]}-${old[3]}`, legacy: true };
+  return null;
+}
+function extractTsFromDirName(name2) {
+  const m = matchBackupDir(name2);
+  return m ? m.ts : null;
+}
+async function createBackup({ projectPath, customTs = null }) {
+  const safe = assertSafeProjectPath(projectPath);
+  const brainDir = path.join(safe, ".project-brain");
+  let brainStat;
+  try {
+    brainStat = await fsp.stat(brainDir);
+  } catch (e) {
+    const err = new Error("\u5F53\u524D\u9879\u76EE\u65E0\u8111\u53EF\u5907\u4EFD\uFF08.project-brain \u4E0D\u5B58\u5728\uFF09");
+    err.code = "E_BRAIN_NOT_FOUND";
+    throw err;
+  }
+  if (!brainStat.isDirectory()) {
+    const err = new Error(".project-brain \u4E0D\u662F\u76EE\u5F55");
+    err.code = "E_BRAIN_NOT_FOUND";
+    throw err;
+  }
+  let backupName = customTs ? `.project-brain.backup-${customTs}` : generateBackupName();
+  let backupPath = path.join(safe, backupName);
+  let attempt = 0;
+  while (true) {
+    try {
+      await fsp.access(backupPath);
+      attempt += 1;
+      if (attempt > 50) {
+        const err = new Error("\u5907\u4EFD\u76EE\u5F55\u51B2\u7A81\u6B21\u6570\u8FC7\u591A\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
+        err.code = "E_BACKUP_CONFLICT";
+        throw err;
+      }
+      backupName = generateBackupName(new Date(Date.now() + attempt));
+      backupPath = path.join(safe, backupName);
+    } catch (e) {
+      if (e && e.code === "E_BACKUP_CONFLICT") throw e;
+      break;
+    }
+  }
+  await fsp.mkdir(path.dirname(backupPath), { recursive: true });
+  await fsp.rename(brainDir, backupPath);
+  const sizeBytes = await dirSize(backupPath);
+  return {
+    backupName,
+    backupPath,
+    ts: extractTsFromDirName(backupName) || null,
+    sizeBytes,
+    createdAt: brainStat.mtimeMs || Date.now()
+  };
+}
+async function dirSize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch (e) {
+    return 0;
+  }
+  for (const e of entries) {
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      total += await dirSize(abs);
+    } else if (e.isFile()) {
+      try {
+        total += (await fsp.stat(abs)).size;
+      } catch (_) {
+      }
+    }
+  }
+  return total;
+}
+async function listBackups({ projectPath }) {
+  const safe = assertSafeProjectPath(projectPath);
+  let entries;
+  try {
+    entries = await fsp.readdir(safe, { withFileTypes: true });
+  } catch (e) {
+    return [];
+  }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const matched = matchBackupDir(e.name);
+    if (!matched) continue;
+    const backupPath = path.join(safe, e.name);
+    const ts = matched.ts;
+    let sizeBytes = 0;
+    let memCount = 0;
+    let todoCount = 0;
+    let timelineCount = 0;
+    let projectExists = false;
+    let createdAt = 0;
+    try {
+      const stat = await fsp.stat(backupPath);
+      createdAt = stat.mtimeMs || 0;
+      sizeBytes = await dirSize(backupPath);
+      const mems = await readJsonlFile(path.join(backupPath, "memory.jsonl"));
+      const todos = await readJsonlFile(path.join(backupPath, "todo.jsonl"));
+      const tline = await readJsonlFile(path.join(backupPath, "timeline.jsonl"));
+      memCount = mems.length;
+      todoCount = todos.length;
+      timelineCount = tline.length;
+      projectExists = true;
+    } catch (_) {
+    }
+    out.push({
+      ts,
+      backupName: e.name,
+      backupPath,
+      sizeBytes,
+      memCount,
+      todoCount,
+      timelineCount,
+      projectExists,
+      createdAt
+    });
+  }
+  out.sort((a, b) => b.ts > a.ts ? 1 : b.ts < a.ts ? -1 : 0);
+  return out;
+}
+async function cleanupBackups({
+  projectPath,
+  keepLast = 3,
+  olderThanMs = 30 * 24 * 60 * 60 * 1e3
+}) {
+  const safe = assertSafeProjectPath(projectPath);
+  const all = await listBackups({ projectPath: safe });
+  const now = Date.now();
+  const candidates = [];
+  const kept = [];
+  for (let i = 0; i < all.length; i++) {
+    const b = all[i];
+    const isRecent = i < keepLast;
+    const isOld = now - (b.createdAt || 0) > olderThanMs;
+    if (isRecent && !isOld) {
+      kept.push(b);
+    } else {
+      candidates.push(b);
+    }
+  }
+  if (kept.length < keepLast) {
+    const need = keepLast - kept.length;
+    const promoted = candidates.splice(0, need);
+    kept.push(...promoted);
+  }
+  const deleted = [];
+  for (const b of candidates) {
+    try {
+      await fsp.rm(b.backupPath, { recursive: true, force: true });
+      deleted.push(b);
+    } catch (e) {
+    }
+  }
+  return {
+    candidates: candidates.map((b) => b.backupPath),
+    deleted: deleted.map((b) => b.backupPath),
+    kept: kept.map((b) => b.backupPath)
+  };
+}
+async function previewRollback({ projectPath, backupTimestamp }) {
+  const safe = assertSafeProjectPath(projectPath);
+  if (!backupTimestamp || !matchBackupDir(`.project-brain.backup-${backupTimestamp}`)) {
+    const err = new Error(`\u5907\u4EFD\u65F6\u95F4\u6233\u683C\u5F0F\u65E0\u6548\uFF1A${backupTimestamp}\uFF08\u671F\u671B yyyymmdd-hhmmss-mmm\uFF0C\u517C\u5BB9\u65E7\u7248 hhmm-mmm\uFF09`);
+    err.code = "E_BACKUP_INVALID";
+    throw err;
+  }
+  const backupName = `.project-brain.backup-${backupTimestamp}`;
+  const backupPath = path.join(safe, backupName);
+  let backupStat;
+  try {
+    backupStat = await fsp.stat(backupPath);
+  } catch (e) {
+    const err = new Error(`\u5907\u4EFD\u4E0D\u5B58\u5728\uFF1A${backupName}`);
+    err.code = "E_BACKUP_NOT_FOUND";
+    throw err;
+  }
+  if (!backupStat.isDirectory()) {
+    const err = new Error(`\u5907\u4EFD\u4E0D\u662F\u76EE\u5F55\uFF1A${backupName}`);
+    err.code = "E_BACKUP_INVALID";
+    throw err;
+  }
+  const mems = await readJsonlFile(path.join(backupPath, "memory.jsonl"));
+  const todos = await readJsonlFile(path.join(backupPath, "todo.jsonl"));
+  const tline = await readJsonlFile(path.join(backupPath, "timeline.jsonl"));
+  const projectMeta = await readJsonFile(path.join(backupPath, "project.json"));
+  if (!projectMeta || projectMeta.__error) {
+    const err = new Error(`\u5907\u4EFD\u7F3A\u5C11\u6216\u635F\u574F project.json\uFF1A${backupName}`);
+    err.code = "E_BACKUP_INVALID";
+    throw err;
+  }
+  const currentBrainPath = path.join(safe, ".project-brain");
+  let currentBrain = null;
+  try {
+    const stat = await fsp.stat(currentBrainPath);
+    if (stat.isDirectory()) {
+      const curMems = await readJsonlFile(path.join(safe, ".project-brain", "memory.jsonl"));
+      const curTodos = await readJsonlFile(path.join(safe, ".project-brain", "todo.jsonl"));
+      const curTline = await readJsonlFile(path.join(safe, ".project-brain", "timeline.jsonl"));
+      const curProj = await readJsonFile(path.join(safe, ".project-brain", "project.json"));
+      currentBrain = {
+        exists: true,
+        projectId: curProj && !curProj.__error ? curProj.id : null,
+        memCount: curMems.length,
+        todoCount: curTodos.length,
+        timelineCount: curTline.length,
+        lastUpdateAt: stat.mtimeMs || null
+      };
+    }
+  } catch (e) {
+    currentBrain = { exists: false };
+  }
+  const willBackupCurrentTo = currentBrain && currentBrain.exists ? path.join(safe, generateBackupName()) : null;
+  return {
+    sourceBackup: {
+      ts: backupTimestamp,
+      backupName,
+      backupPath,
+      createdAt: backupStat.mtimeMs || null,
+      sizeBytes: await dirSize(backupPath),
+      memCount: mems.length,
+      todoCount: todos.length,
+      timelineCount: tline.length
+    },
+    currentBrain,
+    willBackupCurrentTo
+  };
+}
+async function applyRollback({ projectPath, backupTimestamp, triggerRescan = true }) {
+  const safe = assertSafeProjectPath(projectPath);
+  const preview = await previewRollback({ projectPath: safe, backupTimestamp });
+  let preRollbackBackupPath = null;
+  const brainDir = path.join(safe, ".project-brain");
+  if (preview.currentBrain && preview.currentBrain.exists) {
+    const r = await createBackup({ projectPath: safe });
+    preRollbackBackupPath = r.backupPath;
+  }
+  try {
+    await fsp.access(brainDir);
+    await fsp.rm(brainDir, { recursive: true, force: true });
+  } catch (e) {
+  }
+  await fsp.rename(preview.sourceBackup.backupPath, brainDir);
+  return {
+    restoredFrom: preview.sourceBackup.backupPath,
+    preRollbackBackupPath,
+    rescanTriggered: !!triggerRescan
+  };
+}
+async function issueRollbackConfirmToken({ projectPath, backupTimestamp }) {
+  const preview = await previewRollback({ projectPath, backupTimestamp });
+  return getTokenStore().issue({ kind: "rollback", payload: { backupTimestamp, preview } });
+}
+async function issueImportConfirmToken({ bundlePath, destProjectPath }) {
+  const { previewBundle: previewBundle2 } = await Promise.resolve().then(() => (init_bundle(), bundle_exports));
+  const preview = await previewBundle2({ bundlePath, destProjectPath });
+  return getTokenStore().issue({
+    kind: "import",
+    payload: { bundlePath, destProjectPath, preview }
+  });
+}
+var BACKUP_DIR_RE, BACKUP_DIR_RE_LEGACY;
+var init_backup = __esm({
+  "src/host/transfer/backup.js"() {
+    init_brain_files();
+    init_confirm_tokens();
+    BACKUP_DIR_RE = /^\.project-brain\.backup-(\d{8})-(\d{6})-(\d{3})$/;
+    BACKUP_DIR_RE_LEGACY = /^\.project-brain\.backup-(\d{8})-(\d{4})-(\d{3})$/;
+  }
+});
+
+// src/host/transfer/bundle.js
+var bundle_exports = {};
+__export(bundle_exports, {
+  _internal: () => _internal,
+  applyBundle: () => applyBundle,
+  buildBundleBuffer: () => buildBundleBuffer,
+  defaultBundleName: () => defaultBundleName,
+  parseBundle: () => parseBundle,
+  previewBundle: () => previewBundle,
+  writeBundleFile: () => writeBundleFile
+});
+import { createHash as createHash3 } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
+import { promises as fsp2 } from "node:fs";
+import path2 from "node:path";
+async function readJsonFile2(filePath) {
+  try {
+    const text = await fsp2.readFile(filePath, "utf8");
+    let t = text;
+    if (typeof t === "string" && t.charCodeAt(0) === 65279) t = t.slice(1);
+    return JSON.parse(t);
+  } catch (e) {
+    return { __error: String(e && e.message || e) };
+  }
+}
+async function readJsonlFile2(filePath) {
+  try {
+    const text = await fsp2.readFile(filePath, "utf8");
+    const out = [];
+    for (const line of text.split("\n")) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        out.push(JSON.parse(s));
+      } catch (e) {
+      }
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+function crc32(buf) {
+  let c = 4294967295;
+  for (let i = 0; i < buf.length; i++) {
+    c = CRC_TABLE[(c ^ buf[i]) & 255] ^ c >>> 8;
+  }
+  return (c ^ 4294967295) >>> 0;
+}
+function dosTime(date = /* @__PURE__ */ new Date()) {
+  const t = (date.getHours() & 31) << 11 | (date.getMinutes() & 63) << 5 | date.getSeconds() / 2 & 31;
+  const d = (date.getFullYear() - 1980 & 127) << 9 | (date.getMonth() + 1 & 15) << 5 | date.getDate() & 31;
+  return { time: t & 65535, date: d & 65535 };
+}
+function sanitizeProjectName(name2) {
+  return String(name2 || "project").replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 60) || "project";
+}
+function tsString(date = /* @__PURE__ */ new Date()) {
+  const y = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const mi = String(date.getMinutes()).padStart(2, "0");
+  return `${y}${mo}${d}-${h}${mi}`;
+}
+async function collectBrainFiles(projectPath, { includeCache = true } = {}) {
+  const base = path2.join(projectPath, ".project-brain");
+  const out = [];
+  async function walk(dirAbs, relBase) {
+    let entries;
+    try {
+      entries = await fsp2.readdir(dirAbs, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) {
+        if (entry.name === ".DS_Store") continue;
+        if (entry.name.startsWith(".backup")) continue;
+      }
+      const abs = path2.join(dirAbs, entry.name);
+      const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+      if (!includeCache && rel.split("/")[0] === "cache") continue;
+      if (BUNDLE_EXCLUDED_FILES.some((rx) => rx.test(entry.name))) continue;
+      if (entry.isDirectory()) {
+        await walk(abs, rel);
+      } else if (entry.isFile()) {
+        try {
+          const stat = await fsp2.stat(abs);
+          const buf = await fsp2.readFile(abs);
+          const sha = createHash3("sha256").update(buf).digest("hex");
+          out.push({
+            relPath: `.project-brain/${rel}`,
+            absPath: abs,
+            size: stat.size,
+            sha256: sha,
+            _buf: buf
+            // 内部用，外部不导出
+          });
+        } catch (e) {
+        }
+      }
+    }
+  }
+  await walk(base, "");
+  return out;
+}
+async function parseZip(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 22) {
+    throw new Error("E_BUNDLE_INVALID: not a zip file");
+  }
+  let eocdOffset = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) {
+    if (buf.readUInt32LE(i) === 101010256) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) throw new Error("E_BUNDLE_INVALID: EOCD not found");
+  const totalEntries = buf.readUInt16LE(eocdOffset + 10);
+  const cdSize = buf.readUInt32LE(eocdOffset + 12);
+  const cdStart = buf.readUInt32LE(eocdOffset + 16);
+  const entries = [];
+  let p = cdStart;
+  for (let i = 0; i < totalEntries; i++) {
+    if (buf.readUInt32LE(p) !== 33639248) {
+      throw new Error("E_BUNDLE_INVALID: bad central directory entry");
+    }
+    const method = buf.readUInt16LE(p + 10);
+    const crc = buf.readUInt32LE(p + 16);
+    const compSize = buf.readUInt32LE(p + 20);
+    const size = buf.readUInt32LE(p + 24);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const localOffset = buf.readUInt32LE(p + 42);
+    const name2 = buf.slice(p + 46, p + 46 + nameLen).toString("utf8");
+    entries.push({ name: name2, method, crc, compSize, size, localOffset });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  const files = [];
+  for (const e of entries) {
+    const lhSig = buf.readUInt32LE(e.localOffset);
+    if (lhSig !== 67324752) throw new Error("E_BUNDLE_INVALID: bad local header");
+    const lhNameLen = buf.readUInt16LE(e.localOffset + 26);
+    const lhExtraLen = buf.readUInt16LE(e.localOffset + 28);
+    const dataStart = e.localOffset + 30 + lhNameLen + lhExtraLen;
+    const compData = buf.slice(dataStart, dataStart + e.compSize);
+    let data;
+    if (e.method === 0) data = compData;
+    else if (e.method === 8) {
+      const { inflateRawSync } = await import("node:zlib");
+      data = inflateRawSync(compData);
+    } else {
+      throw new Error(`E_BUNDLE_INVALID: unsupported compression method ${e.method}`);
+    }
+    const actualCrc = crc32(data);
+    if (actualCrc !== e.crc) {
+      throw new Error(`E_BUNDLE_INVALID: CRC32 mismatch on ${e.name}`);
+    }
+    files.push({ name: e.name, data, size: e.size, crc: e.crc });
+  }
+  return files;
+}
+function isSafeBundleEntry(name2) {
+  const n = String(name2 || "").replace(/\\/g, "/");
+  if (n === "manifest.json") return true;
+  if (!n.startsWith(".project-brain/")) return false;
+  const rest = n.slice(".project-brain/".length);
+  if (!rest) return false;
+  const parts = rest.split("/");
+  if (parts.some((p) => p === "" || p === "." || p === "..")) return false;
+  if (/^[A-Za-z]:/.test(rest) || rest.startsWith("/")) return false;
+  return true;
+}
+async function buildBundleBuffer({ projectPath, pluginVersion, includeCache = true }) {
+  const safePath = assertSafeProjectPath(projectPath);
+  const projectMeta = await readJsonFile2(path2.join(safePath, ".project-brain", "project.json"));
+  if (!projectMeta || projectMeta.__error) {
+    const err = new Error("\u9879\u76EE\u672A\u521D\u59CB\u5316\uFF0C\u8BF7\u5148\u8C03\u7528 project_init");
+    err.code = "E_BRAIN_NOT_FOUND";
+    throw err;
+  }
+  const files = await collectBrainFiles(safePath, { includeCache });
+  if (files.length === 0) {
+    const err = new Error(".project-brain \u76EE\u5F55\u4E3A\u7A7A");
+    err.code = "E_BRAIN_EMPTY";
+    throw err;
+  }
+  const checksum = { algorithm: "sha256", files: {} };
+  for (const f of files) {
+    const relInside = f.relPath.replace(/^\.project-brain\//, "");
+    checksum.files[relInside] = f.sha256;
+  }
+  const exportedAt = Date.now();
+  const manifest = {
+    schemaVersion: BUNDLE_SCHEMA_VERSION,
+    pluginVersion: pluginVersion || "1.3.1",
+    exportedAt,
+    sourceProject: {
+      id: projectMeta.id,
+      name: projectMeta.name,
+      rootPath: projectMeta.rootPath || safePath,
+      lastScannedAt: projectMeta.lastScannedAt || projectMeta.updatedAt || null
+    },
+    checksum,
+    options: { includeCache },
+    fileCount: files.length
+  };
+  const zw = new ZipWriter();
+  const mtime = new Date(exportedAt);
+  zw.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), mtime);
+  for (const f of files) {
+    zw.addFile(f.relPath, f._buf, mtime);
+  }
+  const buf = zw.finalize();
+  return {
+    buffer: buf,
+    manifest,
+    fileCount: files.length,
+    sizeBytes: buf.length
+  };
+}
+function defaultBundleName(projectMeta) {
+  const name2 = sanitizeProjectName(projectMeta && projectMeta.name);
+  return `dsh-brain-${name2}-${tsString()}.zip`;
+}
+async function writeBundleFile({ projectPath, outputPath, pluginVersion, includeCache = true }) {
+  if (!outputPath || typeof outputPath !== "string") {
+    const err = new Error("outputPath \u5FC5\u586B");
+    err.code = "E_BUNDLE_WRITE_FAILED";
+    throw err;
+  }
+  const built = await buildBundleBuffer({ projectPath, pluginVersion, includeCache });
+  await fsp2.mkdir(path2.dirname(outputPath), { recursive: true });
+  await fsp2.writeFile(outputPath, built.buffer);
+  let st;
+  try {
+    st = await fsp2.stat(outputPath);
+  } catch (e) {
+    const err = new Error("zip \u5199\u5165\u540E\u65E0\u6CD5\u8BFB\u53D6\uFF1A" + outputPath + "\uFF08" + String(e && e.message || e) + "\uFF09");
+    err.code = "E_BUNDLE_WRITE_FAILED";
+    throw err;
+  }
+  if (!st.isFile() || st.size <= 0) {
+    const err = new Error("zip \u5199\u5165\u540E\u6587\u4EF6\u65E0\u6548\uFF1A" + outputPath);
+    err.code = "E_BUNDLE_WRITE_FAILED";
+    throw err;
+  }
+  return {
+    bundlePath: outputPath,
+    bundleName: path2.basename(outputPath),
+    defaultDirPath: path2.dirname(outputPath),
+    sizeBytes: st.size,
+    fileCount: built.fileCount,
+    manifest: built.manifest
+  };
+}
+async function parseBundle(bundlePath) {
+  let buf;
+  try {
+    buf = await fsp2.readFile(bundlePath);
+  } catch (e) {
+    const err = new Error(`bundle \u6587\u4EF6\u4E0D\u5B58\u5728\u6216\u4E0D\u53EF\u8BFB\uFF1A${bundlePath}`);
+    err.code = "E_BUNDLE_NOT_FOUND";
+    throw err;
+  }
+  let files;
+  try {
+    files = await parseZip(buf);
+  } catch (e) {
+    const err = new Error("bundle \u6587\u4EF6\u635F\u574F\u6216\u683C\u5F0F\u65E0\u6548");
+    err.code = "E_BUNDLE_INVALID";
+    err.detail = e.message;
+    throw err;
+  }
+  const manifestEntry = files.find((f) => f.name === "manifest.json");
+  if (!manifestEntry) {
+    const err = new Error("bundle \u7F3A\u5C11 manifest.json");
+    err.code = "E_BUNDLE_INVALID";
+    err.detail = "manifest.json not found";
+    throw err;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestEntry.data.toString("utf8"));
+  } catch (e) {
+    const err = new Error("bundle manifest.json \u89E3\u6790\u5931\u8D25");
+    err.code = "E_BUNDLE_INVALID";
+    err.detail = e.message;
+    throw err;
+  }
+  if (!manifest.schemaVersion || manifest.schemaVersion > BUNDLE_SCHEMA_VERSION) {
+    const err = new Error(
+      `bundle \u7531\u66F4\u65B0\u7248\u672C dsh-project-brain v${manifest.pluginVersion || "?"} \u5BFC\u51FA\uFF0C\u5F53\u524D\u63D2\u4EF6\u4EC5\u652F\u6301 schemaVersion<=${BUNDLE_SCHEMA_VERSION}\uFF0C\u8BF7\u5148\u5347\u7EA7\u63D2\u4EF6\u518D\u5BFC\u5165\u3002`
+    );
+    err.code = "E_BUNDLE_SCHEMA_UNSUPPORTED";
+    err.detail = `bundle.schemaVersion=${manifest.schemaVersion}, supported<=${BUNDLE_SCHEMA_VERSION}`;
+    throw err;
+  }
+  const fileMap = /* @__PURE__ */ new Map();
+  for (const f of files) {
+    const zipName = String(f.name || "").replace(/\\/g, "/");
+    if (!isSafeBundleEntry(zipName)) {
+      const err = new Error("bundle \u542B\u6709\u975E\u6CD5\u8DEF\u5F84\uFF08\u7981\u6B62\u5199\u5230 .project-brain/ \u4E4B\u5916\uFF09\uFF1A" + zipName);
+      err.code = "E_BUNDLE_INVALID";
+      err.detail = "zip-slip:" + zipName;
+      throw err;
+    }
+    if (zipName === "manifest.json") continue;
+    const sha = createHash3("sha256").update(f.data).digest("hex");
+    const relInside = zipName.replace(/^\.project-brain\//, "");
+    const expected = manifest.checksum && manifest.checksum.files && manifest.checksum.files[relInside];
+    if (expected && expected !== sha) {
+      const err = new Error(`bundle \u6587\u4EF6 ${relInside} \u6821\u9A8C\u548C\u4E0D\u4E00\u81F4`);
+      err.code = "E_BUNDLE_CHECKSUM_MISMATCH";
+      err.detail = `expected=${expected}, actual=${sha}`;
+      throw err;
+    }
+    fileMap.set(zipName, f.data);
+  }
+  if (!fileMap.has(".project-brain/project.json")) {
+    const err = new Error("bundle \u7F3A\u5C11 .project-brain/project.json");
+    err.code = "E_BUNDLE_INVALID";
+    err.detail = "project.json not found";
+    throw err;
+  }
+  return { manifest, files: fileMap };
+}
+async function previewBundle({ bundlePath, destProjectPath }) {
+  const safeDest = assertSafeProjectPath(destProjectPath);
+  const { manifest, files } = await parseBundle(bundlePath);
+  const currentBrain = {
+    exists: false,
+    projectId: null,
+    memCount: 0,
+    todoCount: 0,
+    timelineCount: 0,
+    archExists: false
+  };
+  try {
+    const currentProject = await readJsonFile2(path2.join(safeDest, ".project-brain", "project.json"));
+    if (currentProject && !currentProject.__error) {
+      currentBrain.exists = true;
+      currentBrain.projectId = currentProject.id || null;
+      const mems = await readJsonlFile2(path2.join(safeDest, ".project-brain", "memory.jsonl"));
+      const todos = await readJsonlFile2(path2.join(safeDest, ".project-brain", "todo.jsonl"));
+      const tline = await readJsonlFile2(path2.join(safeDest, ".project-brain", "timeline.jsonl"));
+      currentBrain.memCount = mems.length;
+      currentBrain.todoCount = todos.length;
+      currentBrain.timelineCount = tline.length;
+      try {
+        await fsp2.access(path2.join(safeDest, ".project-brain", "architecture.json"));
+        currentBrain.archExists = true;
+      } catch (e) {
+      }
+    }
+  } catch (e) {
+  }
+  const incomingProjectBuf = files.get(".project-brain/project.json");
+  let incomingProject = null;
+  try {
+    incomingProject = JSON.parse(incomingProjectBuf.toString("utf8"));
+  } catch (e) {
+  }
+  const incomingMemBuf = files.get(".project-brain/memory.jsonl");
+  const incomingMemCount = incomingMemBuf ? incomingMemBuf.toString("utf8").split("\n").filter((l) => l.trim()).length : 0;
+  const incomingTodoBuf = files.get(".project-brain/todo.jsonl");
+  const incomingTodoCount = incomingTodoBuf ? incomingTodoBuf.toString("utf8").split("\n").filter((l) => l.trim()).length : 0;
+  const incomingTimelineBuf = files.get(".project-brain/timeline.jsonl");
+  const incomingTimelineCount = incomingTimelineBuf ? incomingTimelineBuf.toString("utf8").split("\n").filter((l) => l.trim()).length : 0;
+  return {
+    manifest,
+    currentBrain,
+    incoming: {
+      projectId: incomingProject ? incomingProject.id : null,
+      memCount: incomingMemCount,
+      todoCount: incomingTodoCount,
+      timelineCount: incomingTimelineCount
+    },
+    rootPathRewrite: {
+      from: incomingProject ? incomingProject.rootPath : null,
+      to: safeDest
+    },
+    backupWillCreateAt: currentBrain.exists ? path2.join(safeDest, (await Promise.resolve().then(() => (init_backup(), backup_exports))).generateBackupName()) : null
+  };
+}
+async function applyBundle({
+  bundlePath,
+  destProjectPath,
+  backupPath = null,
+  triggerRescan = true
+}) {
+  const safeDest = assertSafeProjectPath(destProjectPath);
+  const { manifest, files } = await parseBundle(bundlePath);
+  const brainDir = path2.join(safeDest, ".project-brain");
+  let actualBackupPath = null;
+  let rescanTriggered = false;
+  const brainExists = await fsp2.stat(brainDir).then(() => true).catch(() => false);
+  if (brainExists) {
+    const { createBackup: createBackup2 } = await Promise.resolve().then(() => (init_backup(), backup_exports));
+    const r = await createBackup2({ projectPath: safeDest });
+    actualBackupPath = r.backupPath;
+  }
+  await fsp2.mkdir(brainDir, { recursive: true });
+  for (const [relPath, data] of files.entries()) {
+    const zipName = String(relPath || "").replace(/\\/g, "/");
+    if (!isSafeBundleEntry(zipName) || zipName === "manifest.json") continue;
+    if (!zipName.startsWith(".project-brain/")) continue;
+    const relInside = zipName.replace(/^\.project-brain\//, "");
+    const abs = path2.join(brainDir, relInside);
+    const resolved = path2.resolve(abs);
+    const brainRoot = path2.resolve(brainDir) + path2.sep;
+    if (resolved !== path2.resolve(brainDir) && !resolved.startsWith(brainRoot)) continue;
+    await fsp2.mkdir(path2.dirname(abs), { recursive: true });
+    await fsp2.writeFile(abs, data);
+  }
+  const projectPath = path2.join(brainDir, "project.json");
+  try {
+    const projBuf = await fsp2.readFile(projectPath, "utf8");
+    const proj = JSON.parse(projBuf);
+    proj.rootPath = safeDest;
+    proj.updatedAt = Date.now();
+    if (!proj.lastScannedAt) proj.lastScannedAt = proj.updatedAt;
+    await fsp2.writeFile(projectPath, JSON.stringify(proj, null, 2));
+  } catch (e) {
+  }
+  if (triggerRescan) {
+    rescanTriggered = true;
+  }
+  return {
+    backupPath: actualBackupPath,
+    rescanTriggered,
+    fileCount: files.size,
+    sourceManifest: {
+      schemaVersion: manifest.schemaVersion,
+      pluginVersion: manifest.pluginVersion,
+      sourceProjectId: manifest.sourceProject && manifest.sourceProject.id,
+      sourceRootPath: manifest.sourceProject && manifest.sourceProject.rootPath
+    }
+  };
+}
+var BUNDLE_SCHEMA_VERSION, BUNDLE_EXCLUDED_FILES, CRC_TABLE, ZipWriter, _internal;
+var init_bundle = __esm({
+  "src/host/transfer/bundle.js"() {
+    init_brain_files();
+    BUNDLE_SCHEMA_VERSION = 1;
+    BUNDLE_EXCLUDED_FILES = [
+      /^tmp-.*\.txt$/i,
+      /^debug\.log$/i,
+      /\.log$/i,
+      /\.tmp$/i
+    ];
+    CRC_TABLE = (() => {
+      const t = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) {
+          c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        }
+        t[n] = c >>> 0;
+      }
+      return t;
+    })();
+    ZipWriter = class {
+      constructor() {
+        this.chunks = [];
+        this.central = [];
+        this.offset = 0;
+      }
+      _push(buf) {
+        this.chunks.push(buf);
+        this.offset += buf.length;
+      }
+      addFile(name2, data, mtime = /* @__PURE__ */ new Date()) {
+        const nameBuf = Buffer.from(name2, "utf8");
+        const dt = dosTime(mtime);
+        const crc = crc32(data);
+        const raw = Buffer.from(data);
+        const compressed = deflateRawSync(raw, { level: 6 });
+        const useDeflate = compressed.length < raw.length;
+        const compData = useDeflate ? compressed : raw;
+        const method = useDeflate ? 8 : 0;
+        const localHeader = Buffer.alloc(30);
+        localHeader.writeUInt32LE(67324752, 0);
+        localHeader.writeUInt16LE(20, 4);
+        localHeader.writeUInt16LE(2048, 6);
+        localHeader.writeUInt16LE(method, 8);
+        localHeader.writeUInt16LE(dt.time, 10);
+        localHeader.writeUInt16LE(dt.date, 12);
+        localHeader.writeUInt32LE(crc, 14);
+        localHeader.writeUInt32LE(compData.length, 18);
+        localHeader.writeUInt32LE(raw.length, 22);
+        localHeader.writeUInt16LE(nameBuf.length, 26);
+        localHeader.writeUInt16LE(0, 28);
+        const headerOffset = this.offset;
+        this._push(localHeader);
+        this._push(nameBuf);
+        this._push(compData);
+        this.central.push({
+          name: name2,
+          nameBuf,
+          crc,
+          size: raw.length,
+          compSize: compData.length,
+          offset: headerOffset,
+          mtime: dt,
+          method
+        });
+      }
+      finalize() {
+        const cdStart = this.offset;
+        let cdSize = 0;
+        for (const e of this.central) {
+          const cd = Buffer.alloc(46);
+          cd.writeUInt32LE(33639248, 0);
+          cd.writeUInt16LE(20, 4);
+          cd.writeUInt16LE(20, 6);
+          cd.writeUInt16LE(2048, 8);
+          cd.writeUInt16LE(e.method, 10);
+          cd.writeUInt16LE(e.mtime.time, 12);
+          cd.writeUInt16LE(e.mtime.date, 14);
+          cd.writeUInt32LE(e.crc, 16);
+          cd.writeUInt32LE(e.compSize, 20);
+          cd.writeUInt32LE(e.size, 24);
+          cd.writeUInt16LE(e.nameBuf.length, 28);
+          cd.writeUInt16LE(0, 30);
+          cd.writeUInt16LE(0, 32);
+          cd.writeUInt16LE(0, 34);
+          cd.writeUInt16LE(0, 36);
+          cd.writeUInt32LE(0, 38);
+          cd.writeUInt32LE(e.offset, 42);
+          this._push(cd);
+          this._push(e.nameBuf);
+          cdSize += cd.length + e.nameBuf.length;
+        }
+        const eocd = Buffer.alloc(22);
+        eocd.writeUInt32LE(101010256, 0);
+        eocd.writeUInt16LE(0, 4);
+        eocd.writeUInt16LE(0, 6);
+        eocd.writeUInt16LE(this.central.length, 8);
+        eocd.writeUInt16LE(this.central.length, 10);
+        eocd.writeUInt32LE(cdSize, 12);
+        eocd.writeUInt32LE(cdStart, 16);
+        eocd.writeUInt16LE(0, 20);
+        this._push(eocd);
+        return Buffer.concat(this.chunks);
+      }
+    };
+    _internal = {
+      crc32,
+      ZipWriter,
+      parseZip,
+      collectBrainFiles,
+      dosTime,
+      sanitizeProjectName,
+      tsString,
+      isSafeBundleEntry
+    };
+  }
 });
 
 // src/tools.js
@@ -2432,11 +3596,11 @@ function cleanText(value, limit = 600) {
   return String(value || "").replace(/\0/g, "").replace(/\r/g, "").trim().slice(0, limit);
 }
 function isGeneratedOrVendor(file) {
-  const path2 = String(file || "").replaceAll("\\", "/");
-  return /(?:^|\/)(?:node_modules(?:[._-][^/]*)?|vendor|dist|build|coverage|\.next|target|out|__pycache__|\.venv|venv)(?:\/|$)/i.test(path2) || /(?:^|\/)[^/]*(?:backup|\.bak)(?:[-_.][^/]*)?(?:\/|$)/i.test(path2) || /(?:^|\/)dsh-project-brain\/lib(?:\/|$)/i.test(path2);
+  const path7 = String(file || "").replaceAll("\\", "/");
+  return /(?:^|\/)(?:node_modules(?:[._-][^/]*)?|vendor|dist|build|coverage|\.next|target|out|__pycache__|\.venv|venv)(?:\/|$)/i.test(path7) || /(?:^|\/)[^/]*(?:backup|\.bak)(?:[-_.][^/]*)?(?:\/|$)/i.test(path7) || /(?:^|\/)dsh-project-brain\/lib(?:\/|$)/i.test(path7);
 }
-function languageOf(path2) {
-  const lower = String(path2 || "").toLowerCase();
+function languageOf(path7) {
+  const lower = String(path7 || "").toLowerCase();
   if (/\.tsx?$/.test(lower)) return "typescript";
   if (/\.[cm]?jsx?$/.test(lower)) return "javascript";
   if (/\.py$/.test(lower)) return "python";
@@ -2694,8 +3858,8 @@ function parseLlmArchitecture(text, base, knownFiles) {
   const known = new Set(knownFiles);
   const rawComponents = Array.isArray(parsed.components) ? parsed.components : [];
   const components = rawComponents.slice(0, 18).map((item, index) => {
-    const evidencePaths = strings(item.evidencePaths, 12, 240).filter((path2) => known.has(path2));
-    const importantFiles = strings(item.importantFiles, 8, 240).filter((path2) => known.has(path2));
+    const evidencePaths = strings(item.evidencePaths, 12, 240).filter((path7) => known.has(path7));
+    const importantFiles = strings(item.importantFiles, 8, 240).filter((path7) => known.has(path7));
     return { id: "component-" + safeId(item.id || item.name || index + 1), name: cleanText(item.name, 100) || "\u6838\u5FC3\u7EC4\u4EF6 " + (index + 1), layerId: layerByRaw.get(String(item.layerId || item.layer || "")) || layers[Math.min(index, layers.length - 1)].id, type: cleanText(item.type, 40) || "component", responsibility: cleanText(item.responsibility, 700), details: cleanText(item.details, 1200), technologies: strings(item.technologies, 10, 80), importantFiles: importantFiles.length ? importantFiles : evidencePaths.slice(0, 5), evidencePaths, confidence: clamp(Number(item.confidence) || 0.78, 0.2, 1) };
   }).filter((item) => item.name && item.responsibility);
   if (components.length < 2) throw Object.assign(new Error("LLM architecture has too few components"), { code: "ARCHITECTURE_LLM_SCHEMA" });
@@ -2794,9 +3958,9 @@ async function collectEvidence(fs, projectPath, scan, config) {
   const readmePath = allFiles.find((file) => README_NAMES.test(file.split("/").pop()));
   const readme = readmePath ? { path: readmePath, content: cleanText(await readProjectFile(fs, projectPath, readmePath), 9e3) } : null;
   const manifests = [];
-  for (const path2 of allFiles.filter((file) => MANIFEST_NAMES.test(file.split("/").pop())).slice(0, 12)) {
-    const content = cleanText(await readProjectFile(fs, projectPath, path2), 6e3);
-    manifests.push({ path: path2, content, hash: hashText(content) });
+  for (const path7 of allFiles.filter((file) => MANIFEST_NAMES.test(file.split("/").pop())).slice(0, 12)) {
+    const content = cleanText(await readProjectFile(fs, projectPath, path7), 6e3);
+    manifests.push({ path: path7, content, hash: hashText(content) });
   }
   const sourceFiles = allFiles.filter((file) => SOURCE_EXTENSIONS.test(file)).sort((a, b) => evidencePriority(b, scan) - evidencePriority(a, scan) || a.localeCompare(b)).slice(0, clamp(Number(config.architectureMaxFiles) || 240, 20, 1e3));
   const sourceFacts = [];
@@ -2909,162 +4073,8 @@ function architectureRelevantFiles(files) {
   return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));
 }
 
-// src/host/store/brain-files.js
-function assertSafeProjectPath(projectPath) {
-  const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
-  if (!rawBase || rawBase === "." || rawBase.includes("\0") || rawBase === "/" || /^[A-Za-z]:[\\/]?$/.test(rawBase) || /[\\/]Programs[\\/]DSH Desktop$/i.test(rawBase) || /[\\/]DSH Desktop\.app(?:[\\/]|$)/.test(rawBase)) {
-    const error = new Error("Refusing Project Brain access without a concrete workspace root");
-    error.code = "E_UNSAFE_PROJECT_PATH";
-    throw error;
-  }
-  return rawBase.replace(/[\\/]+$/, "");
-}
-function brainPath(projectPath, file) {
-  const base = assertSafeProjectPath(projectPath);
-  const relativeFile = String(file || "").replace(/\\/g, "/");
-  if (!relativeFile || relativeFile.startsWith("/") || relativeFile.split("/").includes("..")) {
-    const error = new Error("Refusing Project Brain path outside .project-brain");
-    error.code = "E_UNSAFE_BRAIN_FILE";
-    throw error;
-  }
-  return base + "/.project-brain/" + relativeFile;
-}
-async function readText2(fs, path2) {
-  try {
-    const target = await fs.resolve(path2);
-    return await fs.readText(target);
-  } catch (e) {
-    return null;
-  }
-}
-function resolveWritePolicy(fs, writePolicy) {
-  if (writePolicy) return writePolicy;
-  try {
-    const sp = fs && (fs.sandboxPolicy || fs.ctx && fs.ctx.sandboxPolicy);
-    if (sp && typeof sp.resolve === "function") {
-      try {
-        return sp.resolve({ mode: "danger-full-access" });
-      } catch (e) {
-      }
-    }
-  } catch (e) {
-  }
-  return null;
-}
-async function writeText(fs, path2, content, writePolicy) {
-  const policy = resolveWritePolicy(fs, writePolicy);
-  try {
-    try {
-      const idx = path2.lastIndexOf("/");
-      if (idx > 0 && typeof fs.mkdir === "function") {
-        const dirTarget = await fs.resolve(path2.slice(0, idx));
-        if (policy && fs.mkdir.length >= 2) {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true }, { sandboxPolicy: policy });
-          } catch (e) {
-          }
-        } else if (policy) {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true });
-          } catch (e) {
-          }
-        } else {
-          try {
-            await fs.mkdir(dirTarget, { recursive: true });
-          } catch (e) {
-          }
-        }
-      }
-    } catch (e) {
-    }
-    const target = await fs.resolve(path2);
-    if (policy) {
-      try {
-        await fs.writeText(target, content, void 0, void 0, policy);
-        return true;
-      } catch (e) {
-      }
-    }
-    await fs.writeText(target, content);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-async function appendLine(fs, path2, line, writePolicy) {
-  if (line == null) return false;
-  const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
-  try {
-    const target = await fs.resolve(path2);
-    let existing = null;
-    try {
-      existing = await fs.readText(target);
-    } catch (e) {
-    }
-    let next;
-    if (existing == null || existing === "") {
-      next = normalizedLine;
-    } else if (existing.endsWith("\n")) {
-      next = existing + normalizedLine;
-    } else {
-      next = existing + "\n" + normalizedLine;
-    }
-    return writeText(fs, path2, next, writePolicy);
-  } catch (e) {
-    return false;
-  }
-}
-function parseJsonl(text) {
-  if (!text) return [];
-  let t = String(text);
-  if (t.charCodeAt(0) === 65279) t = t.slice(1);
-  const out = [];
-  for (const line of t.split("\n")) {
-    const s = line.trim();
-    if (!s) continue;
-    try {
-      out.push(JSON.parse(s));
-    } catch (e) {
-    }
-  }
-  return out;
-}
-function serializeJsonl(items) {
-  if (!items || items.length === 0) return "";
-  return items.map((i) => JSON.stringify(i)).join("\n") + "\n";
-}
-async function readJsonl(fs, path2) {
-  return parseJsonl(await readText2(fs, path2));
-}
-async function appendJsonl(fs, path2, entry, writePolicy) {
-  return appendLine(fs, path2, JSON.stringify(entry) + "\n", writePolicy);
-}
-async function writeJsonl(fs, path2, items, writePolicy) {
-  return writeText(fs, path2, serializeJsonl(items || []), writePolicy);
-}
-async function readJson(fs, path2) {
-  const text = await readText2(fs, path2);
-  if (text == null) return null;
-  let t = text;
-  if (typeof t === "string" && t.charCodeAt(0) === 65279) t = t.slice(1);
-  try {
-    return JSON.parse(t);
-  } catch (e) {
-    return { __error: String(e && e.message || e) };
-  }
-}
-async function writeJson(fs, path2, obj, writePolicy) {
-  return writeText(fs, path2, JSON.stringify(obj, null, 2), writePolicy);
-}
-async function readBrain(fs, projectPath) {
-  const [project, timeline, memories, todos] = await Promise.all([
-    readJson(fs, brainPath(projectPath, "project.json")),
-    readJsonl(fs, brainPath(projectPath, "timeline.jsonl")),
-    readJsonl(fs, brainPath(projectPath, "memory.jsonl")),
-    readJsonl(fs, brainPath(projectPath, "todo.jsonl"))
-  ]);
-  return { projectPath, project, timeline, memories, todos };
-}
+// src/host/scan-and-write.js
+init_brain_files();
 
 // src/host/store/brain-logic.js
 var MEMORY_TYPES = [
@@ -3351,14 +4361,14 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
   }
   let existing;
   try {
-    existing = await readJson(fs, brainPath(projectPath, "project.json"));
+    existing = await readJson(fs, brainPath2(projectPath, "project.json"));
   } catch (e) {
     existing = null;
   }
   const isRescan = Boolean(existing && existing.id);
   let previousArchitecture = null;
   try {
-    previousArchitecture = await readJson(fs, brainPath(projectPath, "architecture.json"));
+    previousArchitecture = await readJson(fs, brainPath2(projectPath, "architecture.json"));
   } catch (e) {
   }
   const architectureConfig = runtime.getMemoryConfig ? runtime.getMemoryConfig() : {};
@@ -3404,24 +4414,24 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
   };
   if (!dryRun) {
     const writePolicy = resolveWritePolicy2(sandboxPolicy);
-    const wroteProject = await writeJson(fs, brainPath(projectPath, "project.json"), projectData, writePolicy);
+    const wroteProject = await writeJson(fs, brainPath2(projectPath, "project.json"), projectData, writePolicy);
     if (!wroteProject) {
       return {
         ok: false,
         data: {
-          error: { code: "E_WRITE_FAILED", message: "failed to write " + brainPath(projectPath, "project.json") + "\uFF08\u53EF\u80FD\u662F sandbox \u62D2\u7EDD\uFF09" },
+          error: { code: "E_WRITE_FAILED", message: "failed to write " + brainPath2(projectPath, "project.json") + "\uFF08\u53EF\u80FD\u662F sandbox \u62D2\u7EDD\uFF09" },
           scanDurationMs: Date.now() - startMs
         }
       };
     }
     if (architecture && !architecture.error) {
-      const wroteArchitecture = await writeJson(fs, brainPath(projectPath, "architecture.json"), architecture, writePolicy);
+      const wroteArchitecture = await writeJson(fs, brainPath2(projectPath, "architecture.json"), architecture, writePolicy);
       if (!wroteArchitecture) {
         architecture = { error: { code: "ARCHITECTURE_WRITE_FAILED", message: "\u67B6\u6784\u6570\u636E\u5199\u5165\u5931\u8D25\uFF0C\u9879\u76EE\u57FA\u7840\u626B\u63CF\u4ECD\u5DF2\u5B8C\u6210" } };
       }
     }
     try {
-      await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+      await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
         id: makeId("evt", now),
         title: isRescan ? "\u5B8C\u6210\u91CD\u626B\uFF08" + toolLabel + "\uFF09" : "\u5B8C\u6210 project_init \u626B\u63CF",
         eventType: isRescan ? "rescan" : "init",
@@ -3589,10 +4599,12 @@ function buildProjectRescanTool(opts) {
 }
 
 // src/tools/memory.js
+init_brain_files();
 import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/admit.js
 import { createHash } from "node:crypto";
+init_brain_files();
 var CORE_MAX_ITEMS = 15;
 var CORE_MAX_TOKENS = 800;
 var TITLE_JACCARD_SUGGEST = 0.85;
@@ -3946,11 +4958,11 @@ async function persistAdmitted({ fs, projectPath, memories, entry, supersedesId,
   const capped = enforceCoreCap(rows, { pinnedIds: [...pinnedIds || [], entry.id], now });
   const needRewrite = Boolean(supersedesId) || capped.changed;
   if (needRewrite) {
-    const ok3 = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), capped.rows);
+    const ok3 = await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), capped.rows);
     if (!ok3) return { ok: false, code: "E_WRITE_FAILED" };
     return { ok: true, entry, rows: capped.rows };
   }
-  const ok2 = await appendJsonl(fs, brainPath(projectPath, "memory.jsonl"), entry);
+  const ok2 = await appendJsonl(fs, brainPath2(projectPath, "memory.jsonl"), entry);
   if (!ok2) return { ok: false, code: "E_WRITE_FAILED" };
   return { ok: true, entry, rows: capped.rows };
 }
@@ -3997,12 +5009,12 @@ async function admitMemory({
           title,
           description: String(candidate && candidate.content || "")
         }, now);
-        await appendJsonl(fs, brainPath(projectPath, "todo.jsonl"), todo);
+        await appendJsonl(fs, brainPath2(projectPath, "todo.jsonl"), todo);
         return { ok: false, code: decision.code, reason: decision.reason, routed: "todo", todoId: todo.id };
       }
     }
     if (decision.route === "timeline") {
-      await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+      await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
         id: makeId("evt", now),
         title: String(candidate && candidate.title || "rejected change"),
         eventType: "change",
@@ -4061,12 +5073,12 @@ async function persistHousekeep(fs, projectPath, { now = Date.now(), pinnedIds =
   }
   const hk = housekeepMemories(brain.memories || [], { now, pinnedIds });
   if (!hk.changed) return { ok: true, changed: false, actions: hk.actions, rows: hk.rows };
-  const wrote = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), hk.rows);
+  const wrote = await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), hk.rows);
   if (!wrote) return { ok: false, code: "E_WRITE_FAILED", changed: false, actions: hk.actions };
   if (writeTimeline) {
     const archived = hk.actions.filter((a) => a.action === "archive_rule").length;
     const evicted = hk.actions.filter((a) => a.action === "evict_to_dormant").length;
-    await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+    await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
       id: makeId("evt", now),
       title: "\u8BB0\u5FC6\u6574\u7406\u5B8C\u6210\uFF08\u5F52\u6863 " + archived + " \xB7 \u4F11\u7720 " + evicted + "\uFF09",
       eventType: "dream",
@@ -4178,7 +5190,7 @@ function buildMemoryAddTool({ fs, sandboxPolicy, getLlm }) {
         }
         if (admitted.action === "insert") {
           const entry = admitted.entry;
-          await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+          await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
             id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
             title: "\u65B0\u589E\u8BB0\u5FC6[" + entry.type + "]\uFF1A" + entry.title,
             eventType: "memory",
@@ -4233,7 +5245,7 @@ function buildMemoryListTool({ fs, sandboxPolicy }) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
         await ensureHousekeepOnRead(fs, projectPath);
-        const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+        const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
         const layer = args && typeof args.layer === "string" ? String(args.layer).toLowerCase() : "active";
         let visible;
         if (args && args.includeArchived) {
@@ -4309,7 +5321,7 @@ function buildMemoryArchiveTool({ fs, sandboxPolicy }) {
         if (!idPrefix) {
           return { ok: false, code: "E_NO_ID", message: "id \u5FC5\u586B" };
         }
-        const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+        const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
         const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
         if (matches.length === 0) {
           return { ok: false, code: "E_NOT_FOUND", message: `\u672A\u627E\u5230 id=${idPrefix} \u7684\u6D3B\u8DC3\u8BB0\u5FC6` };
@@ -4328,11 +5340,11 @@ function buildMemoryArchiveTool({ fs, sandboxPolicy }) {
             ...reason ? { archiveReason: reason } : {}
           });
         });
-        const wrote = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), updated);
+        const wrote = await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), updated);
         if (!wrote) {
           return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
         }
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u5F52\u6863\u8BB0\u5FC6[" + target.type + "]\uFF1A" + target.title + (reason ? "\uFF08" + reason + "\uFF09" : ""),
           eventType: "memory_archive",
@@ -4394,7 +5406,7 @@ function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
         if (!title) return { ok: false, code: "E_NO_TITLE", message: "title \u5FC5\u586B" };
         if (!content || String(content).length < 20) return { ok: false, code: "E_NO_CONTENT", message: "content \u5FC5\u586B\u4E14 \u2265 20 \u5B57" };
         const reason = args && typeof args.reason === "string" ? args.reason.trim().slice(0, 500) : "";
-        const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+        const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
         const matches = memories.filter((m) => m && m.id && (m.id === oldId || m.id.indexOf(oldId) === 0) && isRetrievableMemory(m));
         if (matches.length === 0) return { ok: false, code: "E_OLD_NOT_FOUND", message: `\u672A\u627E\u5230 id=${oldId} \u7684\u53EF\u68C0\u7D22\u8BB0\u5FC6` };
         if (matches.length > 1) return { ok: false, code: "E_AMBIGUOUS_ID", message: `oldId=${oldId} \u5339\u914D\u5230 ${matches.length} \u6761\uFF0C\u8BF7\u63D0\u4F9B\u66F4\u7CBE\u786E\u7684 id` };
@@ -4425,14 +5437,14 @@ function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
         }
         const newEntry = admitted.entry || { id: admitted.id, type, title };
         if (reason && admitted.action === "insert") {
-          const latest = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+          const latest = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
           const withReason = latest.map((m) => {
             if (m.id !== oldTarget.id) return m;
             return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
           });
-          await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), withReason);
+          await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), withReason);
         }
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u66FF\u6362\u8BB0\u5FC6[" + oldTarget.type + "\u2192" + newEntry.type + "]\uFF1A" + newEntry.title + (reason ? "\uFF08" + reason + "\uFF09" : ""),
           eventType: "memory_supersede",
@@ -4449,6 +5461,7 @@ function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
 }
 
 // src/tools/todo.js
+init_brain_files();
 import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
 function emitPreviewChanged3(exec, projectPath) {
   try {
@@ -4495,16 +5508,16 @@ function buildTodoAddTool({ fs, sandboxPolicy }) {
         }
         const now = Date.now();
         const entry = makeTodoEntry({ title: args.title, description: args.description, priority: args.priority, relatedFiles: args.relatedFiles }, now);
-        const wrote = await appendJsonl(fs, brainPath(projectPath, "todo.jsonl"), entry);
+        const wrote = await appendJsonl(fs, brainPath2(projectPath, "todo.jsonl"), entry);
         if (!wrote) return { ok: false, code: "E_WRITE_FAILED", message: "failed to write todo.jsonl" };
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u65B0\u589E\u5F85\u529E\uFF1A" + entry.title,
           eventType: "todo",
           occurredAt: now
         });
         emitPreviewChanged3(exec, projectPath);
-        const todos = await readJsonl(fs, brainPath(projectPath, "todo.jsonl"));
+        const todos = await readJsonl(fs, brainPath2(projectPath, "todo.jsonl"));
         return { ok: true, data: { id: entry.id, title: entry.title, priority: entry.priority, activeCount: todoStats(todos).pendingTodos } };
       } catch (e) {
         return { ok: false, code: "E_TODO_ADD_FAILED", message: String(e && e.message || e) };
@@ -4545,7 +5558,7 @@ function buildTodoListTool({ fs, sandboxPolicy }) {
     async execute(args, exec) {
       try {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
-        const todos = await readJsonl(fs, brainPath(projectPath, "todo.jsonl"));
+        const todos = await readJsonl(fs, brainPath2(projectPath, "todo.jsonl"));
         const stats = todoStats(todos);
         const statusFilter = normalizeStatus(args && args.status);
         const wantAll = args && args.status === "all";
@@ -4603,7 +5616,7 @@ function buildTodoDoneTool({ fs, sandboxPolicy }) {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
         const ref = args && (args.id || args.title) || "";
         if (!ref) return { ok: false, code: "E_NO_REF", message: "id \u6216 title \u5FC5\u586B\u4E00\u9879" };
-        const todoPath = brainPath(projectPath, "todo.jsonl");
+        const todoPath = brainPath2(projectPath, "todo.jsonl");
         const todos = await readJsonl(fs, todoPath);
         const target = findTodo(todos, ref);
         if (!target) {
@@ -4618,7 +5631,7 @@ function buildTodoDoneTool({ fs, sandboxPolicy }) {
         }
         const wrote = await writeText(fs, todoPath, serializeJsonl(todos));
         if (!wrote) return { ok: false, code: "E_WRITE_FAILED", message: "failed to rewrite todo.jsonl" };
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u5B8C\u6210\u5F85\u529E\uFF1A" + target.title,
           eventType: "todo",
@@ -4634,6 +5647,7 @@ function buildTodoDoneTool({ fs, sandboxPolicy }) {
 }
 
 // src/tools/todo-update.js
+init_brain_files();
 import { defineTool as defineTool4 } from "@deepseek-ai/dsh-tools";
 function emitPreviewChanged4(exec, projectPath) {
   try {
@@ -4671,7 +5685,7 @@ function buildTodoUpdateTool({ fs, sandboxPolicy }) {
         const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
         const ref = args && (args.id || args.title) || "";
         if (!ref) return { ok: false, data: { error: { code: "E_NO_REF", message: "id \u6216 title \u5FC5\u586B\u4E00\u9879" } } };
-        const todoPath = brainPath(projectPath, "todo.jsonl");
+        const todoPath = brainPath2(projectPath, "todo.jsonl");
         const todos = await readJsonl(fs, todoPath);
         const target = findTodo(todos, ref);
         if (!target) return { ok: false, data: { error: { code: "E_NOT_FOUND", message: "\u672A\u627E\u5230\u5339\u914D\u7684\u6D3B\u8DC3\u5F85\u529E\uFF1A" + ref } } };
@@ -4707,7 +5721,7 @@ function buildTodoUpdateTool({ fs, sandboxPolicy }) {
         }
         const wrote = await writeText(fs, todoPath, serializeJsonl(todos));
         if (!wrote) return { ok: false, data: { error: { code: "E_WRITE_FAILED", message: "failed to rewrite todo.jsonl" } } };
-        await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u66F4\u65B0\u5F85\u529E[" + target.id + "]\uFF1A" + target.title + (changed.length ? "\uFF08" + changed.join(",") + "\uFF09" : ""),
           eventType: "todo_update",
@@ -4734,6 +5748,7 @@ function renderTodoUpdate(value) {
 }
 
 // src/tools/continue.js
+init_brain_files();
 import { defineTool as defineTool5 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/inject-context.js
@@ -4888,6 +5903,7 @@ function buildContinueTool({ fs, sandboxPolicy }) {
 }
 
 // src/tools/suggest.js
+init_brain_files();
 import { defineTool as defineTool6 } from "@deepseek-ai/dsh-tools";
 
 // src/host/suggest.js
@@ -5239,6 +6255,7 @@ function renderSuggest(value) {
 }
 
 // src/tools/status.js
+init_brain_files();
 import { defineTool as defineTool7 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/retrieval.js
@@ -5424,12 +6441,12 @@ var Config = z.object({
 });
 function normalizeMemoryConfig(value) {
   const input = value && typeof value === "object" ? value : {};
-  const num = (key, fallback, min, max) => {
+  const num2 = (key, fallback, min, max) => {
     const raw = Number(input[key]);
     if (!Number.isFinite(raw)) return fallback;
     return Math.min(max, Math.max(min, raw));
   };
-  const integer = (key, fallback, min, max) => Math.round(num(key, fallback, min, max));
+  const integer = (key, fallback, min, max) => Math.round(num2(key, fallback, min, max));
   return Object.freeze({
     retrievalMode: input.retrievalMode === "keyword" ? "keyword" : "hybrid",
     vectorEnabled: input.vectorEnabled === true,
@@ -5440,11 +6457,11 @@ function normalizeMemoryConfig(value) {
     embeddingBatchSize: integer("embeddingBatchSize", 16, 1, 128),
     embeddingMaxIndexPerRun: integer("embeddingMaxIndexPerRun", 64, 1, 500),
     embeddingTimeoutMs: integer("embeddingTimeoutMs", 2e4, 1e3, 12e4),
-    keywordWeight: num("keywordWeight", 0.15, 0, 1),
-    vectorWeight: num("vectorWeight", 0.25, 0, 1),
-    importanceWeight: num("importanceWeight", 0.3, 0, 1),
-    confidenceWeight: num("confidenceWeight", 0.1, 0, 1),
-    recencyWeight: num("recencyWeight", 0.2, 0, 1),
+    keywordWeight: num2("keywordWeight", 0.15, 0, 1),
+    vectorWeight: num2("vectorWeight", 0.25, 0, 1),
+    importanceWeight: num2("importanceWeight", 0.3, 0, 1),
+    confidenceWeight: num2("confidenceWeight", 0.1, 0, 1),
+    recencyWeight: num2("recencyWeight", 0.2, 0, 1),
     sessionSemanticMemoryEnabled: input.sessionSemanticMemoryEnabled !== false,
     sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16e3, 2e3, 4e4),
     sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
@@ -5696,9 +6713,11 @@ function renderStatus(value) {
 }
 
 // src/tools/ask.js
+init_brain_files();
 import { defineTool as defineTool8 } from "@deepseek-ai/dsh-tools";
 
 // src/host/memory/embeddings.js
+init_brain_files();
 import { createHash as createHash2 } from "node:crypto";
 var CACHE_FILE = "cache/embeddings.jsonl";
 function embeddingContentHash(memory) {
@@ -5756,7 +6775,7 @@ async function fetchEmbeddings({ texts, config, apiKey, signal, fetchImpl = fetc
 }
 async function readCache(fs, projectPath) {
   try {
-    return await readJsonl(fs, brainPath(projectPath, CACHE_FILE));
+    return await readJsonl(fs, brainPath2(projectPath, CACHE_FILE));
   } catch (e) {
     return [];
   }
@@ -5815,7 +6834,7 @@ async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolve
   }
   if (indexedNow > 0) {
     const activeIds = new Set(active.map((memory) => memory.id));
-    const wrote = await writeJsonl(fs, brainPath(projectPath, CACHE_FILE), [...currentById.values()].filter((row) => activeIds.has(row.memoryId)));
+    const wrote = await writeJsonl(fs, brainPath2(projectPath, CACHE_FILE), [...currentById.values()].filter((row) => activeIds.has(row.memoryId)));
     if (!wrote && !error) {
       error = Object.assign(new Error("Embedding cache could not be written"), { code: "EMBEDDING_CACHE_WRITE_FAILED" });
     }
@@ -5952,10 +6971,10 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
         const useLLM = Boolean(args && args.useLLM);
         const tokens = tokenize(question);
         const memoryConfig = normalizeMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
-        const projectJson = await readJson(fs, brainPath(projectPath, "project.json")).catch(() => null);
-        const memories = await readJsonlSafe(fs, brainPath(projectPath, "memory.jsonl"));
-        const todos = await readJsonlSafe(fs, brainPath(projectPath, "todo.jsonl"));
-        const timeline = await readJsonlSafe(fs, brainPath(projectPath, "timeline.jsonl"));
+        const projectJson = await readJson(fs, brainPath2(projectPath, "project.json")).catch(() => null);
+        const memories = await readJsonlSafe(fs, brainPath2(projectPath, "memory.jsonl"));
+        const todos = await readJsonlSafe(fs, brainPath2(projectPath, "todo.jsonl"));
+        const timeline = await readJsonlSafe(fs, brainPath2(projectPath, "timeline.jsonl"));
         const includeArchived = Boolean(args && args.includeArchived);
         const activeMemoryList = includeArchived ? (memories || []).filter(Boolean) : activeMemories(memories);
         let vectors = null;
@@ -6129,9 +7148,9 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
     }
   });
 }
-async function readJsonlSafe(fs, path2) {
+async function readJsonlSafe(fs, path7) {
   try {
-    return await readJsonl(fs, path2);
+    return await readJsonl(fs, path7);
   } catch (e) {
     return [];
   }
@@ -6158,6 +7177,7 @@ function renderAsk(value) {
 }
 
 // src/tools/dream.js
+init_brain_files();
 import { defineTool as defineTool9 } from "@deepseek-ai/dsh-tools";
 var baseOutputSchema6 = {
   type: "object",
@@ -6185,7 +7205,7 @@ function buildDreamTool({ fs, sandboxPolicy }) {
         if (mode !== "light" && mode !== "full") {
           return { ok: true, data: { mode, plannedActions: [], note: "mode \u4EC5\u652F\u6301 light / full\uFF08" + mode + " \u672A\u5B9E\u73B0\uFF09" } };
         }
-        const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+        const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
         const now = Date.now();
         const computed = housekeepMemories(memories, { now, pinnedIds: [] });
         const plannedActions = computed.actions || [];
@@ -6277,6 +7297,7 @@ function renderDream(value) {
 }
 
 // src/tools/diff.js
+init_brain_files();
 import { defineTool as defineTool10 } from "@deepseek-ai/dsh-tools";
 
 // src/host/diff/detector.js
@@ -6625,14 +7646,14 @@ function collectTreeFiles(gitDir, treeHash, prefix = "") {
   const tree = parseTree(obj.content);
   const files = {};
   for (const [name2, entry] of Object.entries(tree)) {
-    const path2 = prefix ? `${prefix}/${name2}` : name2;
+    const path7 = prefix ? `${prefix}/${name2}` : name2;
     if (entry.mode === "160000" || name2 === "node_modules" || name2 === ".git") {
       continue;
     }
     if (parseInt(entry.mode, 8) === 16384) {
-      Object.assign(files, collectTreeFiles(gitDir, entry.hash, path2));
+      Object.assign(files, collectTreeFiles(gitDir, entry.hash, path7));
     } else {
-      files[path2] = entry.hash;
+      files[path7] = entry.hash;
     }
   }
   return files;
@@ -6740,16 +7761,16 @@ async function detectChanges({ projectPath, since = "1 day ago" }) {
   }
   const parentFiles = parentCommit ? collectTreeFiles(gitDir, parentCommit.tree) : {};
   const files = [];
-  for (const [path2, hash] of Object.entries(curFiles)) {
-    if (!parentFiles[path2]) {
-      files.push({ path: path2, type: "added", hash });
-    } else if (parentFiles[path2] !== hash) {
-      files.push({ path: path2, type: "modified", hash });
+  for (const [path7, hash] of Object.entries(curFiles)) {
+    if (!parentFiles[path7]) {
+      files.push({ path: path7, type: "added", hash });
+    } else if (parentFiles[path7] !== hash) {
+      files.push({ path: path7, type: "modified", hash });
     }
   }
-  for (const path2 of Object.keys(parentFiles)) {
-    if (!curFiles[path2]) {
-      files.push({ path: path2, type: "deleted" });
+  for (const path7 of Object.keys(parentFiles)) {
+    if (!curFiles[path7]) {
+      files.push({ path: path7, type: "deleted" });
     }
   }
   const commits = [head.commit];
@@ -7020,7 +8041,7 @@ function buildDiffTool({ fs, sandboxPolicy }) {
             };
           }
           if (admitted.action === "insert") {
-            await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+            await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
               id: "evt-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8),
               title: "project_diff \u5B8C\u6210\uFF08" + (parsed.changes ? parsed.changes.length : 0) + " \u6587\u4EF6\u53D8\u5316\uFF09",
               eventType: "diff",
@@ -7078,9 +8099,570 @@ function renderDiff(value) {
   return lines;
 }
 
+// src/tools/export.js
+import { defineTool as defineTool11 } from "@deepseek-ai/dsh-tools";
+import path3 from "node:path";
+init_brain_files();
+init_bundle();
+var baseOutputSchema7 = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    ok: { type: "boolean" },
+    data: { type: "object", additionalProperties: true },
+    code: { type: "string" },
+    message: { type: "string" }
+  }
+};
+function emitPreviewChanged5(exec, projectPath) {
+  try {
+    const executor = exec && exec.ctx || null;
+    if (executor && typeof executor.emit === "function") {
+      executor.emit("project_brain/preview.changed", { projectPath });
+    }
+  } catch (e) {
+  }
+}
+function buildProjectExportTool({ fs, sandboxPolicy, pluginVersion }) {
+  return defineTool11({
+    name: "project_export",
+    description: "dsh-project-brain: \u628A\u5F53\u524D\u9879\u76EE\u7684 .project-brain/ \u6253\u6210 zip bundle\uFF08\u542B manifest.json + checksum\uFF09\u3002\u7528\u4E8E\u8DE8\u673A\u5668\u540C\u6B65\uFF1A\u5728\u6E90\u673A\u5668\u8C03\u7528 \u2192 \u628A bundle \u6587\u4EF6\u4F20\u5230\u76EE\u6807\u673A\u5668 \u2192 \u5728\u76EE\u6807\u673A\u5668\u8C03 project_import \u8FD8\u539F\u3002\u4F1A\u5907\u4EFD timeline + cache\uFF1B\u82E5\u4E0D\u9700\u8981 cache \u53EF\u4F20 includeCache=false \u7F29\u4F53\u79EF\u3002",
+    parameters: {
+      path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" },
+      outputPath: { type: "string", description: "bundle \u8F93\u51FA\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u53EF\u9009\uFF1B\u9ED8\u8BA4 <projectRoot>/dist-backups/dsh-brain-<name>-<ts>.zip\uFF09" },
+      includeCache: { type: "boolean", description: "\u662F\u5426\u5305\u542B cache/ \u76EE\u5F55\uFF08\u9ED8\u8BA4 true\uFF09" }
+    },
+    output: { schema: baseOutputSchema7, render: renderExport },
+    async execute(args, exec) {
+      try {
+        const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        if (projectPath === ".") {
+          return { ok: false, code: "E_NO_PATH", message: "\u65E0\u6CD5\u89E3\u6790\u9879\u76EE\u8DEF\u5F84\uFF08\u8BF7\u663E\u5F0F\u4F20 path\uFF09" };
+        }
+        const includeCache = !!(args && args.includeCache !== false);
+        const projectMeta = await readJson(fs, brainPath2(projectPath, "project.json"));
+        if (!projectMeta || projectMeta.__error) {
+          return { ok: false, code: "E_BRAIN_NOT_FOUND", message: "\u9879\u76EE\u672A\u521D\u59CB\u5316\uFF0C\u8BF7\u5148\u8C03\u7528 project_init" };
+        }
+        let outputPath = args && args.outputPath;
+        if (!outputPath) {
+          const fname = defaultBundleName(projectMeta);
+          outputPath = path3.join(projectPath, "dist-backups", fname);
+        }
+        const startMs = Date.now();
+        const written = await writeBundleFile({
+          projectPath,
+          outputPath,
+          pluginVersion: pluginVersion || "1.3.1",
+          includeCache
+        });
+        try {
+          const now = Date.now();
+          const event = {
+            id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+            title: "\u5BFC\u51FA bundle\uFF1A" + path3.basename(outputPath),
+            eventType: "export",
+            occurredAt: now,
+            payload: {
+              bundlePath: outputPath,
+              sizeBytes: written.sizeBytes,
+              fileCount: written.fileCount,
+              schemaVersion: written.manifest.schemaVersion
+            }
+          };
+          const { appendJsonl: appendJsonl2 } = await Promise.resolve().then(() => (init_brain_files(), brain_files_exports));
+          await appendJsonl2(fs, brainPath2(projectPath, "timeline.jsonl"), event);
+        } catch (e) {
+        }
+        emitPreviewChanged5(exec, projectPath);
+        return {
+          ok: true,
+          data: {
+            bundlePath: written.bundlePath,
+            bundleName: written.bundleName,
+            defaultDirPath: written.defaultDirPath,
+            sizeBytes: written.sizeBytes,
+            fileCount: written.fileCount,
+            durationMs: Date.now() - startMs,
+            manifest: {
+              schemaVersion: written.manifest.schemaVersion,
+              pluginVersion: written.manifest.pluginVersion,
+              exportedAt: written.manifest.exportedAt,
+              sourceProject: written.manifest.sourceProject
+            },
+            message: "\u5BFC\u51FA\u6210\u529F\u3002\u4E0B\u4E00\u6B65\uFF1A\u628A bundle \u6587\u4EF6\u4F20\u5230\u76EE\u6807\u673A\u5668\uFF0C\u8C03\u7528 project_import \u8FD8\u539F\u3002"
+          }
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          code: e && e.code || "E_EXPORT_FAILED",
+          message: String(e && e.message || e)
+        };
+      }
+    }
+  });
+}
+function renderExport(_args, value) {
+  if (!value || typeof value !== "object") {
+    return [{ type: "text", text: "dsh-project-brain: export FAILED - " + String(value) }];
+  }
+  if (value.ok) {
+    const d = value.data || {};
+    const sizeMB = (d.sizeBytes / (1024 * 1024)).toFixed(2);
+    return [
+      { type: "text", text: "dsh-project-brain: export OK" },
+      { type: "text", text: "  bundle: " + d.bundlePath },
+      { type: "text", text: "  size: " + sizeMB + " MB (" + d.fileCount + " files, " + d.durationMs + "ms)" },
+      { type: "text", text: "  source: " + (d.manifest && d.manifest.sourceProject && d.manifest.sourceProject.rootPath) },
+      { type: "text", text: "  schemaVersion: " + (d.manifest && d.manifest.schemaVersion) }
+    ];
+  }
+  return [{ type: "text", text: "dsh-project-brain: export FAILED - " + (value.code || "") + ": " + (value.message || "") }];
+}
+
+// src/tools/import.js
+import { defineTool as defineTool12 } from "@deepseek-ai/dsh-tools";
+import { promises as fsp3 } from "node:fs";
+import path4 from "node:path";
+init_brain_files();
+init_bundle();
+init_confirm_tokens();
+var baseOutputSchema8 = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    ok: { type: "boolean" },
+    data: { type: "object", additionalProperties: true },
+    code: { type: "string" },
+    message: { type: "string" }
+  }
+};
+function emitPreviewChanged6(exec, projectPath) {
+  try {
+    const executor = exec && exec.ctx || null;
+    if (executor && typeof executor.emit === "function") {
+      executor.emit("project_brain/preview.changed", { projectPath });
+    }
+  } catch (e) {
+  }
+}
+function buildProjectImportTool({ fs, sandboxPolicy }) {
+  return defineTool12({
+    name: "project_import",
+    description: "dsh-project-brain: \u4ECE bundle zip \u8FD8\u539F .project-brain/\u3002**\u4E24\u6B65\u673A\u5236**\uFF1A\u5148 dryRun=true \u770B\u9884\u89C8\uFF0C\u628A\u8FD4\u56DE\u7684 confirmToken \u4F20\u7ED9 dryRun=false \u624D\u5B9E\u9645\u5199\u5165\uFF1B5 \u5206\u949F\u5185\u5FC5\u987B\u5B8C\u6210\u3002\u5BFC\u5165\u4F1A\u5907\u4EFD\u5F53\u524D\u8111 \u2192 \u89E3\u538B \u2192 \u6539\u5199 rootPath \u2192 \u89E6\u53D1 rescan\u3002\u5931\u8D25\u56DE\u6EDA\u53EF\u8C03 project_rollback_backup\u3002",
+    parameters: {
+      path: { type: "string", description: "\u76EE\u7684\u5730\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" },
+      bundlePath: { type: "string", description: "bundle zip \u6587\u4EF6\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5FC5\u586B\uFF09" },
+      dryRun: { type: "boolean", description: "true=\u4EC5\u9884\u89C8\uFF0Cfalse=\u5B9E\u9645\u5199\u5165\uFF08\u9ED8\u8BA4 false\uFF09" },
+      confirmToken: { type: "string", description: "dryRun \u8FD4\u56DE\u7684 token\uFF1BdryRun=false \u65F6\u5FC5\u586B" }
+    },
+    output: { schema: baseOutputSchema8, render: renderImport },
+    async execute(args, exec) {
+      try {
+        const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        if (projectPath === ".") {
+          return { ok: false, code: "E_NO_PATH", message: "\u65E0\u6CD5\u89E3\u6790\u9879\u76EE\u8DEF\u5F84\uFF08\u8BF7\u663E\u5F0F\u4F20 path\uFF09" };
+        }
+        const bundlePath = args && args.bundlePath;
+        if (!bundlePath) {
+          return { ok: false, code: "E_BUNDLE_PATH_REQUIRED", message: "bundlePath \u5FC5\u586B" };
+        }
+        try {
+          await fsp3.access(bundlePath);
+        } catch (e) {
+          return { ok: false, code: "E_BUNDLE_NOT_FOUND", message: "bundle \u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A" + bundlePath };
+        }
+        const isDryRun = !!(args && args.dryRun);
+        const tokenStore = getTokenStore();
+        if (isDryRun) {
+          let preview;
+          try {
+            preview = await previewBundle({ bundlePath, destProjectPath: projectPath });
+          } catch (e) {
+            return {
+              ok: false,
+              code: e && e.code || "E_BUNDLE_INVALID",
+              message: String(e && e.message || e),
+              data: { detail: e && e.detail }
+            };
+          }
+          const confirmToken = tokenStore.issue({
+            kind: "import",
+            payload: { bundlePath, destProjectPath: projectPath, preview }
+          });
+          return {
+            ok: true,
+            data: {
+              mode: "preview",
+              bundlePath,
+              manifest: {
+                schemaVersion: preview.manifest.schemaVersion,
+                pluginVersion: preview.manifest.pluginVersion,
+                exportedAt: preview.manifest.exportedAt,
+                sourceProject: preview.manifest.sourceProject
+              },
+              impact: {
+                currentBrainExists: preview.currentBrain.exists,
+                currentProjectId: preview.currentBrain.projectId,
+                currentMemories: preview.currentBrain.memCount,
+                currentTodos: preview.currentBrain.todoCount,
+                currentTimeline: preview.currentBrain.timelineCount,
+                currentArchitecture: preview.currentBrain.archExists,
+                incomingMemories: preview.incoming.memCount,
+                incomingTodos: preview.incoming.todoCount,
+                incomingTimeline: preview.incoming.timelineCount,
+                incomingProjectId: preview.incoming.projectId,
+                backupWillCreateAt: preview.backupWillCreateAt,
+                rootPathRewrite: preview.rootPathRewrite
+              },
+              confirmToken,
+              warning: preview.currentBrain.exists ? "\u5BFC\u5165\u5C06\u8986\u76D6\u5F53\u524D\u8111\uFF0C\u65E7\u8111\u4F1A\u81EA\u52A8\u5907\u4EFD\u5230 " + preview.backupWillCreateAt : "\u8FD9\u662F\u8BE5\u9879\u76EE\u9996\u6B21\u5BFC\u5165\uFF0C\u65E0\u5907\u4EFD\u53EF\u5EFA\u3002"
+            }
+          };
+        }
+        const token = args && args.confirmToken;
+        if (!token) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_REQUIRED", message: "dryRun=false \u5FC5\u987B\u4F20 confirmToken\uFF08\u5148 dryRun=true \u62FF\u5230 token\uFF09" };
+        }
+        const payload = tokenStore.consume(token, { kind: "import" });
+        if (!payload) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_MISMATCH", message: "confirmToken \u65E0\u6548\u3001\u5DF2\u8FC7\u671F\u6216\u7C7B\u578B\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0 dryRun\uFF09" };
+        }
+        if (payload.bundlePath !== bundlePath || payload.destProjectPath !== projectPath) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_MISMATCH", message: "confirmToken \u4E0E\u5F53\u524D\u53C2\u6570\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0 dryRun\uFF09" };
+        }
+        let applied;
+        try {
+          applied = await applyBundle({
+            bundlePath,
+            destProjectPath: projectPath,
+            triggerRescan: false
+            // 由调用方调度
+          });
+        } catch (e) {
+          return {
+            ok: false,
+            code: e && e.code || "E_IMPORT_FAILED",
+            message: String(e && e.message || e)
+          };
+        }
+        try {
+          const now = Date.now();
+          const event = {
+            id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+            title: applied.backupPath ? "\u5BFC\u5165 bundle\uFF08\u5DF2\u5907\u4EFD\u65E7\u8111\u5230 " + path4.basename(applied.backupPath) + "\uFF09" : "\u5BFC\u5165 bundle\uFF08\u9996\u6B21\uFF09",
+            eventType: "import",
+            occurredAt: now,
+            payload: {
+              bundlePath,
+              backupPath: applied.backupPath,
+              sourceManifest: applied.sourceManifest
+            }
+          };
+          await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), event);
+        } catch (e) {
+        }
+        emitPreviewChanged6(exec, projectPath);
+        return {
+          ok: true,
+          data: {
+            mode: "applied",
+            bundlePath,
+            backupPath: applied.backupPath,
+            rescanTriggered: false,
+            // 留给 RPC 层调度
+            fileCount: applied.fileCount,
+            sourceManifest: applied.sourceManifest,
+            warning: "\u8111\u6570\u636E\u5DF2\u5199\u5165\u3002\u5EFA\u8BAE\u624B\u52A8\u8C03 project_rescan \u5237\u65B0\u67B6\u6784\u4E0E\u7EDF\u8BA1\uFF1B\u82E5\u9700\u6062\u590D\u65E7\u8111\uFF0C\u53EF\u8C03 project_rollback_backup\u3002"
+          }
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          code: e && e.code || "E_IMPORT_FAILED",
+          message: String(e && e.message || e)
+        };
+      }
+    }
+  });
+}
+function renderImport(_args, value) {
+  if (!value || typeof value !== "object") {
+    return [{ type: "text", text: "dsh-project-brain: import FAILED - " + String(value) }];
+  }
+  if (value.ok) {
+    const d = value.data || {};
+    if (d.mode === "preview") {
+      const impact = d.impact || {};
+      return [
+        { type: "text", text: "dsh-project-brain: import PREVIEW" },
+        { type: "text", text: "  bundle: " + d.bundlePath },
+        { type: "text", text: "  source: " + (d.manifest && d.manifest.sourceProject && d.manifest.sourceProject.rootPath) },
+        { type: "text", text: "  current brain: " + (impact.currentBrainExists ? `${impact.currentMemories} mem / ${impact.currentTodos} todo / ${impact.currentTimeline} timeline` : "(\u65E0)") },
+        { type: "text", text: `  incoming: ${impact.incomingMemories} mem / ${impact.incomingTodos} todo / ${impact.incomingTimeline} timeline` },
+        { type: "text", text: "  backup will create: " + (impact.backupWillCreateAt || "(\u65E0\u8111\uFF0C\u65E0\u9700\u5907\u4EFD)") },
+        { type: "text", text: "  rootPath rewrite: " + (impact.rootPathRewrite && impact.rootPathRewrite.from) + " \u2192 " + (impact.rootPathRewrite && impact.rootPathRewrite.to) },
+        { type: "text", text: "  confirmToken: " + d.confirmToken + " (5 \u5206\u949F\u5185\u4F20\u7ED9 dryRun=false \u624D\u4F1A\u771F\u6B63\u6267\u884C)" }
+      ];
+    }
+    if (d.mode === "applied") {
+      return [
+        { type: "text", text: "dsh-project-brain: import APPLIED" },
+        { type: "text", text: "  backup: " + (d.backupPath || "(\u65E0)") },
+        { type: "text", text: "  files restored: " + d.fileCount },
+        { type: "text", text: "  " + (d.warning || "") }
+      ];
+    }
+  }
+  return [{ type: "text", text: "dsh-project-brain: import FAILED - " + (value.code || "") + ": " + (value.message || "") }];
+}
+
+// src/tools/cleanup-backups.js
+import { defineTool as defineTool13 } from "@deepseek-ai/dsh-tools";
+init_backup();
+var baseOutputSchema9 = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    ok: { type: "boolean" },
+    data: { type: "object", additionalProperties: true },
+    code: { type: "string" },
+    message: { type: "string" }
+  }
+};
+function buildCleanupBackupsTool({ fs, sandboxPolicy }) {
+  return defineTool13({
+    name: "project_cleanup_backups",
+    description: "dsh-project-brain: \u6E05\u7406 .project-brain.backup-<ts>/ \u5907\u4EFD\u76EE\u5F55\u3002\u4E24\u4E2A\u7B56\u7565\u540C\u65F6\u751F\u6548\uFF1A\u4FDD\u7559\u6700\u8FD1 N \u4E2A\uFF08\u9ED8\u8BA4 3\uFF09+ \u5220\u9664\u8D85\u8FC7 X \u6BEB\u79D2\u7684\uFF08\u9ED8\u8BA4 30 \u5929\uFF09\u3002\u5EFA\u8BAE\u5728\u6BCF\u6B21\u5BFC\u5165/\u56DE\u6EDA\u540E\u8C03\u4E00\u6B21\uFF0C\u907F\u514D\u5907\u4EFD\u65E0\u9650\u5806\u79EF\u3002",
+    parameters: {
+      path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" },
+      keepLast: { type: "number", description: "\u4FDD\u7559\u6700\u8FD1\u51E0\u4E2A\uFF08\u9ED8\u8BA4 3\uFF09" },
+      olderThanMs: { type: "number", description: "\u5220\u9664\u8D85\u8FC7\u591A\u5C11\u6BEB\u79D2\u7684\uFF08\u9ED8\u8BA4 30 \u5929 = 2592000000\uFF09" }
+    },
+    output: { schema: baseOutputSchema9, render: renderCleanup },
+    async execute(args, exec) {
+      try {
+        const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        if (projectPath === ".") {
+          return { ok: false, code: "E_NO_PATH", message: "\u65E0\u6CD5\u89E3\u6790\u9879\u76EE\u8DEF\u5F84\uFF08\u8BF7\u663E\u5F0F\u4F20 path\uFF09" };
+        }
+        const all = await listBackups({ projectPath });
+        const result = await cleanupBackups({
+          projectPath,
+          keepLast: args && typeof args.keepLast === "number" ? args.keepLast : 3,
+          olderThanMs: args && typeof args.olderThanMs === "number" ? args.olderThanMs : 30 * 24 * 60 * 60 * 1e3
+        });
+        return {
+          ok: true,
+          data: {
+            beforeCount: all.length,
+            candidates: result.candidates,
+            deleted: result.deleted,
+            deletedCount: result.deleted.length,
+            kept: result.kept,
+            keptCount: result.kept.length,
+            message: `\u6E05\u7406\u5B8C\u6210\uFF1A\u5220\u9664 ${result.deleted.length} \u4E2A\uFF0C\u4FDD\u7559 ${result.kept.length} \u4E2A\u3002`
+          }
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          code: e && e.code || "E_CLEANUP_FAILED",
+          message: String(e && e.message || e)
+        };
+      }
+    }
+  });
+}
+function renderCleanup(_args, value) {
+  if (!value || typeof value !== "object") {
+    return [{ type: "text", text: "dsh-project-brain: cleanup FAILED - " + String(value) }];
+  }
+  if (value.ok) {
+    const d = value.data || {};
+    const lines = [
+      { type: "text", text: "dsh-project-brain: cleanup OK" },
+      { type: "text", text: `  before: ${d.beforeCount} backups, deleted ${d.deletedCount}, kept ${d.keptCount}` }
+    ];
+    if (d.deleted && d.deleted.length > 0) {
+      for (const p of d.deleted.slice(0, 5)) {
+        lines.push({ type: "text", text: "  - " + p });
+      }
+      if (d.deleted.length > 5) lines.push({ type: "text", text: `  ... and ${d.deleted.length - 5} more` });
+    }
+    return lines;
+  }
+  return [{ type: "text", text: "dsh-project-brain: cleanup FAILED - " + (value.code || "") + ": " + (value.message || "") }];
+}
+
+// src/tools/rollback-backup.js
+import { defineTool as defineTool14 } from "@deepseek-ai/dsh-tools";
+init_brain_files();
+init_brain_files();
+init_backup();
+init_confirm_tokens();
+var baseOutputSchema10 = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    ok: { type: "boolean" },
+    data: { type: "object", additionalProperties: true },
+    code: { type: "string" },
+    message: { type: "string" }
+  }
+};
+function emitPreviewChanged7(exec, projectPath) {
+  try {
+    const executor = exec && exec.ctx || null;
+    if (executor && typeof executor.emit === "function") {
+      executor.emit("project_brain/preview.changed", { projectPath });
+    }
+  } catch (e) {
+  }
+}
+function buildRollbackBackupTool({ fs, sandboxPolicy }) {
+  return defineTool14({
+    name: "project_rollback_backup",
+    description: "dsh-project-brain: \u628A\u5F53\u524D\u8111\u56DE\u6EDA\u5230\u6307\u5B9A\u7684 .project-brain.backup-<ts>/ \u5907\u4EFD\u3002**\u4E24\u6B65\u673A\u5236**\uFF1A\u5148 dryRun=true \u62FF confirmToken\uFF0C\u518D dryRun=false + token \u771F\u6B63\u6267\u884C\u3002\u56DE\u6EDA\u524D\u4F1A\u5148\u628A\u5F53\u524D\u8111\u518D\u5907\u4EFD\u4E00\u6B21\uFF08\u5F62\u6210\u5B8C\u6574\u5386\u53F2\u94FE\uFF09\uFF0C\u65E0\u9700\u4F20 bundle \u6587\u4EF6\u3002",
+    parameters: {
+      path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" },
+      backupTimestamp: { type: "string", description: "\u5907\u4EFD\u65F6\u95F4\u6233\uFF0C\u683C\u5F0F yyyymmdd-hhmmss-mmm\uFF08\u5982 20260915-143022-345\uFF1B\u65E7\u5907\u4EFD hhmm-mmm \u4ECD\u53EF\u7528\uFF09" },
+      dryRun: { type: "boolean", description: "true=\u4EC5\u9884\u89C8\uFF08\u9ED8\u8BA4 false\uFF09" },
+      confirmToken: { type: "string", description: "dryRun \u8FD4\u56DE\u7684 token\uFF1BdryRun=false \u65F6\u5FC5\u586B" }
+    },
+    output: { schema: baseOutputSchema10, render: renderRollback },
+    async execute(args, exec) {
+      try {
+        const projectPath = resolveProjectPath(args, exec, sandboxPolicy);
+        if (projectPath === ".") {
+          return { ok: false, code: "E_NO_PATH", message: "\u65E0\u6CD5\u89E3\u6790\u9879\u76EE\u8DEF\u5F84\uFF08\u8BF7\u663E\u5F0F\u4F20 path\uFF09" };
+        }
+        const backupTimestamp = args && args.backupTimestamp;
+        if (!backupTimestamp) {
+          return { ok: false, code: "E_BACKUP_TIMESTAMP_REQUIRED", message: "backupTimestamp \u5FC5\u586B\uFF08yyyymmdd-hhmmss-mmm\uFF09" };
+        }
+        const isDryRun = !!(args && args.dryRun);
+        const tokenStore = getTokenStore();
+        if (isDryRun) {
+          let preview;
+          try {
+            preview = await previewRollback({ projectPath, backupTimestamp });
+          } catch (e) {
+            return {
+              ok: false,
+              code: e && e.code || "E_BACKUP_INVALID",
+              message: String(e && e.message || e)
+            };
+          }
+          const confirmToken = tokenStore.issue({
+            kind: "rollback",
+            payload: { projectPath, backupTimestamp }
+          });
+          return {
+            ok: true,
+            data: {
+              mode: "preview",
+              backupTimestamp,
+              sourceBackup: preview.sourceBackup,
+              currentBrain: preview.currentBrain,
+              willBackupCurrentTo: preview.willBackupCurrentTo,
+              confirmToken,
+              warning: preview.currentBrain && preview.currentBrain.exists ? "\u56DE\u6EDA\u524D\u4F1A\u5148\u628A\u5F53\u524D\u8111\u5907\u4EFD\u5230 " + preview.willBackupCurrentTo + "\uFF0C\u53EF\u7EE7\u7EED\u56DE\u6EDA\u3002" : "\u5F53\u524D\u8111\u4E0D\u5B58\u5728\uFF0C\u56DE\u6EDA\u540E\u4F1A\u6210\u4E3A\u5F53\u524D\u8111\u3002"
+            }
+          };
+        }
+        const token = args && args.confirmToken;
+        if (!token) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_REQUIRED", message: "dryRun=false \u5FC5\u987B\u4F20 confirmToken\uFF08\u5148 dryRun=true \u62FF\u5230 token\uFF09" };
+        }
+        const payload = tokenStore.consume(token, { kind: "rollback" });
+        if (!payload) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_MISMATCH", message: "confirmToken \u65E0\u6548\u3001\u5DF2\u8FC7\u671F\u6216\u7C7B\u578B\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0 dryRun\uFF09" };
+        }
+        if (payload.projectPath !== projectPath || payload.backupTimestamp !== backupTimestamp) {
+          return { ok: false, code: "E_CONFIRM_TOKEN_MISMATCH", message: "confirmToken \u4E0E\u5F53\u524D\u53C2\u6570\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0 dryRun\uFF09" };
+        }
+        let applied;
+        try {
+          applied = await applyRollback({ projectPath, backupTimestamp, triggerRescan: false });
+        } catch (e) {
+          return {
+            ok: false,
+            code: e && e.code || "E_ROLLBACK_FAILED",
+            message: String(e && e.message || e)
+          };
+        }
+        try {
+          const now = Date.now();
+          const event = {
+            id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+            title: "\u56DE\u6EDA\u5230\u5907\u4EFD " + backupTimestamp,
+            eventType: "rollback",
+            occurredAt: now,
+            payload: {
+              restoredFrom: applied.restoredFrom,
+              preRollbackBackupPath: applied.preRollbackBackupPath
+            }
+          };
+          await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), event);
+        } catch (e) {
+        }
+        emitPreviewChanged7(exec, projectPath);
+        return {
+          ok: true,
+          data: {
+            mode: "applied",
+            backupTimestamp,
+            restoredFrom: applied.restoredFrom,
+            preRollbackBackupPath: applied.preRollbackBackupPath,
+            rescanTriggered: false,
+            warning: "\u56DE\u6EDA\u5B8C\u6210\u3002\u5EFA\u8BAE\u624B\u52A8\u8C03 project_rescan \u5237\u65B0\u67B6\u6784\u4E0E\u7EDF\u8BA1\u3002"
+          }
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          code: e && e.code || "E_ROLLBACK_FAILED",
+          message: String(e && e.message || e)
+        };
+      }
+    }
+  });
+}
+function renderRollback(_args, value) {
+  if (!value || typeof value !== "object") {
+    return [{ type: "text", text: "dsh-project-brain: rollback FAILED - " + String(value) }];
+  }
+  if (value.ok) {
+    const d = value.data || {};
+    if (d.mode === "preview") {
+      const sb = d.sourceBackup || {};
+      const cb = d.currentBrain || {};
+      return [
+        { type: "text", text: "dsh-project-brain: rollback PREVIEW" },
+        { type: "text", text: `  source backup: ${sb.backupName} (${sb.sizeBytes} bytes, ${sb.memCount} mem / ${sb.todoCount} todo / ${sb.timelineCount} timeline)` },
+        { type: "text", text: `  current brain: ${cb.exists ? `${cb.memCount} mem / ${cb.todoCount} todo / ${cb.timelineCount} timeline` : "(\u65E0)"}` },
+        { type: "text", text: "  pre-rollback backup: " + (d.willBackupCurrentTo || "(\u65E0\u9700)") },
+        { type: "text", text: "  confirmToken: " + d.confirmToken + " (5 \u5206\u949F\u5185\u4F20\u7ED9 dryRun=false)" }
+      ];
+    }
+    if (d.mode === "applied") {
+      return [
+        { type: "text", text: "dsh-project-brain: rollback APPLIED" },
+        { type: "text", text: "  restored from: " + d.restoredFrom },
+        { type: "text", text: "  pre-rollback backup: " + (d.preRollbackBackupPath || "(\u65E0)") },
+        { type: "text", text: "  " + (d.warning || "") }
+      ];
+    }
+  }
+  return [{ type: "text", text: "dsh-project-brain: rollback FAILED - " + (value.code || "") + ": " + (value.message || "") }];
+}
+
 // src/host/sidebar/aggregator.js
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
-import path from "node:path";
+import path5 from "node:path";
+init_brain_files();
 var CACHE_TTL_MS = 5e3;
 var cache = /* @__PURE__ */ new Map();
 function invalidateAggregatorCache(projectPath) {
@@ -7147,13 +8729,13 @@ function buildSidebarPreview(projectPath) {
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return cached.data;
   }
-  const brainDir = path.join(projectPath, ".project-brain");
-  const p = readJsonSync(path.join(brainDir, "project.json"));
-  const architecture = readJsonSync(path.join(brainDir, "architecture.json"));
-  const timeline = readJsonlSync(path.join(brainDir, "timeline.jsonl"));
-  const memories = readMemoriesHousekeptSync(path.join(brainDir, "memory.jsonl"));
+  const brainDir = path5.join(projectPath, ".project-brain");
+  const p = readJsonSync(path5.join(brainDir, "project.json"));
+  const architecture = readJsonSync(path5.join(brainDir, "architecture.json"));
+  const timeline = readJsonlSync(path5.join(brainDir, "timeline.jsonl"));
+  const memories = readMemoriesHousekeptSync(path5.join(brainDir, "memory.jsonl"));
   const visibleMemories = memories.filter(isCoreMemory);
-  const todos = readJsonlSync(path.join(brainDir, "todo.jsonl"));
+  const todos = readJsonlSync(path5.join(brainDir, "todo.jsonl"));
   let data;
   if (!p) {
     data = { initialized: false, empty: true, projectPath };
@@ -7174,6 +8756,7 @@ function buildSidebarPreview(projectPath) {
         id: p.id,
         name: p.name,
         type: techStackToType(p.techStack),
+        rootPath: p.rootPath || projectPath,
         lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now()
       },
       phase: derivePhase(p, todos),
@@ -7282,6 +8865,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       id: p.id,
       name: p.name || "(unnamed)",
       type: techStackToType(p.techStack),
+      rootPath: p.rootPath || root,
       description: sanitizeProjectDescription(p.description) || "",
       techStack: mergeTechStackWithArchitecture(p.techStack || {}, architecture),
       stack: mergeStackWithArchitecture(p.stack || {}, architecture),
@@ -7422,18 +9006,18 @@ function diffCommitTrees(gitDir, currentTreeHash, parentTreeHash) {
   const modified = [];
   const removed = [];
   const files = [];
-  for (const path2 of allPaths) {
-    const cur = currentFiles[path2];
-    const par = parentFiles[path2];
+  for (const path7 of allPaths) {
+    const cur = currentFiles[path7];
+    const par = parentFiles[path7];
     if (par === void 0) {
-      added.push(path2);
-      files.push(path2);
+      added.push(path7);
+      files.push(path7);
     } else if (cur === void 0) {
-      removed.push(path2);
-      files.push(path2);
+      removed.push(path7);
+      files.push(path7);
     } else if (cur !== par) {
-      modified.push(path2);
-      files.push(path2);
+      modified.push(path7);
+      files.push(path7);
     }
   }
   return {
@@ -7490,10 +9074,10 @@ function readHeadsBranches(gitDir) {
 }
 function readPackedBranches(gitDir) {
   const out = [];
-  const path2 = join2(gitDir, "packed-refs");
-  if (!existsSync3(path2)) return out;
+  const path7 = join2(gitDir, "packed-refs");
+  if (!existsSync3(path7)) return out;
   try {
-    const content = readFileSync3(path2, "utf8");
+    const content = readFileSync3(path7, "utf8");
     for (const line of content.split(/\r?\n/)) {
       if (line.startsWith("#") || !line.trim()) continue;
       const m = line.match(/^([0-9a-f]{40})\s+refs\/heads\/(.+)$/);
@@ -7715,7 +9299,110 @@ function getWorkTreeChanges({ projectPath, maxFiles = 50 } = {}) {
   };
 }
 
+// src/host/transfer/rpc-payload.js
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function str(v) {
+  return v == null ? "" : String(v);
+}
+function shapeImportPreviewData(preview, bundlePath, confirmToken) {
+  const current = preview && preview.currentBrain || {};
+  const incoming = preview && preview.incoming || {};
+  const rewrite = preview && preview.rootPathRewrite || {};
+  const manifest = preview && preview.manifest || {};
+  const sourceProject = manifest.sourceProject || {};
+  const currentExists = !!current.exists;
+  const backupWillCreateAt = str(preview && preview.backupWillCreateAt);
+  const sourceProjectRoot = str(sourceProject.rootPath || sourceProject.name);
+  const rootPathFrom = str(rewrite.from);
+  const rootPathTo = str(rewrite.to);
+  const warning = currentExists ? "\u5BFC\u5165\u5C06\u8986\u76D6\u5F53\u524D\u8111\uFF0C\u65E7\u8111\u4F1A\u81EA\u52A8\u5907\u4EFD\u5230 " + (backupWillCreateAt || "\u672C\u5730\u5907\u4EFD\u76EE\u5F55") : "\u8FD9\u662F\u8BE5\u9879\u76EE\u9996\u6B21\u5BFC\u5165\uFF0C\u65E0\u65E7\u8111\u53EF\u5907\u4EFD\u3002";
+  const impact = {
+    currentBrainExists: currentExists,
+    currentProjectId: str(current.projectId),
+    currentMemories: num(current.memCount),
+    currentTodos: num(current.todoCount),
+    currentTimeline: num(current.timelineCount),
+    currentArchitecture: !!current.archExists,
+    incomingMemories: num(incoming.memCount),
+    incomingTodos: num(incoming.todoCount),
+    incomingTimeline: num(incoming.timelineCount),
+    incomingProjectId: str(incoming.projectId),
+    backupWillCreateAt,
+    rootPathFrom,
+    rootPathTo
+  };
+  return {
+    mode: "preview",
+    bundlePath: str(bundlePath),
+    confirmToken: str(confirmToken),
+    sourceProjectRoot,
+    warning,
+    currentBrainExists: impact.currentBrainExists,
+    currentProjectId: impact.currentProjectId,
+    currentMemories: impact.currentMemories,
+    currentTodos: impact.currentTodos,
+    currentTimeline: impact.currentTimeline,
+    currentArchitecture: impact.currentArchitecture,
+    incomingMemories: impact.incomingMemories,
+    incomingTodos: impact.incomingTodos,
+    incomingTimeline: impact.incomingTimeline,
+    incomingProjectId: impact.incomingProjectId,
+    backupWillCreateAt,
+    rootPathFrom,
+    rootPathTo,
+    manifest: {
+      schemaVersion: str(manifest.schemaVersion),
+      pluginVersion: str(manifest.pluginVersion),
+      exportedAt: str(manifest.exportedAt),
+      sourceProjectRoot
+    },
+    impact
+  };
+}
+function shapeRollbackPreviewData(preview, backupTimestamp, confirmToken) {
+  const source = preview && preview.sourceBackup || {};
+  const current = preview && preview.currentBrain || {};
+  const currentExists = !!current.exists;
+  const willBackupCurrentTo = str(preview && preview.willBackupCurrentTo);
+  const warning = currentExists ? "\u56DE\u6EDA\u524D\u4F1A\u5148\u628A\u5F53\u524D\u8111\u5907\u4EFD\u5230 " + (willBackupCurrentTo || "\u672C\u5730\u5907\u4EFD\u76EE\u5F55") + "\uFF0C\u53EF\u7EE7\u7EED\u56DE\u6EDA\u3002" : "\u5F53\u524D\u8111\u4E0D\u5B58\u5728\uFF0C\u56DE\u6EDA\u540E\u4F1A\u6210\u4E3A\u5F53\u524D\u8111\u3002";
+  return {
+    mode: "preview",
+    confirmToken: str(confirmToken),
+    backupTimestamp: str(backupTimestamp),
+    sourceBackupName: str(source.backupName),
+    sourceBackupTs: str(source.ts || backupTimestamp),
+    sourceMemCount: num(source.memCount),
+    sourceTodoCount: num(source.todoCount),
+    sourceTimelineCount: num(source.timelineCount),
+    currentBrainExists: currentExists,
+    currentMemories: num(current.memCount),
+    currentTodos: num(current.todoCount),
+    currentTimeline: num(current.timelineCount),
+    willBackupCurrentTo,
+    warning,
+    sourceBackup: {
+      ts: str(source.ts || backupTimestamp),
+      backupName: str(source.backupName),
+      backupPath: str(source.backupPath),
+      memCount: num(source.memCount),
+      todoCount: num(source.todoCount),
+      timelineCount: num(source.timelineCount)
+    },
+    currentBrain: {
+      exists: currentExists,
+      memCount: num(current.memCount),
+      todoCount: num(current.todoCount),
+      timelineCount: num(current.timelineCount)
+    }
+  };
+}
+
 // src/host/rpc/sidebar.js
+import { promises as fsp4 } from "node:fs";
+import path6 from "node:path";
 function sanitizeSettings(config) {
   const source = normalizeMemoryConfig(config);
   return {
@@ -8108,11 +9795,351 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
           preview
         });
       }
+      if (endpoint === "export.run") {
+        let outputPath = payload && typeof payload.outputPath === "string" ? payload.outputPath : "";
+        try {
+          const { defaultBundleName: defaultBundleName2, writeBundleFile: writeBundleFile2 } = await Promise.resolve().then(() => (init_bundle(), bundle_exports));
+          if (!outputPath) {
+            let projectName = path6.basename(projectPath);
+            try {
+              const raw = await fsp4.readFile(path6.join(projectPath, ".project-brain", "project.json"), "utf8");
+              const meta = JSON.parse(raw);
+              if (meta && meta.name) projectName = String(meta.name);
+            } catch (e) {
+            }
+            outputPath = path6.join(projectPath, "dist-backups", defaultBundleName2({ name: projectName }));
+          }
+          const includeCache = payload && payload.includeCache !== void 0 ? !!payload.includeCache : true;
+          const written = await writeBundleFile2({
+            projectPath,
+            outputPath,
+            includeCache
+          });
+          try {
+            const { appendJsonl: appendJsonl2, brainPath: brainPath3 } = await Promise.resolve().then(() => (init_brain_files(), brain_files_exports));
+            const now = Date.now();
+            await appendJsonl2(fs, brainPath3(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: "\u5BFC\u51FA bundle\uFF1A" + written.bundleName,
+              eventType: "export",
+              occurredAt: now,
+              payload: {
+                bundlePath: written.bundlePath,
+                sizeBytes: written.sizeBytes,
+                fileCount: written.fileCount
+              }
+            });
+          } catch (e) {
+          }
+          invalidateAggregatorCache(projectPath);
+          const preview = await buildWorkspacePreview(fs, projectPath);
+          preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+          return rpcOk({
+            projectPath,
+            preview,
+            bundlePath: written.bundlePath,
+            bundleName: written.bundleName,
+            defaultDirPath: written.defaultDirPath,
+            sizeBytes: written.sizeBytes,
+            result: {
+              ok: true,
+              data: {
+                bundlePath: written.bundlePath,
+                bundleName: written.bundleName,
+                defaultDirPath: written.defaultDirPath,
+                sizeBytes: written.sizeBytes,
+                fileCount: written.fileCount
+              }
+            }
+          });
+        } catch (e) {
+          return rpcError(
+            e && e.code || "internal",
+            String(e && e.message || e),
+            { outputPath: outputPath || null, projectPath }
+          );
+        }
+      }
+      if (endpoint === "import.preview") {
+        const bundlePath = payload && typeof payload.bundlePath === "string" ? payload.bundlePath : "";
+        if (!bundlePath) return rpcError("bad-request", "bundlePath \u5FC5\u586B", {});
+        try {
+          const { previewBundle: previewBundle2 } = await Promise.resolve().then(() => (init_bundle(), bundle_exports));
+          const { getTokenStore: getTokenStore2 } = await Promise.resolve().then(() => (init_confirm_tokens(), confirm_tokens_exports));
+          const preview = await previewBundle2({ bundlePath, destProjectPath: projectPath });
+          const confirmToken = getTokenStore2().issue({
+            kind: "import",
+            payload: { bundlePath, destProjectPath: projectPath }
+          });
+          const data = shapeImportPreviewData(preview, bundlePath, confirmToken);
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError(e && e.code || "internal", String(e && e.message || e), { bundlePath, projectPath });
+        }
+      }
+      if (endpoint === "import.apply") {
+        const bundlePath = payload && typeof payload.bundlePath === "string" ? payload.bundlePath : "";
+        const confirmToken = payload && typeof payload.confirmToken === "string" ? payload.confirmToken : "";
+        if (!bundlePath) return rpcError("bad-request", "bundlePath \u5FC5\u586B", {});
+        if (!confirmToken) return rpcError("bad-request", "confirmToken \u5FC5\u586B\uFF08\u5148\u8C03 import.preview \u62FF token\uFF09", {});
+        try {
+          const { getTokenStore: getTokenStore2 } = await Promise.resolve().then(() => (init_confirm_tokens(), confirm_tokens_exports));
+          const tokenPayload = getTokenStore2().consume(confirmToken, { kind: "import" });
+          if (!tokenPayload) {
+            return rpcError("bad-request", "confirmToken \u65E0\u6548\u3001\u5DF2\u8FC7\u671F\u6216\u7C7B\u578B\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0\u9884\u89C8\uFF09", {});
+          }
+          if (tokenPayload.bundlePath !== bundlePath || tokenPayload.destProjectPath !== projectPath) {
+            return rpcError("bad-request", "confirmToken \u4E0E\u5F53\u524D\u53C2\u6570\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0\u9884\u89C8\uFF09", {});
+          }
+          const { applyBundle: applyBundle2 } = await Promise.resolve().then(() => (init_bundle(), bundle_exports));
+          const applied = await applyBundle2({ bundlePath, destProjectPath: projectPath, triggerRescan: false });
+          try {
+            const { appendJsonl: appendJsonl2, brainPath: brainPath3 } = await Promise.resolve().then(() => (init_brain_files(), brain_files_exports));
+            const now = Date.now();
+            await appendJsonl2(fs, brainPath3(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: applied.backupPath ? "\u5BFC\u5165 bundle\uFF08\u5DF2\u5907\u4EFD\u65E7\u8111\u5230 " + path6.basename(applied.backupPath) + "\uFF09" : "\u5BFC\u5165 bundle\uFF08\u9996\u6B21\uFF09",
+              eventType: "import",
+              occurredAt: now,
+              payload: {
+                bundlePath,
+                backupPath: applied.backupPath,
+                sourceManifest: applied.sourceManifest
+              }
+            });
+          } catch (e) {
+          }
+          const data = {
+            mode: "applied",
+            bundlePath,
+            backupPath: applied.backupPath || "",
+            fileCount: applied.fileCount || 0
+          };
+          const result = rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+          await attachRescanAndPreview({
+            result,
+            projectPath,
+            fs,
+            sandboxPolicy,
+            architectureRuntime,
+            getMemoryConfig
+          });
+          return result;
+        } catch (e) {
+          return rpcError(e && e.code || "internal", String(e && e.message || e), { bundlePath, projectPath });
+        }
+      }
+      if (endpoint === "backup.list") {
+        try {
+          const { listBackups: listBackups2 } = await Promise.resolve().then(() => (init_backup(), backup_exports));
+          const backups = await listBackups2({ projectPath });
+          return rpcOk({ projectPath, backups });
+        } catch (error) {
+          return rpcError(
+            error && error.code || "BACKUP_LIST_FAILED",
+            String(error && error.message || error),
+            { projectPath }
+          );
+        }
+      }
+      if (endpoint === "backup.cleanup") {
+        const keepLast = payload && typeof payload.keepLast === "number" ? payload.keepLast : 3;
+        const olderThanMs = payload && typeof payload.olderThanMs === "number" ? payload.olderThanMs : void 0;
+        try {
+          const { cleanupBackups: cleanupBackups2 } = await Promise.resolve().then(() => (init_backup(), backup_exports));
+          const cleaned = await cleanupBackups2({ projectPath, keepLast, olderThanMs });
+          const data = {
+            keptCount: Array.isArray(cleaned.kept) ? cleaned.kept.length : 0,
+            deletedCount: Array.isArray(cleaned.deleted) ? cleaned.deleted.length : 0,
+            kept: cleaned.kept || [],
+            deleted: cleaned.deleted || []
+          };
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError(e && e.code || "internal", String(e && e.message || e), { projectPath });
+        }
+      }
+      if (endpoint === "backup.rollback.preview") {
+        const ts = payload && typeof payload.backupTimestamp === "string" ? payload.backupTimestamp : "";
+        if (!ts) return rpcError("bad-request", "backupTimestamp \u5FC5\u586B", {});
+        try {
+          const { previewRollback: previewRollback2 } = await Promise.resolve().then(() => (init_backup(), backup_exports));
+          const { getTokenStore: getTokenStore2 } = await Promise.resolve().then(() => (init_confirm_tokens(), confirm_tokens_exports));
+          const preview = await previewRollback2({ projectPath, backupTimestamp: ts });
+          const confirmToken = getTokenStore2().issue({
+            kind: "rollback",
+            payload: { projectPath, backupTimestamp: ts }
+          });
+          const data = shapeRollbackPreviewData(preview, ts, confirmToken);
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError(e && e.code || "internal", String(e && e.message || e), { projectPath });
+        }
+      }
+      if (endpoint === "backup.rollback.apply") {
+        const ts = payload && typeof payload.backupTimestamp === "string" ? payload.backupTimestamp : "";
+        const confirmToken = payload && typeof payload.confirmToken === "string" ? payload.confirmToken : "";
+        if (!ts) return rpcError("bad-request", "backupTimestamp \u5FC5\u586B", {});
+        if (!confirmToken) return rpcError("bad-request", "confirmToken \u5FC5\u586B\uFF08\u5148\u8C03 backup.rollback.preview \u62FF token\uFF09", {});
+        try {
+          const { getTokenStore: getTokenStore2 } = await Promise.resolve().then(() => (init_confirm_tokens(), confirm_tokens_exports));
+          const tokenPayload = getTokenStore2().consume(confirmToken, { kind: "rollback" });
+          if (!tokenPayload) {
+            return rpcError("bad-request", "confirmToken \u65E0\u6548\u3001\u5DF2\u8FC7\u671F\u6216\u7C7B\u578B\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0\u9009\u62E9\uFF09", {});
+          }
+          if (tokenPayload.projectPath !== projectPath || tokenPayload.backupTimestamp !== ts) {
+            return rpcError("bad-request", "confirmToken \u4E0E\u5F53\u524D\u53C2\u6570\u4E0D\u5339\u914D\uFF08\u8BF7\u91CD\u65B0\u9009\u62E9\uFF09", {});
+          }
+          const { applyRollback: applyRollback2 } = await Promise.resolve().then(() => (init_backup(), backup_exports));
+          const applied = await applyRollback2({ projectPath, backupTimestamp: ts, triggerRescan: false });
+          try {
+            const { appendJsonl: appendJsonl2, brainPath: brainPath3 } = await Promise.resolve().then(() => (init_brain_files(), brain_files_exports));
+            const now = Date.now();
+            await appendJsonl2(fs, brainPath3(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: "\u56DE\u6EDA\u5230\u5907\u4EFD " + ts,
+              eventType: "rollback",
+              occurredAt: now,
+              payload: {
+                restoredFrom: applied.restoredFrom,
+                preRollbackBackupPath: applied.preRollbackBackupPath
+              }
+            });
+          } catch (e) {
+          }
+          const data = {
+            mode: "applied",
+            backupTimestamp: ts,
+            restoredFrom: applied.restoredFrom || "",
+            preRollbackBackupPath: applied.preRollbackBackupPath || ""
+          };
+          const result = rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+          await attachRescanAndPreview({
+            result,
+            projectPath,
+            fs,
+            sandboxPolicy,
+            architectureRuntime,
+            getMemoryConfig
+          });
+          return result;
+        } catch (e) {
+          return rpcError(e && e.code || "internal", String(e && e.message || e), { projectPath });
+        }
+      }
+      if (endpoint === "export.openFolder") {
+        const folderPath = payload && typeof payload.folderPath === "string" ? payload.folderPath : "";
+        if (!folderPath) return rpcError("BAD_REQUEST", "folderPath \u5FC5\u586B", {});
+        try {
+          if (!/^([A-Za-z]:[\\/]|\/)/.test(folderPath) || folderPath.includes("..")) {
+            return rpcError("BAD_REQUEST", "folderPath \u5FC5\u987B\u662F\u7EDD\u5BF9\u8DEF\u5F84\u4E14\u4E0D\u542B ..", { folderPath });
+          }
+          let shellModule = null;
+          let opened = false;
+          try {
+            const shell = ctx.get ? ctx.get("shell") : ctx.shell;
+            if (shell && typeof shell.openPath === "function") {
+              const r = await shell.openPath(folderPath);
+              opened = r === "" || r === void 0 || r === null;
+              if (!opened) {
+                return rpcError("OPEN_FAILED", "shell.openPath \u8FD4\u56DE\u9519\u8BEF\uFF1A" + String(r), { folderPath });
+              }
+              return rpcOk({ opened: true, folderPath });
+            }
+          } catch (e) {
+          }
+          try {
+            shellModule = await import("electron");
+            if (shellModule && shellModule.shell && typeof shellModule.shell.openPath === "function") {
+              const errMsg = await shellModule.shell.openPath(folderPath);
+              if (errMsg) {
+                return rpcError("OPEN_FAILED", errMsg, { folderPath });
+              }
+              return rpcOk({ opened: true, folderPath });
+            }
+          } catch (e) {
+          }
+          try {
+            const { spawn } = await import("node:child_process");
+            const isWin = process.platform === "win32";
+            const cmd = isWin ? "explorer" : process.platform === "darwin" ? "open" : "xdg-open";
+            spawn(cmd, [folderPath], { detached: true, stdio: "ignore" }).unref();
+            return rpcOk({ opened: true, folderPath, method: cmd });
+          } catch (e) {
+            return rpcError("OPEN_FAILED", "\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\u5939\uFF1A" + String(e && e.message || e), { folderPath });
+          }
+        } catch (e) {
+          return rpcError("OPEN_FAILED", String(e && e.message || e), { folderPath });
+        }
+      }
+      if (endpoint === "import.pickBundle") {
+        try {
+          let dialog = null;
+          let BrowserWindow = null;
+          try {
+            const electron = await import("electron");
+            const mod = electron && electron.default ? electron.default : electron;
+            dialog = mod && mod.dialog;
+            BrowserWindow = mod && mod.BrowserWindow;
+          } catch (e) {
+          }
+          if (!dialog || typeof dialog.showOpenDialog !== "function") {
+            return rpcError("directory-picker-unavailable", "\u7CFB\u7EDF\u6587\u4EF6\u9009\u62E9\u5668\u4E0D\u53EF\u7528\uFF0C\u8BF7\u7C98\u8D34 zip \u7684\u5B8C\u6574\u8DEF\u5F84", {});
+          }
+          const win = BrowserWindow && typeof BrowserWindow.getFocusedWindow === "function" && BrowserWindow.getFocusedWindow() || BrowserWindow && typeof BrowserWindow.getAllWindows === "function" && (BrowserWindow.getAllWindows()[0] || null) || void 0;
+          const picked = await dialog.showOpenDialog(win || void 0, {
+            title: "\u9009\u62E9 Project Brain bundle",
+            properties: ["openFile"],
+            filters: [
+              { name: "Brain bundle", extensions: ["zip"] },
+              { name: "All files", extensions: ["*"] }
+            ]
+          });
+          if (!picked || picked.canceled || !picked.filePaths || !picked.filePaths[0]) {
+            return rpcOk({ canceled: true, bundlePath: null });
+          }
+          return rpcOk({ canceled: false, bundlePath: picked.filePaths[0] });
+        } catch (e) {
+          return rpcError("directory-picker-unavailable", "\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\u9009\u62E9\u5668\uFF1A" + String(e && e.message || e), {});
+        }
+      }
       return rpcError("METHOD_NOT_FOUND", "\u672A\u77E5 Project Brain RPC \u65B9\u6CD5\uFF1A" + endpoint, { endpoint });
     },
     { authority: "loopback" }
   );
   return true;
+}
+async function attachRescanAndPreview({ result, projectPath, fs, sandboxPolicy, architectureRuntime, getMemoryConfig }) {
+  invalidateAggregatorCache(projectPath);
+  let rescanTriggered = false;
+  let rescanError = null;
+  try {
+    const scan = await scanAndWrite(
+      fs,
+      sandboxPolicy,
+      { path: projectPath, dryRun: false },
+      "project_rescan",
+      architectureRuntime
+    );
+    rescanTriggered = !!(scan && scan.ok);
+    if (!rescanTriggered) {
+      const err = scan && scan.data && scan.data.error;
+      rescanError = err && (err.message || err.code) || scan && scan.message || "rescan failed";
+    }
+  } catch (e) {
+    rescanError = String(e && e.message || e);
+  }
+  if (result && result.value && result.value.result && typeof result.value.result === "object") {
+    result.value.result.rescanTriggered = rescanTriggered;
+    if (rescanError) result.value.result.rescanError = rescanError;
+  }
+  try {
+    const preview = await buildWorkspacePreview(fs, projectPath);
+    preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+    if (result && result.value) result.value.preview = preview;
+  } catch (e) {
+  }
+  return result;
 }
 function registerSidebarRpc({ harness, ctx, fs, tools, getDefaultProjectPath, logger }) {
   const disposers = [];
@@ -8182,6 +10209,7 @@ function registerSidebarRpc({ harness, ctx, fs, tools, getDefaultProjectPath, lo
 }
 
 // src/host/injector.js
+init_brain_files();
 var projectCache = /* @__PURE__ */ new Map();
 var sessionProjects = /* @__PURE__ */ new Map();
 function cwdFrom(value) {
@@ -8224,10 +10252,10 @@ function resolveContextProject(context, sessions) {
 async function loadProjectDataForInjection(fs, projectPath) {
   try {
     const [project, memories, todos, timeline] = await Promise.all([
-      readJson(fs, brainPath(projectPath, "project.json")),
-      readJsonl(fs, brainPath(projectPath, "memory.jsonl")),
-      readJsonl(fs, brainPath(projectPath, "todo.jsonl")),
-      readJsonl(fs, brainPath(projectPath, "timeline.jsonl"))
+      readJson(fs, brainPath2(projectPath, "project.json")),
+      readJsonl(fs, brainPath2(projectPath, "memory.jsonl")),
+      readJsonl(fs, brainPath2(projectPath, "todo.jsonl")),
+      readJsonl(fs, brainPath2(projectPath, "timeline.jsonl"))
     ]);
     return { project, memories: memories || [], todos: todos || [], timeline: timeline || [] };
   } catch (e) {
@@ -8345,6 +10373,9 @@ function setupInjector(ctx, fs, sandboxPolicy) {
     }
   }
 }
+
+// src/host/summarizer.js
+init_brain_files();
 
 // src/host/memory/session-extractor.js
 import { isAbsolute, normalize, sep as sep2 } from "node:path";
@@ -8617,7 +10648,7 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     semanticMemories: admittedIds.length
   };
   writes.push(async () => {
-    const ok2 = await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), timelineEntry);
+    const ok2 = await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), timelineEntry);
     log(ok2 ? "info" : "warn", `summarizer: timeline event ${ok2 ? "appended" : "FAILED"} (${timelineEntry.id})`);
   });
   for (const write of writes) await write();
@@ -8713,6 +10744,7 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
 }
 
 // src/host/realtime-memory.js
+init_brain_files();
 var STRONG_SIGNAL_PATTERNS = [
   /(?:记住|记一下|备忘|别忘了|长期记住)\s*[:：]?\s*([^。\n]{4,200})/,
   /以后\s*([^。\n]{2,80})\s*(?:要|请|一定)?\s*(?:做|处理|记得|注意)/,
@@ -8892,6 +10924,20 @@ function setupRealtimeMemory(ctx, fs, sandboxPolicy, runtime = {}) {
 }
 
 // src/index.js
+import { readFileSync as readFileSync4 } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join as join3 } from "node:path";
+var __filename = fileURLToPath(import.meta.url);
+var __dirname = dirname(__filename);
+function readPluginVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync4(join3(__dirname, "..", "package.json"), "utf8"));
+    if (pkg.version) return String(pkg.version);
+  } catch (e) {
+  }
+  return "1.3.1";
+}
+var PLUGIN_VERSION = readPluginVersion();
 var name = "dsh-project-brain";
 var inject = ["tools", "fs", "sandboxPolicy", "connection", "sessions", "llm"];
 var apply = (ctx, config) => {
@@ -8953,7 +10999,11 @@ function applyImpl(ctx, config) {
     buildTodoUpdateTool,
     buildAskTool,
     buildDreamTool,
-    buildDiffTool
+    buildDiffTool,
+    buildProjectExportTool,
+    buildProjectImportTool,
+    buildCleanupBackupsTool,
+    buildRollbackBackupTool
   ];
   let registered = 0;
   for (let i = 0; i < toolBuilders.length; i++) {
@@ -8963,7 +11013,8 @@ function applyImpl(ctx, config) {
         sandboxPolicy,
         getMemoryConfig: memoryRuntime.get,
         resolveEmbeddingCredential: memoryRuntime.resolveCredential,
-        getLlm: llmRuntime.get
+        getLlm: llmRuntime.get,
+        pluginVersion: PLUGIN_VERSION
       });
       const disposer = tools.register(tool);
       registered += 1;

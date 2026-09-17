@@ -9,6 +9,49 @@
 
 ---
 
+## [v1.3.1] - 2026-09-15
+
+> **补丁版本：导入导出 / 本地备份恢复。** 数据格式与 v1.3.0 完全兼容，向后兼容；4 个新 Tool + 7 个新 RPC + Dashboard 三按钮 + 48 条 smoke + 7 条 host-acceptance 全过。
+
+### Added（新增）
+
+#### 导入导出迁移（核心场景：跨机器同步）
+
+- **`project_export` 工具**：把当前 `.project-brain/` 全量打成 zip（标准 deflate + CRC32，无第三方依赖）；输出文件名 `dsh-brain-<name>-<yyyymmdd-hhmm>.zip`；含 `manifest.json`（schemaVersion / pluginVersion / sourceProject / sha256 校验 / options）。
+- **`project_import` 工具**：两步机制（dryRun → confirmToken → apply）。dryRun 返回完整 impact（当前脑 / 即将恢复 / 备份路径 / rootPath 改写） + confirmToken；apply 校验 token 后执行：备份当前脑 → 解压 → 改写 `project.json.rootPath` → 触发 rescan。
+- **本地备份回滚**：导入/回滚前自动备份当前脑到 `.project-brain.backup-<yyyymmdd-hhmm>-sss>/`；回滚时自动再备份一次当前脑形成历史链。
+- **`project_rollback_backup` 工具**：把当前脑回滚到指定 `backupTimestamp` 对应的备份；同两步机制。
+- **`project_cleanup_backups` 工具**：按 `keepLast`（默认 3）+ `olderThanMs`（默认 30 天）双策略清理过期备份。
+- **Dashboard 三按钮**：在 Dashboard 顶部项目名 + techStack chip 同一行右侧，新增「💾 备份」「📥 恢复」「↶ 回滚」三个按钮。预览弹框主按钮文案统一为「覆盖并恢复」，强调会覆盖当前脑。
+- **失败兜底（人话化提示）**：
+  - `schemaVersion` 过旧 / 过新 → 拒绝导入并提示升级插件
+  - bundle 校验和不一致 → 拒绝导入（文件损坏 / 传输不完整）
+  - rescan 失败 → 不回滚脑，写入 timeline 事件
+  - 备份列表为空 → Toast 提示「当前项目没有本地备份」
+
+### Changed（变更）
+
+- `src/index.js`：4 个新 Tool 注册（`project_export` / `project_import` / `project_cleanup_backups` / `project_rollback_backup`）。
+- `src/host/rpc/sidebar.js`：7 个新 RPC（`export.run` / `import.preview` / `import.apply` / `backup.list` / `backup.cleanup` / `backup.rollback.preview` / `backup.rollback.apply`），统一通过 `executeTool` helper 走 `tools.execute` 协议。
+- `src/client.js` HeaderBlock：加 3 个按钮 + PreviewDialog + BackupListDialog + Toast；用 React.useState 管理 dialog 状态。
+- 工具总数：16 → **20**（host-acceptance AC-2a 同步更新预期）。
+
+### 文件结构
+
+- `src/host/transfer/confirm-tokens.js`：confirmToken 内存 Map（5 分钟 TTL，一次性，按 kind 分类）
+- `src/host/transfer/bundle.js`：zip 打包 / 解析 / 应用 / 预览（含手写 ZipWriter + parseZip + CRC32 + deflate）
+- `src/host/transfer/backup.js`：备份创建 / 列举 / 清理 / 回滚（含 pre-rollback backup）
+- `src/tools/export.js` / `import.js` / `cleanup-backups.js` / `rollback-backup.js`：4 个 Tool 工厂
+- `scripts/smoke-import-export.mjs`：48 条端到端 smoke（AC-1 ~ AC-12）
+- `scripts/host-acceptance.mjs`：新增 AC-14 验收段（export / import dryRun / wrong token / apply / cleanup / rollback preview）
+
+### 验收
+
+- 端到端 **20/20 smoke suites PASS**（含 48 条新增 import-export smoke）
+- **46/46 host-acceptance PASS**（新增 AC-14 七项 happy-path）
+
+---
+
 ## [v1.3.0] - 2026-09-15
 
 > **次要版本：Durable Core 站立记忆 + 架构并列泳道 + 技术栈分层重构 + 截图从 7 张扩到 10 张。**

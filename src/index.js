@@ -11,6 +11,10 @@ import { buildStatusTool } from "./tools/status.js";
 import { buildAskTool } from "./tools/ask.js";
 import { buildDreamTool } from "./tools/dream.js";
 import { buildDiffTool } from "./tools/diff.js";
+import { buildProjectExportTool } from "./tools/export.js";
+import { buildProjectImportTool } from "./tools/import.js";
+import { buildCleanupBackupsTool } from "./tools/cleanup-backups.js";
+import { buildRollbackBackupTool } from "./tools/rollback-backup.js";
 import { invalidateAggregatorCache } from "./host/sidebar/aggregator.js";
 import { registerConnectionRpc, registerSidebarRpc } from "./host/rpc/sidebar.js";
 // v0.3.0: Context Injector（自动注入 Top-K 记忆到 system prompt，实现跨 Session 续接）
@@ -21,6 +25,23 @@ import { setupSummarizer } from "./host/summarizer.js";
 import { setupRealtimeMemory } from "./host/realtime-memory.js";
 import { Config, createMemoryConfigRuntime } from "./host/memory/config.js";
 import { createLlmRuntime } from "./host/architecture/analyzer.js";
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+// 插件版本（写入 bundle manifest + 跨版本兼容锚点）
+// 优先读 ctx.config.version（cordis loader 注入），兜底读 package.json
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+function readPluginVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
+    if (pkg.version) return String(pkg.version);
+  } catch (e) {}
+  return "1.3.1";
+}
+const PLUGIN_VERSION = readPluginVersion();
 
 export { Config };
 
@@ -100,6 +121,10 @@ function applyImpl(ctx, config) {
     buildAskTool,
     buildDreamTool,
     buildDiffTool,
+    buildProjectExportTool,
+    buildProjectImportTool,
+    buildCleanupBackupsTool,
+    buildRollbackBackupTool,
   ];
   let registered = 0;
   for (let i = 0; i < toolBuilders.length; i++) {
@@ -110,6 +135,7 @@ function applyImpl(ctx, config) {
         getMemoryConfig: memoryRuntime.get,
         resolveEmbeddingCredential: memoryRuntime.resolveCredential,
         getLlm: llmRuntime.get,
+        pluginVersion: PLUGIN_VERSION,
       });
       const disposer = tools.register(tool);
       registered += 1;

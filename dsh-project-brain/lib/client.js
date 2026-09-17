@@ -590,20 +590,305 @@
         if (t.includes("mobile") || t.includes("app")) return "\u{1F4F1}";
         return "\u{1F4E6}";
       };
-      function HeaderBlock({ data, t }) {
-        if (!data.project) return null;
-        const p = data.project;
-        const icon = projectIcon(p.type);
+      function pathSep(p) {
+        return p && String(p).indexOf("\\") >= 0 ? "\\" : "/";
+      }
+      function readRpcResult(resp) {
+        if (!resp || resp.ok !== true) {
+          throw new Error(resp && resp.error && resp.error.message || "\u8BF7\u6C42\u5931\u8D25");
+        }
+        const value = resp.value && typeof resp.value === "object" ? resp.value : {};
+        const result = value.result && typeof value.result === "object" ? value.result : null;
+        const nested = result && result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data : null;
+        const out = {};
+        const layers = [nested, result, value];
+        for (let i = 0; i < layers.length; i++) {
+          const layer = layers[i];
+          if (!layer) continue;
+          const keys = Object.keys(layer);
+          for (let k = 0; k < keys.length; k++) {
+            const key = keys[k];
+            if (key === "result" || key === "data" || key === "preview" || key === "ok" || key === "name") continue;
+            if (out[key] == null && layer[key] != null) out[key] = layer[key];
+          }
+        }
+        return out;
+      }
+      function notifyPreviewChanged() {
+        try {
+          if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+            window.dispatchEvent(new CustomEvent("project_brain/preview.changed", { detail: {} }));
+          }
+        } catch (e) {
+        }
+      }
+      function HeaderBlock({ data, t, sessionId, connection }) {
+        const p = data && data.project;
+        const icon = p ? projectIcon(p.type) : "";
+        const rpc = connection && connection.rpc;
+        const [previewState, setPreviewState] = React.useState(null);
+        const [backupList, setBackupList] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+        const [toast, setToast] = React.useState(null);
+        const [importPick, setImportPick] = React.useState(null);
+        if (!p) return null;
+        function showToast(kind, text, ttlMs = 4e3) {
+          setToast({ kind, text, id: Date.now(), copyPath: null, openFolderPath: null });
+          if (typeof window !== "undefined") {
+            window.setTimeout(() => setToast(null), ttlMs);
+          }
+        }
+        function setToastActions(actions) {
+          setToast((prev) => prev ? Object.assign({}, prev, actions || {}) : prev);
+        }
+        async function openFolderInExplorer(folderPath) {
+          if (!folderPath) return;
+          try {
+            const resp = await callRpc("export.openFolder", { folderPath });
+            if (!resp || !resp.ok) {
+              throw new Error(resp && resp.error && resp.error.message || "\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\u5939");
+            }
+            showToast("info", "\u5DF2\u5C1D\u8BD5\u6253\u5F00\u6587\u4EF6\u5939\uFF1A" + folderPath, 3e3);
+          } catch (e) {
+            if (typeof navigator !== "undefined" && navigator.clipboard) {
+              navigator.clipboard.writeText(folderPath).catch(() => {
+              });
+            }
+            showToast("error", "\u6253\u5F00\u6587\u4EF6\u5939\u5931\u8D25\uFF0C\u8DEF\u5F84\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F\uFF1A" + folderPath, 6e3);
+          }
+        }
+        function sizeFormat(bytes) {
+          if (!bytes || bytes < 1024) return (bytes || 0) + " B";
+          if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " KB";
+          return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+        }
+        async function callRpc(endpoint, payload) {
+          if (!rpc || typeof rpc.call !== "function") {
+            throw new Error("DSH Connection RPC \u4E0D\u53EF\u7528");
+          }
+          return rpc.call("/project-brain", endpoint, Object.assign({ sessionId: sessionId || void 0 }, payload || {}));
+        }
+        async function handleExport() {
+          if (busy) return;
+          setBusy(true);
+          try {
+            const resp = await callRpc("export.run", { includeCache: true });
+            const result = readRpcResult(resp);
+            const bundlePath = typeof result.bundlePath === "string" ? result.bundlePath : null;
+            const bundleName = typeof result.bundleName === "string" ? result.bundleName : null;
+            let dirPath = null;
+            if (bundlePath && /[\\/]/.test(bundlePath)) {
+              const sep = bundlePath.lastIndexOf("\\") > bundlePath.lastIndexOf("/") ? bundlePath.lastIndexOf("\\") : bundlePath.lastIndexOf("/");
+              dirPath = bundlePath.slice(0, sep);
+            } else if (bundlePath) {
+              dirPath = ".";
+            }
+            const fileName = bundleName || (bundlePath ? bundlePath.split(/[\\/]/).pop() : null);
+            const workspaceRoot = data && data._workspacePath || data && data.workspaceRoot || data && data.project && (data.project.rootPath || data.project.root) || null;
+            const defaultDir = result.defaultDirPath || dirPath || (workspaceRoot ? String(workspaceRoot).replace(/[\\/]+$/, "") + pathSep(workspaceRoot) + "dist-backups" : null);
+            const copyPath = bundlePath || (defaultDir && fileName ? defaultDir + pathSep(defaultDir) + fileName : defaultDir);
+            const openFolderPath = dirPath || defaultDir;
+            let toastText;
+            if (fileName) {
+              toastText = "\u5DF2\u5BFC\u51FA " + fileName + "\uFF08" + sizeFormat(result.sizeBytes) + "\uFF09" + (copyPath ? "\n\u8DEF\u5F84\uFF1A" + copyPath : "\n\uFF08\u8DEF\u5F84\u672A\u8FD4\u56DE\uFF0C\u8BF7\u5728 dist-backups/ \u76EE\u5F55\u67E5\u627E\uFF09");
+            } else {
+              toastText = "\u5BFC\u51FA\u6210\u529F\uFF08\u672A\u62FF\u5230\u6587\u4EF6\u540D\uFF0C\u8BF7\u5728 dist-backups/ \u76EE\u5F55\u67E5\u627E\uFF09" + (openFolderPath ? "\n\u76EE\u5F55\uFF1A" + openFolderPath : "");
+            }
+            showToast("success", toastText, 8e3);
+            setToastActions({
+              copyPath: copyPath || openFolderPath,
+              openFolderPath
+            });
+          } catch (e) {
+            showToast("error", "\u5BFC\u51FA\u5931\u8D25\uFF1A" + String(e && e.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }
+        async function handleImportPick() {
+          if (busy) return;
+          setImportPick({ path: "", error: null });
+        }
+        async function handleImportBrowse() {
+          if (busy) return;
+          try {
+            const resp = await callRpc("import.pickBundle", {});
+            if (!resp || !resp.ok) {
+              const msg = resp && resp.error && resp.error.message || "\u7CFB\u7EDF\u6587\u4EF6\u9009\u62E9\u5668\u4E0D\u53EF\u7528";
+              setImportPick((prev) => Object.assign({}, prev || { path: "" }, { error: msg + "\u3002\u8BF7\u7C98\u8D34 zip \u7684\u5B8C\u6574\u8DEF\u5F84\u3002" }));
+              return;
+            }
+            const value = resp && resp.value || {};
+            if (value.canceled) return;
+            if (value.bundlePath) {
+              setImportPick({ path: String(value.bundlePath), error: null });
+            }
+          } catch (e) {
+            setImportPick((prev) => Object.assign({}, prev || { path: "" }, {
+              error: "\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\u9009\u62E9\u5668\uFF1A" + String(e && e.message || e) + "\u3002\u8BF7\u7C98\u8D34 zip \u7684\u5B8C\u6574\u8DEF\u5F84\u3002"
+            }));
+          }
+        }
+        async function handleImportPreviewFromDialog() {
+          if (busy || !importPick) return;
+          const bundlePath = String(importPick.path || "").trim();
+          if (!bundlePath) {
+            setImportPick(Object.assign({}, importPick, { error: "\u8BF7\u586B\u5199 bundle zip \u7684\u5B8C\u6574\u8DEF\u5F84" }));
+            return;
+          }
+          setBusy(true);
+          try {
+            const resp = await callRpc("import.preview", { bundlePath });
+            const result = readRpcResult(resp);
+            setImportPick(null);
+            setPreviewState({ kind: "import", data: result });
+          } catch (e) {
+            setImportPick(Object.assign({}, importPick, { error: "\u9884\u89C8\u5931\u8D25\uFF1A" + String(e && e.message || e) }));
+          } finally {
+            setBusy(false);
+          }
+        }
+        async function handleImportConfirm() {
+          if (!previewState || previewState.kind !== "import" || busy) return;
+          const d = previewState.data || {};
+          const confirmToken = d.confirmToken;
+          const bundlePath = d.bundlePath;
+          if (!confirmToken) {
+            showToast("error", "\u7F3A\u5C11 confirmToken\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8");
+            return;
+          }
+          if (!bundlePath) {
+            showToast("error", "\u7F3A\u5C11 bundle \u8DEF\u5F84\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8");
+            return;
+          }
+          setBusy(true);
+          try {
+            const resp = await callRpc("import.apply", { bundlePath, confirmToken });
+            const result = readRpcResult(resp);
+            setPreviewState(null);
+            notifyPreviewChanged();
+            const extra = result.rescanError ? " \u8111\u5DF2\u5199\u5165\uFF0C\u4F46\u81EA\u52A8\u91CD\u626B\u5931\u8D25\uFF0C\u53EF\u624B\u52A8\u70B9\u300C\u91CD\u65B0\u626B\u63CF\u300D\u3002" : result.backupPath ? " \u65E7\u8111\u5DF2\u5907\u4EFD\u3002" : "";
+            showToast("success", "\u5DF2\u6062\u590D\u3002" + extra);
+          } catch (e) {
+            showToast("error", "\u5BFC\u5165\u5931\u8D25\uFF1A" + String(e && e.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }
+        async function handleRollbackOpen() {
+          if (busy) return;
+          setBusy(true);
+          try {
+            const resp = await callRpc("backup.list", {});
+            const value = readRpcResult(resp);
+            const backups = value && value.backups || [];
+            if (backups.length === 0) {
+              showToast("info", "\u5F53\u524D\u9879\u76EE\u6CA1\u6709\u672C\u5730\u5907\u4EFD");
+            } else {
+              setBackupList(backups);
+            }
+          } catch (e) {
+            showToast("error", "\u83B7\u53D6\u5907\u4EFD\u5217\u8868\u5931\u8D25\uFF1A" + String(e && e.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }
+        async function handleRollbackPick(backup) {
+          if (!backup || busy) return;
+          setBusy(true);
+          try {
+            const resp = await callRpc("backup.rollback.preview", { backupTimestamp: backup.ts });
+            const result = readRpcResult(resp);
+            setBackupList(null);
+            setPreviewState({ kind: "rollback", data: result, backup });
+          } catch (e) {
+            showToast("error", "\u9884\u89C8\u5931\u8D25\uFF1A" + String(e && e.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }
+        async function handleRollbackConfirm() {
+          if (!previewState || previewState.kind !== "rollback" || busy) return;
+          const d = previewState.data || {};
+          const confirmToken = d.confirmToken;
+          const backupTimestamp = d.backupTimestamp || d.sourceBackupTs || d.sourceBackup && d.sourceBackup.ts;
+          if (!confirmToken || !backupTimestamp) {
+            showToast("error", "\u7F3A\u5C11 confirmToken\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9");
+            return;
+          }
+          setBusy(true);
+          try {
+            const resp = await callRpc("backup.rollback.apply", { backupTimestamp, confirmToken });
+            readRpcResult(resp);
+            setPreviewState(null);
+            notifyPreviewChanged();
+            showToast("success", "\u5DF2\u56DE\u6EDA\u5230 " + backupTimestamp);
+          } catch (e) {
+            showToast("error", "\u56DE\u6EDA\u5931\u8D25\uFF1A" + String(e && e.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }
+        const headerBtnBase = {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "4px",
+          padding: "4px 10px",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-primary)",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          borderRadius: "8px",
+          fontSize: "11px",
+          fontWeight: "500",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          transition: "background 0.15s ease, border-color 0.15s ease, transform 0.1s ease"
+        };
+        function renderButton(emoji, label, onClick, key, opts) {
+          opts = opts || {};
+          const style = Object.assign({}, headerBtnBase, opts.style || {}, busy ? { opacity: 0.55, cursor: "wait" } : {});
+          return React.createElement(
+            "button",
+            {
+              key,
+              type: "button",
+              "data-brain-action": key,
+              title: opts.title || label,
+              disabled: busy || !!opts.disabled,
+              onClick,
+              style,
+              onMouseEnter: (e) => {
+                if (!busy) e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)";
+              },
+              onMouseLeave: (e) => {
+                e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)";
+              }
+            },
+            React.createElement("span", { style: { fontSize: "13px", lineHeight: "1" } }, emoji),
+            React.createElement("span", null, label)
+          );
+        }
+        const actionBar = React.createElement(
+          "div",
+          {
+            style: { display: "flex", gap: "6px", flexShrink: 0, marginLeft: "auto" },
+            "data-brain-action-bar": "1"
+          },
+          renderButton("\u{1F4BE}", "\u5907\u4EFD", handleExport, "export", { title: "\u5BFC\u51FA\u5F53\u524D\u8111\u5230 zip \u6587\u4EF6" }),
+          renderButton("\u{1F4E5}", "\u6062\u590D", handleImportPick, "import", { title: "\u4ECE zip \u6587\u4EF6\u6062\u590D\u8111\uFF08\u8986\u76D6\u5F53\u524D\uFF09" }),
+          renderButton("\u21A9\uFE0F", "\u56DE\u6EDA", handleRollbackOpen, "rollback", { title: "\u4ECE\u672C\u5730\u5386\u53F2\u5907\u4EFD\u56DE\u6EDA" })
+        );
         return React.createElement(
           "section",
           { style: Object.assign({}, sectionStyle, { padding: "16px 18px", background: "linear-gradient(135deg, var(--dsw-alias-bg-layer-1) 0%, var(--dsw-alias-bg-layer-2) 100%)" }), "data-block": "header" },
           React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { fontSize: "11px" }) }, "\u{1F4C1} " + t("header.section")),
           React.createElement(
             "div",
-            { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginTop: "2px" } },
-            React.createElement("span", { style: { fontSize: "22px" } }, icon),
-            React.createElement("span", { style: { fontSize: "18px", fontWeight: "600", letterSpacing: "0.2px" } }, p.name || t("header.untitled")),
-            p.type ? React.createElement("span", { style: { padding: "2px 10px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontSize: "11px", borderRadius: "10px", fontWeight: "600" } }, p.type) : null
+            { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", marginTop: "2px", minWidth: 0 } },
+            React.createElement("span", { style: { fontSize: "22px", flexShrink: 0 } }, icon),
+            React.createElement("span", { style: { fontSize: "18px", fontWeight: "600", letterSpacing: "0.2px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.name || t("header.untitled")),
+            p.type ? React.createElement("span", { style: { padding: "2px 10px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontSize: "11px", borderRadius: "10px", fontWeight: "600", flexShrink: 0 } }, p.type) : null,
+            actionBar
           ),
           p.description && p.description !== "Auto-generated by dsh-project-brain" ? React.createElement("p", { style: { margin: "8px 0 0", fontSize: "12px", lineHeight: "1.55", color: "var(--dsw-alias-label-secondary)" } }, String(p.description).slice(0, 280)) : null,
           p.lastUpdateAt ? React.createElement(
@@ -611,7 +896,421 @@
             { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", marginTop: "6px", display: "flex", alignItems: "center", gap: "4px" } },
             React.createElement("span", null, "\u{1F552}"),
             React.createElement("span", null, `${t("header.lastUpdate")} \xB7 ${formatRelativeTime(p.lastUpdateAt, Date.now(), data._localeCode)}`)
-          ) : null
+          ) : null,
+          // ─── Dialogs（同一组件内挂载，状态由 useState 管理） ───
+          previewState ? renderPreviewDialog(previewState, { onCancel: () => setPreviewState(null), onConfirm: previewState.kind === "import" ? handleImportConfirm : handleRollbackConfirm, busy }) : null,
+          importPick ? renderImportPathDialog(importPick, {
+            onCancel: () => setImportPick(null),
+            onChange: (path) => setImportPick({ path, error: null }),
+            onBrowse: handleImportBrowse,
+            onPreview: handleImportPreviewFromDialog,
+            busy
+          }) : null,
+          backupList ? renderBackupListDialog(backupList, { onCancel: () => setBackupList(null), onPick: handleRollbackPick, busy }) : null,
+          toast ? renderToast(toast, () => setToast(null), openFolderInExplorer) : null
+        );
+      }
+      function renderImportPathDialog(state, { onCancel, onChange, onBrowse, onPreview, busy }) {
+        const overlayStyle = {
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999
+        };
+        const cardStyle = {
+          background: "var(--dsw-alias-bg-base)",
+          color: "var(--dsw-alias-label-primary)",
+          borderRadius: "12px",
+          padding: "20px 24px",
+          maxWidth: "560px",
+          width: "calc(100% - 32px)",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.25)"
+        };
+        const btnBase = {
+          padding: "8px 16px",
+          borderRadius: "8px",
+          fontSize: "13px",
+          fontWeight: "600",
+          cursor: busy ? "wait" : "pointer",
+          border: "1px solid transparent",
+          fontFamily: "inherit"
+        };
+        return React.createElement(
+          "div",
+          {
+            style: overlayStyle,
+            onClick: (e) => {
+              if (e.target === e.currentTarget) onCancel();
+            }
+          },
+          React.createElement(
+            "div",
+            { style: cardStyle, "data-brain-dialog": "import-path" },
+            React.createElement("h2", { style: { margin: "0 0 8px", fontSize: "16px", fontWeight: "600" } }, "\u4ECE bundle \u6062\u590D"),
+            React.createElement(
+              "p",
+              { style: { margin: "0 0 12px", fontSize: "12px", lineHeight: "1.5", color: "var(--dsw-alias-label-secondary)" } },
+              "\u9009\u62E9\u6216\u7C98\u8D34\u5BFC\u51FA\u7684 zip \u5B8C\u6574\u8DEF\u5F84\u3002\u6062\u590D\u4F1A\u8986\u76D6\u5F53\u524D\u8111\uFF0C\u4E0B\u4E00\u6B65\u4F1A\u5148\u7ED9\u4F60\u9884\u89C8\u518D\u786E\u8BA4\u3002"
+            ),
+            React.createElement(
+              "div",
+              { style: { display: "flex", gap: "8px" } },
+              React.createElement("input", {
+                type: "text",
+                value: state.path || "",
+                placeholder: "\u7C98\u8D34\u5BFC\u51FA\u7684 zip \u5B8C\u6574\u8DEF\u5F84",
+                disabled: busy,
+                onChange: (e) => onChange(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter") onPreview();
+                },
+                style: {
+                  flex: "1 1 auto",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--dsw-alias-border-l1)",
+                  background: "var(--dsw-alias-bg-layer-2)",
+                  color: "var(--dsw-alias-label-primary)",
+                  fontSize: "12px",
+                  fontFamily: "inherit"
+                }
+              }),
+              React.createElement("button", {
+                type: "button",
+                onClick: onBrowse,
+                disabled: busy,
+                style: Object.assign({}, btnBase, {
+                  background: "var(--dsw-alias-bg-layer-2)",
+                  color: "var(--dsw-alias-label-primary)",
+                  borderColor: "var(--dsw-alias-border-l1)",
+                  flexShrink: 0
+                })
+              }, "\u6D4F\u89C8\u2026")
+            ),
+            state.error ? React.createElement("div", {
+              style: { marginTop: "10px", fontSize: "12px", color: "var(--dsw-alias-state-error-primary)", lineHeight: "1.45" }
+            }, state.error) : null,
+            React.createElement(
+              "div",
+              { style: { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "16px" } },
+              React.createElement("button", {
+                type: "button",
+                onClick: onCancel,
+                disabled: busy,
+                style: Object.assign({}, btnBase, { background: "transparent", color: "var(--dsw-alias-label-secondary)", borderColor: "var(--dsw-alias-border-l1)" })
+              }, "\u53D6\u6D88"),
+              React.createElement("button", {
+                type: "button",
+                onClick: onPreview,
+                disabled: busy,
+                style: Object.assign({}, btnBase, { background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)" })
+              }, busy ? "\u9884\u89C8\u4E2D\u2026" : "\u9884\u89C8\u5F71\u54CD")
+            )
+          )
+        );
+      }
+      function renderPreviewDialog(state, { onCancel, onConfirm, busy }) {
+        const { kind, data } = state;
+        const overlayStyle = {
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999
+        };
+        const cardStyle = {
+          background: "var(--dsw-alias-bg-base)",
+          color: "var(--dsw-alias-label-primary)",
+          borderRadius: "12px",
+          padding: "20px 24px",
+          maxWidth: "560px",
+          width: "calc(100% - 32px)",
+          maxHeight: "calc(100vh - 64px)",
+          overflow: "auto",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.25)"
+        };
+        const titleStyle = {
+          margin: "0 0 12px",
+          fontSize: "16px",
+          fontWeight: "600"
+        };
+        const fieldRow = (label, value) => React.createElement(
+          "div",
+          {
+            key: label,
+            style: { display: "flex", gap: "8px", padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" }
+          },
+          React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)", minWidth: "110px" } }, label),
+          React.createElement("span", { style: { flex: "1 1 auto", wordBreak: "break-all" } }, value)
+        );
+        const btnBase = {
+          padding: "8px 16px",
+          borderRadius: "8px",
+          fontSize: "13px",
+          fontWeight: "600",
+          cursor: "pointer",
+          border: "1px solid transparent",
+          fontFamily: "inherit"
+        };
+        const cancelBtn = React.createElement("button", {
+          key: "cancel",
+          type: "button",
+          onClick: onCancel,
+          disabled: busy,
+          style: Object.assign({}, btnBase, { background: "transparent", color: "var(--dsw-alias-label-secondary)", borderColor: "var(--dsw-alias-border-l1)" })
+        }, "\u53D6\u6D88");
+        const confirmBtn = React.createElement("button", {
+          key: "confirm",
+          type: "button",
+          onClick: onConfirm,
+          disabled: busy || !(data && data.confirmToken),
+          style: Object.assign({}, btnBase, { background: "var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-bg-base)" })
+        }, busy ? "\u5904\u7406\u4E2D\u2026" : "\u8986\u76D6\u5E76\u6062\u590D");
+        const footerStyle = { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" };
+        let title, fields, warning;
+        const countOf = function() {
+          for (let i = 0; i < arguments.length; i++) {
+            const v = arguments[i];
+            if (typeof v === "number" && Number.isFinite(v)) return v;
+          }
+          return 0;
+        };
+        const textOf = function() {
+          for (let i = 0; i < arguments.length; i++) {
+            const v = arguments[i];
+            if (typeof v === "string" && v) return v;
+          }
+          return "";
+        };
+        if (kind === "import") {
+          const impact = data.impact || {};
+          const rewrite = impact.rootPathRewrite || {};
+          const currentExists = !!(impact.currentBrainExists || data.currentBrainExists);
+          const incomingMem = countOf(impact.incomingMemories, data.incomingMemories);
+          const incomingTodos = countOf(impact.incomingTodos, data.incomingTodos);
+          const incomingTimeline = countOf(impact.incomingTimeline, data.incomingTimeline);
+          const currentMem = countOf(impact.currentMemories, data.currentMemories);
+          const currentTodos = countOf(impact.currentTodos, data.currentTodos);
+          const currentTimeline = countOf(impact.currentTimeline, data.currentTimeline);
+          const backupTo = textOf(impact.backupWillCreateAt, data.backupWillCreateAt);
+          const rootFrom = textOf(impact.rootPathFrom, data.rootPathFrom, rewrite.from);
+          const rootTo = textOf(impact.rootPathTo, data.rootPathTo, rewrite.to);
+          const sourceRoot = textOf(
+            data.sourceProjectRoot,
+            data.manifest && data.manifest.sourceProjectRoot,
+            data.manifest && data.manifest.sourceProject && data.manifest.sourceProject.rootPath,
+            data.bundlePath
+          );
+          title = "\u786E\u8BA4\u4ECE bundle \u6062\u590D\u8111";
+          fields = [
+            fieldRow("bundle \u6765\u6E90", sourceRoot || "\uFF08\u672A\u77E5\uFF09"),
+            fieldRow("\u5F53\u524D\u8111", currentExists ? currentMem + " \u8BB0\u5FC6 / " + currentTodos + " \u5F85\u529E / " + currentTimeline + " timeline" : "\uFF08\u65E0\uFF09"),
+            fieldRow("\u5373\u5C06\u6062\u590D", incomingMem + " \u8BB0\u5FC6 / " + incomingTodos + " \u5F85\u529E / " + incomingTimeline + " timeline"),
+            fieldRow("\u65E7\u8111\u5C06\u5907\u4EFD\u5230", backupTo || "\uFF08\u65E0\u9700\uFF0C\u65E0\u8111\uFF09"),
+            fieldRow("rootPath \u6539\u5199", (rootFrom || "\uFF08\u7A7A\uFF09") + " \u2192 " + (rootTo || "\uFF08\u7A7A\uFF09"))
+          ];
+          warning = textOf(data.warning) || (currentExists ? "\u26A0\uFE0F \u8FD9\u4F1A\u8986\u76D6\u5F53\u524D\u8111\u3002\u65E7\u8111\u4F1A\u81EA\u52A8\u5907\u4EFD\u5230\u4E0A\u65B9\u7684\u8DEF\u5F84\uFF0C\u53EF\u7EE7\u7EED\u56DE\u6EDA\u3002" : "\u8FD9\u662F\u8BE5\u9879\u76EE\u9996\u6B21\u5BFC\u5165\uFF0C\u65E0\u65E7\u8111\u53EF\u5907\u4EFD\u3002");
+        } else if (kind === "rollback") {
+          const sb = data.sourceBackup || {};
+          const cb = data.currentBrain || {};
+          const currentExists = !!(cb.exists || data.currentBrainExists);
+          const sourceName = textOf(sb.backupName, data.sourceBackupName, "\uFF08\u672A\u77E5\u5907\u4EFD\uFF09");
+          const sourceTs = textOf(sb.ts, data.sourceBackupTs, data.backupTimestamp);
+          title = "\u786E\u8BA4\u56DE\u6EDA\u5230\u5907\u4EFD";
+          fields = [
+            fieldRow("\u76EE\u6807\u5907\u4EFD", sourceName + (sourceTs ? "\uFF08" + sourceTs + "\uFF09" : "")),
+            fieldRow(
+              "\u5907\u4EFD\u5185\u5BB9",
+              countOf(sb.memCount, data.sourceMemCount) + " \u8BB0\u5FC6 / " + countOf(sb.todoCount, data.sourceTodoCount) + " \u5F85\u529E / " + countOf(sb.timelineCount, data.sourceTimelineCount) + " timeline"
+            ),
+            fieldRow("\u5F53\u524D\u8111", currentExists ? countOf(cb.memCount, data.currentMemories) + " \u8BB0\u5FC6 / " + countOf(cb.todoCount, data.currentTodos) + " \u5F85\u529E / " + countOf(cb.timelineCount, data.currentTimeline) + " timeline" : "\uFF08\u65E0\uFF09"),
+            fieldRow("\u5F53\u524D\u8111\u5148\u5907\u4EFD\u5230", textOf(data.willBackupCurrentTo) || "\uFF08\u65E0\u9700\uFF09")
+          ];
+          warning = textOf(data.warning) || (currentExists ? "\u26A0\uFE0F \u5F53\u524D\u8111\u4F1A\u81EA\u52A8\u5907\u4EFD\u5230\u4E0A\u65B9\u7684\u8DEF\u5F84\uFF0C\u53EF\u7EE7\u7EED\u56DE\u6EDA\u3002" : "\u5F53\u524D\u8111\u4E0D\u5B58\u5728\uFF0C\u56DE\u6EDA\u540E\u4F1A\u6210\u4E3A\u5F53\u524D\u8111\u3002");
+        }
+        return React.createElement(
+          "div",
+          { style: overlayStyle, onClick: (e) => {
+            if (e.target === e.currentTarget) onCancel();
+          } },
+          React.createElement(
+            "div",
+            { style: cardStyle, "data-brain-dialog": "preview" },
+            React.createElement("h2", { style: titleStyle }, title),
+            React.createElement("div", null, fields),
+            warning ? React.createElement("div", {
+              style: { marginTop: "14px", padding: "10px 12px", background: "var(--dsw-alias-state-warn-secondary, rgba(255, 180, 0, 0.12))", borderRadius: "6px", fontSize: "12px", lineHeight: "1.5", color: "var(--dsw-alias-label-primary)" }
+            }, warning) : null,
+            React.createElement("div", { style: footerStyle }, cancelBtn, confirmBtn)
+          )
+        );
+      }
+      function renderBackupListDialog(backups, { onCancel, onPick, busy }) {
+        const overlayStyle = {
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999
+        };
+        const cardStyle = {
+          background: "var(--dsw-alias-bg-base)",
+          color: "var(--dsw-alias-label-primary)",
+          borderRadius: "12px",
+          padding: "20px 24px",
+          maxWidth: "520px",
+          width: "calc(100% - 32px)",
+          maxHeight: "calc(100vh - 64px)",
+          overflow: "auto",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.25)"
+        };
+        const itemStyle = (hover) => ({
+          display: "flex",
+          flexDirection: "column",
+          gap: "4px",
+          padding: "10px 12px",
+          borderRadius: "8px",
+          background: hover ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-bg-layer-2)",
+          cursor: busy ? "wait" : "pointer",
+          marginBottom: "6px",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          transition: "background 0.1s ease"
+        });
+        return React.createElement(
+          "div",
+          {
+            style: overlayStyle,
+            onClick: (e) => {
+              if (e.target === e.currentTarget) onCancel();
+            }
+          },
+          React.createElement(
+            "div",
+            { style: cardStyle, "data-brain-dialog": "backup-list" },
+            React.createElement("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: "600" } }, "\u9009\u62E9\u8981\u56DE\u6EDA\u5230\u7684\u5907\u4EFD"),
+            React.createElement("div", { style: { margin: "0 0 12px", fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, "\u5171 " + backups.length + " \u4E2A\u5907\u4EFD\uFF08\u6309\u65F6\u95F4\u5012\u5E8F\uFF09"),
+            backups.map((b, i) => {
+              const sizeKB = Math.max(1, Math.round((b.sizeBytes || 0) / 1024));
+              const subtitle = (b.projectExists ? "" : "\uFF08\u4E0D\u5B8C\u6574\uFF09") + ` \xB7 ${sizeKB} KB \xB7 ${b.memCount} mem / ${b.todoCount} todo`;
+              return React.createElement(
+                "div",
+                {
+                  key: b.ts,
+                  "data-backup-ts": b.ts,
+                  style: itemStyle(false),
+                  onClick: () => !busy && onPick(b),
+                  onMouseEnter: (e) => {
+                    e.currentTarget.style.background = "var(--dsw-alias-bg-layer-1)";
+                  },
+                  onMouseLeave: (e) => {
+                    e.currentTarget.style.background = "var(--dsw-alias-bg-layer-2)";
+                  }
+                },
+                React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace" } }, b.ts),
+                React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, subtitle)
+              );
+            }),
+            React.createElement(
+              "div",
+              { style: { display: "flex", justifyContent: "flex-end", marginTop: "12px" } },
+              React.createElement("button", {
+                type: "button",
+                onClick: onCancel,
+                disabled: busy,
+                style: { padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "600", cursor: "pointer", background: "transparent", color: "var(--dsw-alias-label-secondary)", border: "1px solid var(--dsw-alias-border-l1)", fontFamily: "inherit" }
+              }, "\u53D6\u6D88")
+            )
+          )
+        );
+      }
+      function renderToast(toast, onDismiss, onOpenFolder) {
+        const palette = {
+          success: { bg: "var(--dsw-alias-state-success-primary)", fg: "var(--dsw-alias-bg-base)" },
+          error: { bg: "var(--dsw-alias-state-error-primary)", fg: "var(--dsw-alias-bg-base)" },
+          info: { bg: "var(--dsw-alias-brand-primary)", fg: "var(--dsw-alias-bg-base)" }
+        };
+        const p = palette[toast.kind] || palette.info;
+        function handleToastClick() {
+          if (toast.copyPath && typeof navigator !== "undefined" && navigator.clipboard) {
+            navigator.clipboard.writeText(toast.copyPath).then(
+              () => {
+                const el = document.querySelector("[data-brain-toast-copy-hint]");
+                if (el) el.textContent = "\u2713 \u5DF2\u590D\u5236\u8DEF\u5F84";
+              },
+              () => onDismiss()
+            );
+          } else {
+            onDismiss();
+          }
+        }
+        const hintLine = React.createElement(
+          "div",
+          {
+            "data-brain-toast-copy-hint": "1",
+            style: { fontSize: "10px", opacity: 0.85, marginTop: "4px", fontWeight: "400" }
+          },
+          toast.copyPath ? "\u70B9\u51FB\u590D\u5236\u8DEF\u5F84" : toast.openFolderPath ? "\u5DF2\u5C1D\u8BD5\u5728\u6587\u4EF6\u7BA1\u7406\u5668\u4E2D\u6253\u5F00" : ""
+        );
+        const openFolderBtn = toast.openFolderPath ? React.createElement("button", {
+          type: "button",
+          onClick: (e) => {
+            e.stopPropagation();
+            onOpenFolder(toast.openFolderPath);
+          },
+          "data-brain-toast-action": "open-folder",
+          style: {
+            marginTop: "6px",
+            padding: "4px 10px",
+            fontSize: "11px",
+            fontWeight: "600",
+            background: "var(--dsw-alias-bg-base)",
+            color: "var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary))",
+            border: "none",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontFamily: "inherit"
+          }
+        }, "\u{1F4C2} \u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A") : null;
+        return React.createElement(
+          "div",
+          {
+            style: {
+              position: "fixed",
+              right: "20px",
+              bottom: "20px",
+              background: p.bg,
+              color: p.fg,
+              padding: "10px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: "500",
+              maxWidth: "440px",
+              whiteSpace: "pre-line",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+              zIndex: 9999,
+              cursor: toast.copyPath ? "pointer" : "default"
+            },
+            onClick: toast.copyPath ? handleToastClick : onDismiss
+          },
+          toast.text,
+          hintLine,
+          openFolderBtn
         );
       }
       function StatusBannerBlock({ data, t, compact }) {
@@ -4268,7 +4967,12 @@
             ".dsh-project-brain-preview button.dsh-arch-lane:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-node:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-chip:not(:disabled):active{transform:none}"
           ].join("\n")),
           headerWithBadge,
-          React.createElement(HeaderBlock, { data: dataWithLocale, t }),
+          React.createElement(HeaderBlock, {
+            data: dataWithLocale,
+            t,
+            sessionId: r.sessionId || null,
+            connection: __DSH_CONNECTION__
+          }),
           React.createElement(
             "div",
             { className: "dsh-brain-summary-grid", "data-block": "summary-grid" },

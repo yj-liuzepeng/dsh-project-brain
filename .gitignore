@@ -16,6 +16,8 @@ dsh-project-brain/lib/tools.js
 
 # DSH runtime 生成的文件
 .project-brain/
+.project-brain.backup-*/
+dist-backups/
 # dssh-market state
 .dsh-market/
 # 验证用的 mock project（用完删除）

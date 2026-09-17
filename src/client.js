@@ -483,22 +483,332 @@ window.__ModuleLoader__.load({
     };
 
     // ─── 区块组件（纯函数） ───
-    function HeaderBlock({ data, t }) {
-      if (!data.project) return null;
-      const p = data.project;
-      const icon = projectIcon(p.type);
+    function pathSep(p) {
+      return p && String(p).indexOf("\\") >= 0 ? "\\" : "/";
+    }
+    function readRpcResult(resp) {
+      if (!resp || resp.ok !== true) {
+        throw new Error((resp && resp.error && resp.error.message) || "请求失败");
+      }
+      const value = resp.value && typeof resp.value === "object" ? resp.value : {};
+      const result = value.result && typeof value.result === "object" ? value.result : null;
+      const nested = result && result.data && typeof result.data === "object" && !Array.isArray(result.data)
+        ? result.data
+        : null;
+      const out = {};
+      const layers = [nested, result, value];
+      for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
+        if (!layer) continue;
+        const keys = Object.keys(layer);
+        for (let k = 0; k < keys.length; k++) {
+          const key = keys[k];
+          if (key === "result" || key === "data" || key === "preview" || key === "ok" || key === "name") continue;
+          if (out[key] == null && layer[key] != null) out[key] = layer[key];
+        }
+      }
+      return out;
+    }
+    function notifyPreviewChanged() {
+      try {
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+          window.dispatchEvent(new CustomEvent("project_brain/preview.changed", { detail: {} }));
+        }
+      } catch (e) {}
+    }
+
+    function HeaderBlock({ data, t, sessionId, connection }) {
+      const p = data && data.project;
+      const icon = p ? projectIcon(p.type) : "";
+      const rpc = connection && connection.rpc;
+      const [previewState, setPreviewState] = React.useState(null);
+      const [backupList, setBackupList] = React.useState(null);
+      const [busy, setBusy] = React.useState(false);
+      const [toast, setToast] = React.useState(null);
+      const [importPick, setImportPick] = React.useState(null); // { path, error }
+
+      if (!p) return null;
+
+      function showToast(kind, text, ttlMs = 4000) {
+        setToast({ kind, text, id: Date.now(), copyPath: null, openFolderPath: null });
+        if (typeof window !== "undefined") {
+          window.setTimeout(() => setToast(null), ttlMs);
+        }
+      }
+      function setToastActions(actions) {
+        setToast((prev) => prev ? Object.assign({}, prev, actions || {}) : prev);
+      }
+      async function openFolderInExplorer(folderPath) {
+        if (!folderPath) return;
+        try {
+          const resp = await callRpc("export.openFolder", { folderPath });
+          if (!resp || !resp.ok) {
+            throw new Error((resp && resp.error && resp.error.message) || "无法打开文件夹");
+          }
+          showToast("info", "已尝试打开文件夹：" + folderPath, 3000);
+        } catch (e) {
+          // 降级：复制路径，让用户自己 Win+R 粘贴
+          if (typeof navigator !== "undefined" && navigator.clipboard) {
+            navigator.clipboard.writeText(folderPath).catch(() => {});
+          }
+          showToast("error", "打开文件夹失败，路径已复制到剪贴板：" + folderPath, 6000);
+        }
+      }
+      function sizeFormat(bytes) {
+        if (!bytes || bytes < 1024) return (bytes || 0) + " B";
+        if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + " KB";
+        return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+      }
+
+      async function callRpc(endpoint, payload) {
+        if (!rpc || typeof rpc.call !== "function") {
+          throw new Error("DSH Connection RPC 不可用");
+        }
+        return rpc.call("/project-brain", endpoint, Object.assign({ sessionId: sessionId || undefined }, payload || {}));
+      }
+
+      async function handleExport() {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const resp = await callRpc("export.run", { includeCache: true });
+          const result = readRpcResult(resp);
+
+          const bundlePath = typeof result.bundlePath === "string" ? result.bundlePath : null;
+          const bundleName = typeof result.bundleName === "string" ? result.bundleName : null;
+          let dirPath = null;
+          if (bundlePath && /[\\/]/.test(bundlePath)) {
+            const sep = bundlePath.lastIndexOf("\\") > bundlePath.lastIndexOf("/")
+              ? bundlePath.lastIndexOf("\\") : bundlePath.lastIndexOf("/");
+            dirPath = bundlePath.slice(0, sep);
+          } else if (bundlePath) {
+            dirPath = ".";
+          }
+          const fileName = bundleName
+            || (bundlePath ? bundlePath.split(/[\\/]/).pop() : null);
+          const workspaceRoot = (data && data._workspacePath)
+            || (data && data.workspaceRoot)
+            || (data && data.project && (data.project.rootPath || data.project.root))
+            || null;
+          const defaultDir = result.defaultDirPath
+            || dirPath
+            || (workspaceRoot ? String(workspaceRoot).replace(/[\\/]+$/, "") + pathSep(workspaceRoot) + "dist-backups" : null);
+
+          const copyPath = bundlePath || (defaultDir && fileName ? defaultDir + pathSep(defaultDir) + fileName : defaultDir);
+          const openFolderPath = dirPath || defaultDir;
+
+          let toastText;
+          if (fileName) {
+            toastText = "已导出 " + fileName + "（" + sizeFormat(result.sizeBytes) + "）"
+              + (copyPath ? "\n路径：" + copyPath : "\n（路径未返回，请在 dist-backups/ 目录查找）");
+          } else {
+            toastText = "导出成功（未拿到文件名，请在 dist-backups/ 目录查找）"
+              + (openFolderPath ? "\n目录：" + openFolderPath : "");
+          }
+          showToast("success", toastText, 8000);
+          setToastActions({
+            copyPath: copyPath || openFolderPath,
+            openFolderPath: openFolderPath,
+          });
+        } catch (e) {
+          showToast("error", "导出失败：" + String((e && e.message) || e));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleImportPick() {
+        if (busy) return;
+        setImportPick({ path: "", error: null });
+      }
+
+      async function handleImportBrowse() {
+        if (busy) return;
+        try {
+          const resp = await callRpc("import.pickBundle", {});
+          if (!resp || !resp.ok) {
+            const msg = (resp && resp.error && resp.error.message) || "系统文件选择器不可用";
+            setImportPick((prev) => Object.assign({}, prev || { path: "" }, { error: msg + "。请粘贴 zip 的完整路径。" }));
+            return;
+          }
+          const value = (resp && resp.value) || {};
+          if (value.canceled) return;
+          if (value.bundlePath) {
+            setImportPick({ path: String(value.bundlePath), error: null });
+          }
+        } catch (e) {
+          setImportPick((prev) => Object.assign({}, prev || { path: "" }, {
+            error: "无法打开文件选择器：" + String((e && e.message) || e) + "。请粘贴 zip 的完整路径。",
+          }));
+        }
+      }
+
+      async function handleImportPreviewFromDialog() {
+        if (busy || !importPick) return;
+        const bundlePath = String(importPick.path || "").trim();
+        if (!bundlePath) {
+          setImportPick(Object.assign({}, importPick, { error: "请填写 bundle zip 的完整路径" }));
+          return;
+        }
+        setBusy(true);
+        try {
+          const resp = await callRpc("import.preview", { bundlePath });
+          const result = readRpcResult(resp);
+          setImportPick(null);
+          setPreviewState({ kind: "import", data: result });
+        } catch (e) {
+          setImportPick(Object.assign({}, importPick, { error: "预览失败：" + String((e && e.message) || e) }));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleImportConfirm() {
+        if (!previewState || previewState.kind !== "import" || busy) return;
+        const d = previewState.data || {};
+        const confirmToken = d.confirmToken;
+        const bundlePath = d.bundlePath;
+        if (!confirmToken) {
+          showToast("error", "缺少 confirmToken，请重新预览");
+          return;
+        }
+        if (!bundlePath) {
+          showToast("error", "缺少 bundle 路径，请重新预览");
+          return;
+        }
+        setBusy(true);
+        try {
+          const resp = await callRpc("import.apply", { bundlePath, confirmToken });
+          const result = readRpcResult(resp);
+          setPreviewState(null);
+          notifyPreviewChanged();
+          const extra = result.rescanError
+            ? " 脑已写入，但自动重扫失败，可手动点「重新扫描」。"
+            : (result.backupPath ? " 旧脑已备份。" : "");
+          showToast("success", "已恢复。" + extra);
+        } catch (e) {
+          showToast("error", "导入失败：" + String((e && e.message) || e));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleRollbackOpen() {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const resp = await callRpc("backup.list", {});
+          const value = readRpcResult(resp);
+          const backups = (value && value.backups) || [];
+          if (backups.length === 0) {
+            showToast("info", "当前项目没有本地备份");
+          } else {
+            setBackupList(backups);
+          }
+        } catch (e) {
+          showToast("error", "获取备份列表失败：" + String((e && e.message) || e));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleRollbackPick(backup) {
+        if (!backup || busy) return;
+        setBusy(true);
+        try {
+          const resp = await callRpc("backup.rollback.preview", { backupTimestamp: backup.ts });
+          const result = readRpcResult(resp);
+          setBackupList(null);
+          setPreviewState({ kind: "rollback", data: result, backup });
+        } catch (e) {
+          showToast("error", "预览失败：" + String((e && e.message) || e));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function handleRollbackConfirm() {
+        if (!previewState || previewState.kind !== "rollback" || busy) return;
+        const d = previewState.data || {};
+        const confirmToken = d.confirmToken;
+        const backupTimestamp = d.backupTimestamp || d.sourceBackupTs
+          || (d.sourceBackup && d.sourceBackup.ts);
+        if (!confirmToken || !backupTimestamp) {
+          showToast("error", "缺少 confirmToken，请重新选择");
+          return;
+        }
+        setBusy(true);
+        try {
+          const resp = await callRpc("backup.rollback.apply", { backupTimestamp, confirmToken });
+          readRpcResult(resp);
+          setPreviewState(null);
+          notifyPreviewChanged();
+          showToast("success", "已回滚到 " + backupTimestamp);
+        } catch (e) {
+          showToast("error", "回滚失败：" + String((e && e.message) || e));
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      // ─── 按钮样式（与 chip 同行不换行，靠右） ───
+      const headerBtnBase = {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
+        padding: "4px 10px",
+        background: "var(--dsw-alias-bg-layer-2)",
+        color: "var(--dsw-alias-label-primary)",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        borderRadius: "8px",
+        fontSize: "11px",
+        fontWeight: "500",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        transition: "background 0.15s ease, border-color 0.15s ease, transform 0.1s ease",
+      };
+
+      function renderButton(emoji, label, onClick, key, opts) {
+        opts = opts || {};
+        const style = Object.assign({}, headerBtnBase, opts.style || {}, busy ? { opacity: 0.55, cursor: "wait" } : {});
+        return React.createElement("button", {
+          key: key,
+          type: "button",
+          "data-brain-action": key,
+          title: opts.title || label,
+          disabled: busy || !!opts.disabled,
+          onClick: onClick,
+          style: style,
+          onMouseEnter: (e) => { if (!busy) e.currentTarget.style.borderColor = "var(--dsw-alias-brand-primary)"; },
+          onMouseLeave: (e) => { e.currentTarget.style.borderColor = "var(--dsw-alias-border-l1)"; },
+        },
+          React.createElement("span", { style: { fontSize: "13px", lineHeight: "1" } }, emoji),
+          React.createElement("span", null, label),
+        );
+      }
+
+      const actionBar = React.createElement("div", {
+        style: { display: "flex", gap: "6px", flexShrink: 0, marginLeft: "auto" },
+        "data-brain-action-bar": "1",
+      },
+        renderButton("💾", "备份", handleExport, "export", { title: "导出当前脑到 zip 文件" }),
+        renderButton("📥", "恢复", handleImportPick, "import", { title: "从 zip 文件恢复脑（覆盖当前）" }),
+        renderButton("↩️", "回滚", handleRollbackOpen, "rollback", { title: "从本地历史备份回滚" }),
+      );
+
       return React.createElement(
         "section",
         { style: Object.assign({}, sectionStyle, { padding: "16px 18px", background: "linear-gradient(135deg, var(--dsw-alias-bg-layer-1) 0%, var(--dsw-alias-bg-layer-2) 100%)" }), "data-block": "header" },
         React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { fontSize: "11px" }) }, "📁 " + t("header.section")),
         React.createElement(
           "div",
-          { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginTop: "2px" } },
-          React.createElement("span", { style: { fontSize: "22px" } }, icon),
-          React.createElement("span", { style: { fontSize: "18px", fontWeight: "600", letterSpacing: "0.2px" } }, p.name || t("header.untitled")),
+          { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", marginTop: "2px", minWidth: 0 } },
+          React.createElement("span", { style: { fontSize: "22px", flexShrink: 0 } }, icon),
+          React.createElement("span", { style: { fontSize: "18px", fontWeight: "600", letterSpacing: "0.2px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.name || t("header.untitled")),
           p.type
-            ? React.createElement("span", { style: { padding: "2px 10px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontSize: "11px", borderRadius: "10px", fontWeight: "600" } }, p.type)
+            ? React.createElement("span", { style: { padding: "2px 10px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontSize: "11px", borderRadius: "10px", fontWeight: "600", flexShrink: 0 } }, p.type)
             : null,
+          actionBar,
         ),
         p.description && p.description !== "Auto-generated by dsh-project-brain"
           ? React.createElement("p", { style: { margin: "8px 0 0", fontSize: "12px", lineHeight: "1.55", color: "var(--dsw-alias-label-secondary)" } }, String(p.description).slice(0, 280))
@@ -509,6 +819,359 @@ window.__ModuleLoader__.load({
               React.createElement("span", null, `${t("header.lastUpdate")} · ${formatRelativeTime(p.lastUpdateAt, Date.now(), data._localeCode)}`),
             )
           : null,
+        // ─── Dialogs（同一组件内挂载，状态由 useState 管理） ───
+        previewState ? renderPreviewDialog(previewState, { onCancel: () => setPreviewState(null), onConfirm: previewState.kind === "import" ? handleImportConfirm : handleRollbackConfirm, busy }) : null,
+        importPick ? renderImportPathDialog(importPick, {
+          onCancel: () => setImportPick(null),
+          onChange: (path) => setImportPick({ path, error: null }),
+          onBrowse: handleImportBrowse,
+          onPreview: handleImportPreviewFromDialog,
+          busy,
+        }) : null,
+        backupList ? renderBackupListDialog(backupList, { onCancel: () => setBackupList(null), onPick: handleRollbackPick, busy }) : null,
+        toast ? renderToast(toast, () => setToast(null), openFolderInExplorer) : null,
+      );
+    }
+
+    function renderImportPathDialog(state, { onCancel, onChange, onBrowse, onPreview, busy }) {
+      const overlayStyle = {
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9999,
+      };
+      const cardStyle = {
+        background: "var(--dsw-alias-bg-base)",
+        color: "var(--dsw-alias-label-primary)",
+        borderRadius: "12px",
+        padding: "20px 24px",
+        maxWidth: "560px",
+        width: "calc(100% - 32px)",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+      };
+      const btnBase = {
+        padding: "8px 16px",
+        borderRadius: "8px",
+        fontSize: "13px",
+        fontWeight: "600",
+        cursor: busy ? "wait" : "pointer",
+        border: "1px solid transparent",
+        fontFamily: "inherit",
+      };
+      return React.createElement("div", {
+        style: overlayStyle, onClick: (e) => { if (e.target === e.currentTarget) onCancel(); },
+      },
+        React.createElement("div", { style: cardStyle, "data-brain-dialog": "import-path" },
+          React.createElement("h2", { style: { margin: "0 0 8px", fontSize: "16px", fontWeight: "600" } }, "从 bundle 恢复"),
+          React.createElement("p", { style: { margin: "0 0 12px", fontSize: "12px", lineHeight: "1.5", color: "var(--dsw-alias-label-secondary)" } },
+            "选择或粘贴导出的 zip 完整路径。恢复会覆盖当前脑，下一步会先给你预览再确认。"),
+          React.createElement("div", { style: { display: "flex", gap: "8px" } },
+            React.createElement("input", {
+              type: "text",
+              value: state.path || "",
+              placeholder: "粘贴导出的 zip 完整路径",
+              disabled: busy,
+              onChange: (e) => onChange(e.target.value),
+              onKeyDown: (e) => { if (e.key === "Enter") onPreview(); },
+              style: {
+                flex: "1 1 auto",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                background: "var(--dsw-alias-bg-layer-2)",
+                color: "var(--dsw-alias-label-primary)",
+                fontSize: "12px",
+                fontFamily: "inherit",
+              },
+            }),
+            React.createElement("button", {
+              type: "button", onClick: onBrowse, disabled: busy,
+              style: Object.assign({}, btnBase, {
+                background: "var(--dsw-alias-bg-layer-2)",
+                color: "var(--dsw-alias-label-primary)",
+                borderColor: "var(--dsw-alias-border-l1)",
+                flexShrink: 0,
+              }),
+            }, "浏览…"),
+          ),
+          state.error ? React.createElement("div", {
+            style: { marginTop: "10px", fontSize: "12px", color: "var(--dsw-alias-state-error-primary)", lineHeight: "1.45" },
+          }, state.error) : null,
+          React.createElement("div", { style: { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "16px" } },
+            React.createElement("button", {
+              type: "button", onClick: onCancel, disabled: busy,
+              style: Object.assign({}, btnBase, { background: "transparent", color: "var(--dsw-alias-label-secondary)", borderColor: "var(--dsw-alias-border-l1)" }),
+            }, "取消"),
+            React.createElement("button", {
+              type: "button", onClick: onPreview, disabled: busy,
+              style: Object.assign({}, btnBase, { background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)" }),
+            }, busy ? "预览中…" : "预览影响"),
+          ),
+        ),
+      );
+    }
+
+    // ─── 预览弹框（覆盖并恢复） ───
+    function renderPreviewDialog(state, { onCancel, onConfirm, busy }) {
+      const { kind, data } = state;
+      const overlayStyle = {
+        position: "fixed",
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+      };
+      const cardStyle = {
+        background: "var(--dsw-alias-bg-base)",
+        color: "var(--dsw-alias-label-primary)",
+        borderRadius: "12px",
+        padding: "20px 24px",
+        maxWidth: "560px",
+        width: "calc(100% - 32px)",
+        maxHeight: "calc(100vh - 64px)",
+        overflow: "auto",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+      };
+      const titleStyle = {
+        margin: "0 0 12px",
+        fontSize: "16px",
+        fontWeight: "600",
+      };
+      const fieldRow = (label, value) => React.createElement("div", {
+        key: label, style: { display: "flex", gap: "8px", padding: "6px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px" },
+      },
+        React.createElement("span", { style: { color: "var(--dsw-alias-label-secondary)", minWidth: "110px" } }, label),
+        React.createElement("span", { style: { flex: "1 1 auto", wordBreak: "break-all" } }, value),
+      );
+      const btnBase = {
+        padding: "8px 16px",
+        borderRadius: "8px",
+        fontSize: "13px",
+        fontWeight: "600",
+        cursor: "pointer",
+        border: "1px solid transparent",
+        fontFamily: "inherit",
+      };
+      const cancelBtn = React.createElement("button", {
+        key: "cancel", type: "button", onClick: onCancel, disabled: busy,
+        style: Object.assign({}, btnBase, { background: "transparent", color: "var(--dsw-alias-label-secondary)", borderColor: "var(--dsw-alias-border-l1)" }),
+      }, "取消");
+      const confirmBtn = React.createElement("button", {
+        key: "confirm", type: "button", onClick: onConfirm,
+        disabled: busy || !(data && data.confirmToken),
+        style: Object.assign({}, btnBase, { background: "var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-bg-base)" }),
+      }, busy ? "处理中…" : "覆盖并恢复");
+      const footerStyle = { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" };
+
+      let title, fields, warning;
+      const countOf = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const v = arguments[i];
+          if (typeof v === "number" && Number.isFinite(v)) return v;
+        }
+        return 0;
+      };
+      const textOf = function () {
+        for (let i = 0; i < arguments.length; i++) {
+          const v = arguments[i];
+          if (typeof v === "string" && v) return v;
+        }
+        return "";
+      };
+      if (kind === "import") {
+        const impact = data.impact || {};
+        const rewrite = impact.rootPathRewrite || {};
+        const currentExists = !!(impact.currentBrainExists || data.currentBrainExists);
+        const incomingMem = countOf(impact.incomingMemories, data.incomingMemories);
+        const incomingTodos = countOf(impact.incomingTodos, data.incomingTodos);
+        const incomingTimeline = countOf(impact.incomingTimeline, data.incomingTimeline);
+        const currentMem = countOf(impact.currentMemories, data.currentMemories);
+        const currentTodos = countOf(impact.currentTodos, data.currentTodos);
+        const currentTimeline = countOf(impact.currentTimeline, data.currentTimeline);
+        const backupTo = textOf(impact.backupWillCreateAt, data.backupWillCreateAt);
+        const rootFrom = textOf(impact.rootPathFrom, data.rootPathFrom, rewrite.from);
+        const rootTo = textOf(impact.rootPathTo, data.rootPathTo, rewrite.to);
+        const sourceRoot = textOf(
+          data.sourceProjectRoot,
+          data.manifest && data.manifest.sourceProjectRoot,
+          data.manifest && data.manifest.sourceProject && data.manifest.sourceProject.rootPath,
+          data.bundlePath,
+        );
+        title = "确认从 bundle 恢复脑";
+        fields = [
+          fieldRow("bundle 来源", sourceRoot || "（未知）"),
+          fieldRow("当前脑", currentExists
+            ? currentMem + " 记忆 / " + currentTodos + " 待办 / " + currentTimeline + " timeline"
+            : "（无）"),
+          fieldRow("即将恢复", incomingMem + " 记忆 / " + incomingTodos + " 待办 / " + incomingTimeline + " timeline"),
+          fieldRow("旧脑将备份到", backupTo || "（无需，无脑）"),
+          fieldRow("rootPath 改写", (rootFrom || "（空）") + " → " + (rootTo || "（空）")),
+        ];
+        warning = textOf(data.warning) || (currentExists
+          ? "⚠️ 这会覆盖当前脑。旧脑会自动备份到上方的路径，可继续回滚。"
+          : "这是该项目首次导入，无旧脑可备份。");
+      } else if (kind === "rollback") {
+        const sb = data.sourceBackup || {};
+        const cb = data.currentBrain || {};
+        const currentExists = !!(cb.exists || data.currentBrainExists);
+        const sourceName = textOf(sb.backupName, data.sourceBackupName, "（未知备份）");
+        const sourceTs = textOf(sb.ts, data.sourceBackupTs, data.backupTimestamp);
+        title = "确认回滚到备份";
+        fields = [
+          fieldRow("目标备份", sourceName + (sourceTs ? "（" + sourceTs + "）" : "")),
+          fieldRow("备份内容",
+            countOf(sb.memCount, data.sourceMemCount) + " 记忆 / "
+            + countOf(sb.todoCount, data.sourceTodoCount) + " 待办 / "
+            + countOf(sb.timelineCount, data.sourceTimelineCount) + " timeline"),
+          fieldRow("当前脑", currentExists
+            ? countOf(cb.memCount, data.currentMemories) + " 记忆 / "
+              + countOf(cb.todoCount, data.currentTodos) + " 待办 / "
+              + countOf(cb.timelineCount, data.currentTimeline) + " timeline"
+            : "（无）"),
+          fieldRow("当前脑先备份到", textOf(data.willBackupCurrentTo) || "（无需）"),
+        ];
+        warning = textOf(data.warning) || (currentExists
+          ? "⚠️ 当前脑会自动备份到上方的路径，可继续回滚。"
+          : "当前脑不存在，回滚后会成为当前脑。");
+      }
+
+      return React.createElement("div", { style: overlayStyle, onClick: (e) => { if (e.target === e.currentTarget) onCancel(); } },
+        React.createElement("div", { style: cardStyle, "data-brain-dialog": "preview" },
+          React.createElement("h2", { style: titleStyle }, title),
+          React.createElement("div", null, fields),
+          warning ? React.createElement("div", {
+            style: { marginTop: "14px", padding: "10px 12px", background: "var(--dsw-alias-state-warn-secondary, rgba(255, 180, 0, 0.12))", borderRadius: "6px", fontSize: "12px", lineHeight: "1.5", color: "var(--dsw-alias-label-primary)" },
+          }, warning) : null,
+          React.createElement("div", { style: footerStyle }, cancelBtn, confirmBtn),
+        ),
+      );
+    }
+
+    // ─── 备份列表弹框 ───
+    function renderBackupListDialog(backups, { onCancel, onPick, busy }) {
+      const overlayStyle = {
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9999,
+      };
+      const cardStyle = {
+        background: "var(--dsw-alias-bg-base)",
+        color: "var(--dsw-alias-label-primary)",
+        borderRadius: "12px",
+        padding: "20px 24px",
+        maxWidth: "520px",
+        width: "calc(100% - 32px)",
+        maxHeight: "calc(100vh - 64px)",
+        overflow: "auto",
+        boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+      };
+      const itemStyle = (hover) => ({
+        display: "flex", flexDirection: "column", gap: "4px",
+        padding: "10px 12px",
+        borderRadius: "8px",
+        background: hover ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-bg-layer-2)",
+        cursor: busy ? "wait" : "pointer",
+        marginBottom: "6px",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        transition: "background 0.1s ease",
+      });
+      return React.createElement("div", {
+        style: overlayStyle, onClick: (e) => { if (e.target === e.currentTarget) onCancel(); },
+      },
+        React.createElement("div", { style: cardStyle, "data-brain-dialog": "backup-list" },
+          React.createElement("h2", { style: { margin: "0 0 4px", fontSize: "16px", fontWeight: "600" } }, "选择要回滚到的备份"),
+          React.createElement("div", { style: { margin: "0 0 12px", fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, "共 " + backups.length + " 个备份（按时间倒序）"),
+          backups.map((b, i) => {
+            const sizeKB = Math.max(1, Math.round((b.sizeBytes || 0) / 1024));
+            const subtitle = (b.projectExists ? "" : "（不完整）") + ` · ${sizeKB} KB · ${b.memCount} mem / ${b.todoCount} todo`;
+            return React.createElement("div", {
+              key: b.ts, "data-backup-ts": b.ts,
+              style: itemStyle(false),
+              onClick: () => !busy && onPick(b),
+              onMouseEnter: (e) => { e.currentTarget.style.background = "var(--dsw-alias-bg-layer-1)"; },
+              onMouseLeave: (e) => { e.currentTarget.style.background = "var(--dsw-alias-bg-layer-2)"; },
+            },
+              React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace" } }, b.ts),
+              React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)" } }, subtitle),
+            );
+          }),
+          React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "12px" } },
+            React.createElement("button", {
+              type: "button", onClick: onCancel, disabled: busy,
+              style: { padding: "8px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "600", cursor: "pointer", background: "transparent", color: "var(--dsw-alias-label-secondary)", border: "1px solid var(--dsw-alias-border-l1)", fontFamily: "inherit" },
+            }, "取消"),
+          ),
+        ),
+      );
+    }
+
+    // ─── Toast（右下角提示） ───
+    function renderToast(toast, onDismiss, onOpenFolder) {
+      const palette = {
+        success: { bg: "var(--dsw-alias-state-success-primary)", fg: "var(--dsw-alias-bg-base)" },
+        error:   { bg: "var(--dsw-alias-state-error-primary)", fg: "var(--dsw-alias-bg-base)" },
+        info:    { bg: "var(--dsw-alias-brand-primary)", fg: "var(--dsw-alias-bg-base)" },
+      };
+      const p = palette[toast.kind] || palette.info;
+      function handleToastClick() {
+        if (toast.copyPath && typeof navigator !== "undefined" && navigator.clipboard) {
+          navigator.clipboard.writeText(toast.copyPath).then(
+            () => {
+              const el = document.querySelector("[data-brain-toast-copy-hint]");
+              if (el) el.textContent = "✓ 已复制路径";
+            },
+            () => onDismiss(),
+          );
+        } else {
+          onDismiss();
+        }
+      }
+      const hintLine = React.createElement("div", {
+        "data-brain-toast-copy-hint": "1",
+        style: { fontSize: "10px", opacity: 0.85, marginTop: "4px", fontWeight: "400" },
+      },
+        toast.copyPath ? "点击复制路径" : (toast.openFolderPath ? "已尝试在文件管理器中打开" : ""),
+      );
+      // 「在文件夹中显示」按钮（如果有 openFolderPath）
+      const openFolderBtn = toast.openFolderPath ? React.createElement("button", {
+        type: "button",
+        onClick: (e) => { e.stopPropagation(); onOpenFolder(toast.openFolderPath); },
+        "data-brain-toast-action": "open-folder",
+        style: {
+          marginTop: "6px",
+          padding: "4px 10px",
+          fontSize: "11px",
+          fontWeight: "600",
+          background: "var(--dsw-alias-bg-base)",
+          color: "var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary))",
+          border: "none",
+          borderRadius: "6px",
+          cursor: "pointer",
+          fontFamily: "inherit",
+        },
+      }, "📂 在文件夹中显示") : null;
+      return React.createElement("div", {
+        style: {
+          position: "fixed", right: "20px", bottom: "20px",
+          background: p.bg, color: p.fg,
+          padding: "10px 14px",
+          borderRadius: "8px",
+          fontSize: "12px",
+          fontWeight: "500",
+          maxWidth: "440px",
+          whiteSpace: "pre-line",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+          zIndex: 9999,
+          cursor: toast.copyPath ? "pointer" : "default",
+        },
+        onClick: toast.copyPath ? handleToastClick : onDismiss,
+      },
+        toast.text,
+        hintLine,
+        openFolderBtn,
       );
     }
 
@@ -4009,7 +4672,12 @@ window.__ModuleLoader__.load({
           ".dsh-project-brain-preview button.dsh-arch-lane:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-node:not(:disabled):active,.dsh-project-brain-preview button.dsh-arch-chip:not(:disabled):active{transform:none}",
         ].join("\n")),
         headerWithBadge,
-        React.createElement(HeaderBlock, { data: dataWithLocale, t }),
+        React.createElement(HeaderBlock, {
+          data: dataWithLocale,
+          t,
+          sessionId: r.sessionId || null,
+          connection: __DSH_CONNECTION__,
+        }),
         React.createElement("div", { className: "dsh-brain-summary-grid", "data-block": "summary-grid" },
           React.createElement(StatusBannerBlock, { data: dataWithLocale, t, compact: true }),
           React.createElement(PhaseBlock, { data: dataWithLocale, t, compact: true }),

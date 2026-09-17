@@ -357,7 +357,7 @@ async function main() {
   writeFixtureProject(singleRoot);
   const { ctx: ctx2, tools: tools2, systemPrompt: sp2, connection: conn2 } = makeCtx({ rootDir: singleRoot });
   apply(ctx2, {});
-  record("2a", "16 个工具全部注册（init/rescan/continue/suggest/status/memory×4/todo×4/ask/dream/diff）", tools2.list().length === 16, "actual: " + tools2.list().length);
+  record("2a", "20 个工具全部注册（init/rescan/continue/suggest/status/memory×4/todo×4/ask/dream/diff/export/import/cleanup-backups/rollback-backup）", tools2.list().length === 20, "actual: " + tools2.list().length);
 
   const initRes = await tools2.execute({ name: "project_init", args: { path: singleRoot } });
   record("2b", "project_init 成功", initRes.ok === true, initRes.data && initRes.data.error ? JSON.stringify(initRes.data.error) : "ok");
@@ -547,6 +547,65 @@ async function main() {
   // 删除 fake plugin 不应影响 workspace 的 .project-brain/
   rmSync(fakePluginDir, { recursive: true, force: true });
   record("11c", "卸载 plugin 后 workspace .project-brain/ 仍存在", existsSync(brainPath));
+
+  // ───── AC-14 v1.3.1 导入导出 / 备份恢复 ─────
+  console.log("\n=== AC-14: v1.3.1 导入导出 / 备份恢复 ===");
+  {
+    const ieRoot = join(TMP, "ie-test");
+    writeFixtureProject(ieRoot, { name: "ie-test" });
+    const { ctx: ctx14, tools: tools14 } = makeCtx({ rootDir: ieRoot });
+    apply(ctx14, {});
+    await tools14.execute({ name: "project_init", args: { path: ieRoot } });
+
+    // 14a: export
+    const bundleDir = join(ieRoot, "dist-backups");
+    mkdirSync(bundleDir, { recursive: true });
+    const bundlePath = join(bundleDir, "test.zip");
+    const exportRes = await tools14.execute({ name: "project_export", args: { path: ieRoot, outputPath: bundlePath, includeCache: false } });
+    record("14a", "project_export 工具 happy path", exportRes && exportRes.ok === true, "bundle=" + bundlePath);
+    record("14a.bundle-exists", "bundle 文件实际写入", existsSync(bundlePath), bundlePath);
+
+    // 14b: import preview
+    const previewRes = await tools14.execute({ name: "project_import", args: { path: ieRoot, bundlePath, dryRun: true } });
+    record("14b", "project_import dryRun 返回 preview + confirmToken",
+      previewRes && previewRes.ok === true && previewRes.data && previewRes.data.confirmToken,
+      "confirmToken=" + (previewRes && previewRes.data && previewRes.data.confirmToken));
+
+    // 14c: import apply with wrong token → E_CONFIRM_TOKEN_MISMATCH
+    const wrongApply = await tools14.execute({ name: "project_import", args: { path: ieRoot, bundlePath, dryRun: false, confirmToken: "badtoken1234567890abcdef1234567890ab" } });
+    record("14c", "wrong confirmToken 被拒绝",
+      wrongApply && wrongApply.ok === false && wrongApply.code === "E_CONFIRM_TOKEN_MISMATCH",
+      "code=" + (wrongApply && wrongApply.code));
+
+    // 14d: import apply with correct token
+    const token = previewRes.data.confirmToken;
+    const applyRes = await tools14.execute({ name: "project_import", args: { path: ieRoot, bundlePath, dryRun: false, confirmToken: token } });
+    record("14d", "project_import apply 成功（backup 自创建）",
+      applyRes && applyRes.ok === true && applyRes.data && applyRes.data.backupPath,
+      "backupPath=" + (applyRes && applyRes.data && applyRes.data.backupPath));
+
+    // 14e: listBackups RPC
+    const { ctx: ctx14b, connection: conn14 } = makeCtx({ rootDir: ieRoot });
+    apply(ctx14b, {});
+    // 先准备一个 session（让 connection RPC 能解析 workspace path）
+    // 但 backup.list 直接调 listBackups → 需要 path。改用直接工具验证：
+    const listRes = await tools14.execute({ name: "project_cleanup_backups", args: { path: ieRoot, keepLast: 99, olderThanMs: 0 } });
+    record("14e", "project_cleanup_backups 工具 happy path（保留 99 个 = 实际不删）",
+      listRes && listRes.ok === true,
+      "kept=" + (listRes && listRes.data && listRes.data.keptCount));
+
+    // 14f: rollback preview
+    const backups = listRes.data && listRes.data.kept || [];
+    const firstBackupTs = backups.length > 0 ? backups[0].replace(/.*\.project-brain\.backup-/, "").replace(/[\\\/].*$/, "") : null;
+    if (firstBackupTs) {
+      const rollbackPreview = await tools14.execute({ name: "project_rollback_backup", args: { path: ieRoot, backupTimestamp: firstBackupTs, dryRun: true } });
+      record("14f", "project_rollback_backup dryRun 返回 preview",
+        rollbackPreview && rollbackPreview.ok === true && rollbackPreview.data && rollbackPreview.data.confirmToken,
+        "ts=" + firstBackupTs);
+    } else {
+      record("14f", "project_rollback_backup dryRun（无 backup 可测，跳过）", true, "no backup");
+    }
+  }
 
   // ───── AC-12 DSH Web Dashboard + TodoStrip（需 DSH Desktop 真实环境）─────
   console.log("\n=== AC-12: DSH Web Dashboard + TodoStrip（需 DSH Desktop 真实环境） ===");

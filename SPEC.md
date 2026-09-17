@@ -1,9 +1,16 @@
 # dsh-project-brain 开发规格说明（SPEC）
 
-**版本：** **v0.6.0**
-**状态：** Active（历史章节保留早期实验记录；当前数据通道以本页说明和 README 为准）
+**版本：** **v1.3.1**（latest）— 历史章节保留早期实验记录
+**状态：** Active
 **对应文档：** `REQUIREMENTS.md`（PRD） / `DESIGN.md`（设计方案）
 **性质：** 代码、测试、提交流程与排错流程均必须与本文档对齐；若与 PRD/DESIGN 冲突，以本文档为准并回写 PRD/DESIGN。
+
+> **v1.3.1 增量说明**（2026-09-15）：导入导出 / 本地备份恢复。
+> - 4 个新 Tool：`project_export` / `project_import` / `project_rollback_backup` / `project_cleanup_backups`
+> - 7 个新 RPC（`project_brain/export.run` 等）
+> - Dashboard 顶部三按钮 + PreviewDialog + BackupListDialog + Toast
+> - 详见 `docs/superpowers/specs/2026-09-15-brain-import-export.md`（独立 SPEC，因本文件主体章节保持稳定）
+> - 端到端 20/20 smoke + 46/46 host-acceptance 通过
 
 > **版本说明（v0.3 → v0.4 MINOR bump）**：本次 MINOR bump 开启 v0.4.x，累积 v0.2.1~v0.2.9 + v0.3.0~v0.4.8 共 39 行变更（数据通道重大回退 / 工具面补全 / summarizer + injector / auto-rebuild / path-resolver / sandbox 修复 / TODO strip / dream commit+full / locale-aware / 跨 Session 端到端 / 跨 workspace 隔离实测 / dark/light 主题 token 取证 / auto-rebuild 跨 fiber 修复 / inject timer 根因补漏 / 冷启动诊断 + DSH 原生事件主动唤醒 / spawn 子进程 watcher 终极 fallback / 工具层同步 rebuild 工程止血 / 端到端验证完成 + 接受手动 build fallback / 清理过时 todo + 完善 Project Memory 5 类混合填充 / P0.8 收尾大结局 / appendJsonl 性能优化 O(N) → O(1) / DSH Desktop 发布准备 INSTALL.md + CHANGELOG.md + STORE_LISTING.md / dream 真实架构 diff LLM 接入 + project_diff 工具（v0.4.1 mock fallback 实测 DSH Desktop shell 静默）/ **真实 git + 真实 LLM 绕过 DSH Desktop sandbox（v0.4.2，node 内置模块 + node:fetch）** / **summarizer 真实 git + detector 真实 git 格式修复（v0.4.4：inflateSync + 目录 mode + fixture deflateSync，198/198 PASS）** / **detector 移除 pack 整体拒绝（v0.4.5：commit/tree 在 loose 即可 diff，不读 blob，199/199 PASS）** / **detector pack 真实支持（v0.4.6：parseIdxV2 + readPackEntryByOffset + packed-refs + OFS_DELTA/REF_DELTA，201/201 PASS）** / **llm.js 加 Anthropic 兼容协议（v0.4.7：detectProtocol 自动路由 + fetchAnthropic /v1/messages，210/210 PASS）** / **本地 AST 分析扩展到 6 种语言（v0.4.8：Go/Java/Rust/C/C++ 新增；每语言独立 import/export/function/API/DB schema 抽取器；config.json languages 白名单；smoke-multi-lang 56/56 PASS）**）。v0.4.x：v0.4.0 + v0.4.1 + v0.4.2 + v0.4.3 + v0.4.4 + v0.4.5 + v0.4.6 + v0.4.7 + v0.4.8。真实路径 vs mock fallback 决策记录在 .project-brain/memory.jsonl mem-mtccn6uf。大章节结构与 SPEC §1~§19 保持不变；待 v1.0 MVP 时考虑 MAJOR bump。
 

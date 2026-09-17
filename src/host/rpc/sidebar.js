@@ -15,6 +15,10 @@ import { publicMemoryConfig, normalizeMemoryConfig } from "../memory/config.js";
 import { resolveSessionRoute } from "../architecture/analyzer.js";
 import { probeEmbedding, probeSessionLlm } from "../settings-probe.js";
 import { getGitHistory, getGitBranches, getWorkTreeChanges } from "../git/history.js";
+import { unwrapToolResult } from "../transfer/tool-result.js";
+import { shapeImportPreviewData, shapeRollbackPreviewData } from "../transfer/rpc-payload.js";
+import { promises as fsp } from "node:fs";
+import path from "node:path";
 
 // 把 normalizeMemoryConfig 的冻结对象转成可 JSON 序列化的普通对象（供 RPC 传回 Client）。
 function sanitizeSettings(config) {
@@ -420,11 +424,409 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
         });
       }
 
+      // ─── v1.3.1：导入导出 / 备份恢复 RPC ───
+      // 不走 tools.execute：Connection RPC 里它可能 ok 却不调用 tool.execute。
+
+      if (endpoint === "export.run") {
+        // 不走 tools.execute：DSH Connection 里它可能 ok 却不调用 tool.execute，zip 根本不会落盘。
+        let outputPath = payload && typeof payload.outputPath === "string" ? payload.outputPath : "";
+        try {
+          const { defaultBundleName, writeBundleFile } = await import("../transfer/bundle.js");
+          if (!outputPath) {
+            let projectName = path.basename(projectPath);
+            try {
+              const raw = await fsp.readFile(path.join(projectPath, ".project-brain", "project.json"), "utf8");
+              const meta = JSON.parse(raw);
+              if (meta && meta.name) projectName = String(meta.name);
+            } catch (e) { /* 用目录名即可 */ }
+            outputPath = path.join(projectPath, "dist-backups", defaultBundleName({ name: projectName }));
+          }
+          const includeCache = payload && payload.includeCache !== undefined ? !!payload.includeCache : true;
+          const written = await writeBundleFile({
+            projectPath,
+            outputPath,
+            includeCache,
+          });
+          try {
+            const { appendJsonl, brainPath } = await import("../store/brain-files.js");
+            const now = Date.now();
+            await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: "导出 bundle：" + written.bundleName,
+              eventType: "export",
+              occurredAt: now,
+              payload: {
+                bundlePath: written.bundlePath,
+                sizeBytes: written.sizeBytes,
+                fileCount: written.fileCount,
+              },
+            });
+          } catch (e) { /* timeline 失败不阻断导出 */ }
+          invalidateAggregatorCache(projectPath);
+          const preview = await buildWorkspacePreview(fs, projectPath);
+          preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+          return rpcOk({
+            projectPath,
+            preview,
+            bundlePath: written.bundlePath,
+            bundleName: written.bundleName,
+            defaultDirPath: written.defaultDirPath,
+            sizeBytes: written.sizeBytes,
+            result: {
+              ok: true,
+              data: {
+                bundlePath: written.bundlePath,
+                bundleName: written.bundleName,
+                defaultDirPath: written.defaultDirPath,
+                sizeBytes: written.sizeBytes,
+                fileCount: written.fileCount,
+              },
+            },
+          });
+        } catch (e) {
+          return rpcError(
+            (e && e.code) || "internal",
+            String((e && e.message) || e),
+            { outputPath: outputPath || null, projectPath },
+          );
+        }
+      }
+
+      if (endpoint === "import.preview") {
+        const bundlePath = payload && typeof payload.bundlePath === "string" ? payload.bundlePath : "";
+        if (!bundlePath) return rpcError("bad-request", "bundlePath 必填", {});
+        try {
+          const { previewBundle } = await import("../transfer/bundle.js");
+          const { getTokenStore } = await import("../transfer/confirm-tokens.js");
+          const preview = await previewBundle({ bundlePath, destProjectPath: projectPath });
+          const confirmToken = getTokenStore().issue({
+            kind: "import",
+            payload: { bundlePath, destProjectPath: projectPath },
+          });
+          const data = shapeImportPreviewData(preview, bundlePath, confirmToken);
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError((e && e.code) || "internal", String((e && e.message) || e), { bundlePath, projectPath });
+        }
+      }
+
+      if (endpoint === "import.apply") {
+        const bundlePath = payload && typeof payload.bundlePath === "string" ? payload.bundlePath : "";
+        const confirmToken = payload && typeof payload.confirmToken === "string" ? payload.confirmToken : "";
+        if (!bundlePath) return rpcError("bad-request", "bundlePath 必填", {});
+        if (!confirmToken) return rpcError("bad-request", "confirmToken 必填（先调 import.preview 拿 token）", {});
+        try {
+          const { getTokenStore } = await import("../transfer/confirm-tokens.js");
+          const tokenPayload = getTokenStore().consume(confirmToken, { kind: "import" });
+          if (!tokenPayload) {
+            return rpcError("bad-request", "confirmToken 无效、已过期或类型不匹配（请重新预览）", {});
+          }
+          if (tokenPayload.bundlePath !== bundlePath || tokenPayload.destProjectPath !== projectPath) {
+            return rpcError("bad-request", "confirmToken 与当前参数不匹配（请重新预览）", {});
+          }
+          const { applyBundle } = await import("../transfer/bundle.js");
+          const applied = await applyBundle({ bundlePath, destProjectPath: projectPath, triggerRescan: false });
+          try {
+            const { appendJsonl, brainPath } = await import("../store/brain-files.js");
+            const now = Date.now();
+            await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: applied.backupPath
+                ? "导入 bundle（已备份旧脑到 " + path.basename(applied.backupPath) + "）"
+                : "导入 bundle（首次）",
+              eventType: "import",
+              occurredAt: now,
+              payload: {
+                bundlePath,
+                backupPath: applied.backupPath,
+                sourceManifest: applied.sourceManifest,
+              },
+            });
+          } catch (e) { /* timeline 失败不阻断导入 */ }
+          const data = {
+            mode: "applied",
+            bundlePath,
+            backupPath: applied.backupPath || "",
+            fileCount: applied.fileCount || 0,
+          };
+          const result = rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+          await attachRescanAndPreview({
+            result,
+            projectPath,
+            fs,
+            sandboxPolicy,
+            architectureRuntime,
+            getMemoryConfig,
+          });
+          return result;
+        } catch (e) {
+          return rpcError((e && e.code) || "internal", String((e && e.message) || e), { bundlePath, projectPath });
+        }
+      }
+
+      if (endpoint === "backup.list") {
+        // 只读列表，不走 cleanup tool（避免误删）
+        try {
+          const { listBackups } = await import("../transfer/backup.js");
+          const backups = await listBackups({ projectPath });
+          return rpcOk({ projectPath, backups });
+        } catch (error) {
+          return rpcError(
+            (error && error.code) || "BACKUP_LIST_FAILED",
+            String((error && error.message) || error),
+            { projectPath },
+          );
+        }
+      }
+
+      if (endpoint === "backup.cleanup") {
+        const keepLast = payload && typeof payload.keepLast === "number" ? payload.keepLast : 3;
+        const olderThanMs = payload && typeof payload.olderThanMs === "number" ? payload.olderThanMs : undefined;
+        try {
+          const { cleanupBackups } = await import("../transfer/backup.js");
+          const cleaned = await cleanupBackups({ projectPath, keepLast, olderThanMs });
+          const data = {
+            keptCount: Array.isArray(cleaned.kept) ? cleaned.kept.length : 0,
+            deletedCount: Array.isArray(cleaned.deleted) ? cleaned.deleted.length : 0,
+            kept: cleaned.kept || [],
+            deleted: cleaned.deleted || [],
+          };
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError((e && e.code) || "internal", String((e && e.message) || e), { projectPath });
+        }
+      }
+
+      if (endpoint === "backup.rollback.preview") {
+        const ts = payload && typeof payload.backupTimestamp === "string" ? payload.backupTimestamp : "";
+        if (!ts) return rpcError("bad-request", "backupTimestamp 必填", {});
+        try {
+          const { previewRollback } = await import("../transfer/backup.js");
+          const { getTokenStore } = await import("../transfer/confirm-tokens.js");
+          const preview = await previewRollback({ projectPath, backupTimestamp: ts });
+          const confirmToken = getTokenStore().issue({
+            kind: "rollback",
+            payload: { projectPath, backupTimestamp: ts },
+          });
+          const data = shapeRollbackPreviewData(preview, ts, confirmToken);
+          return rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+        } catch (e) {
+          return rpcError((e && e.code) || "internal", String((e && e.message) || e), { projectPath });
+        }
+      }
+
+      if (endpoint === "backup.rollback.apply") {
+        const ts = payload && typeof payload.backupTimestamp === "string" ? payload.backupTimestamp : "";
+        const confirmToken = payload && typeof payload.confirmToken === "string" ? payload.confirmToken : "";
+        if (!ts) return rpcError("bad-request", "backupTimestamp 必填", {});
+        if (!confirmToken) return rpcError("bad-request", "confirmToken 必填（先调 backup.rollback.preview 拿 token）", {});
+        try {
+          const { getTokenStore } = await import("../transfer/confirm-tokens.js");
+          const tokenPayload = getTokenStore().consume(confirmToken, { kind: "rollback" });
+          if (!tokenPayload) {
+            return rpcError("bad-request", "confirmToken 无效、已过期或类型不匹配（请重新选择）", {});
+          }
+          if (tokenPayload.projectPath !== projectPath || tokenPayload.backupTimestamp !== ts) {
+            return rpcError("bad-request", "confirmToken 与当前参数不匹配（请重新选择）", {});
+          }
+          const { applyRollback } = await import("../transfer/backup.js");
+          const applied = await applyRollback({ projectPath, backupTimestamp: ts, triggerRescan: false });
+          try {
+            const { appendJsonl, brainPath } = await import("../store/brain-files.js");
+            const now = Date.now();
+            await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+              id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+              title: "回滚到备份 " + ts,
+              eventType: "rollback",
+              occurredAt: now,
+              payload: {
+                restoredFrom: applied.restoredFrom,
+                preRollbackBackupPath: applied.preRollbackBackupPath,
+              },
+            });
+          } catch (e) { /* timeline 失败不阻断回滚 */ }
+          const data = {
+            mode: "applied",
+            backupTimestamp: ts,
+            restoredFrom: applied.restoredFrom || "",
+            preRollbackBackupPath: applied.preRollbackBackupPath || "",
+          };
+          const result = rpcOk(Object.assign({ projectPath, result: { ok: true, data } }, data));
+          await attachRescanAndPreview({
+            result,
+            projectPath,
+            fs,
+            sandboxPolicy,
+            architectureRuntime,
+            getMemoryConfig,
+          });
+          return result;
+        } catch (e) {
+          return rpcError((e && e.code) || "internal", String((e && e.message) || e), { projectPath });
+        }
+      }
+
+      // v1.3.1：用 Electron shell.openPath 在文件管理器中打开文件夹
+      // 失败兜底：返回错误，让 Client 降级到复制路径
+      if (endpoint === "export.openFolder") {
+        const folderPath = payload && typeof payload.folderPath === "string" ? payload.folderPath : "";
+        if (!folderPath) return rpcError("BAD_REQUEST", "folderPath 必填", {});
+        try {
+          // 安全检查：必须是绝对路径，且不能包含 ..（防穿越）
+          if (!/^([A-Za-z]:[\\/]|\/)/.test(folderPath) || folderPath.includes("..")) {
+            return rpcError("BAD_REQUEST", "folderPath 必须是绝对路径且不含 ..", { folderPath });
+          }
+          // 优先用 DSH 提供的 shell service；fallback 到 electron
+          let shellModule = null;
+          let opened = false;
+          try {
+            // 方案 1：通过 ctx.get('shell') 探测 DSH 是否暴露了 shell service
+            const shell = ctx.get ? ctx.get("shell") : ctx.shell;
+            if (shell && typeof shell.openPath === "function") {
+              const r = await shell.openPath(folderPath);
+              opened = r === "" || r === undefined || r === null;
+              if (!opened) {
+                return rpcError("OPEN_FAILED", "shell.openPath 返回错误：" + String(r), { folderPath });
+              }
+              return rpcOk({ opened: true, folderPath });
+            }
+          } catch (e) { /* fallthrough */ }
+          // 方案 2：直接 require electron
+          try {
+            shellModule = await import("electron");
+            if (shellModule && shellModule.shell && typeof shellModule.shell.openPath === "function") {
+              const errMsg = await shellModule.shell.openPath(folderPath);
+              if (errMsg) {
+                return rpcError("OPEN_FAILED", errMsg, { folderPath });
+              }
+              return rpcOk({ opened: true, folderPath });
+            }
+          } catch (e) { /* electron not available */ }
+          // 方案 3：node child_process spawn explorer / xdg-open
+          try {
+            const { spawn } = await import("node:child_process");
+            const isWin = process.platform === "win32";
+            const cmd = isWin ? "explorer" : (process.platform === "darwin" ? "open" : "xdg-open");
+            spawn(cmd, [folderPath], { detached: true, stdio: "ignore" }).unref();
+            return rpcOk({ opened: true, folderPath, method: cmd });
+          } catch (e) {
+            return rpcError("OPEN_FAILED", "无法打开文件夹：" + String((e && e.message) || e), { folderPath });
+          }
+        } catch (e) {
+          return rpcError("OPEN_FAILED", String((e && e.message) || e), { folderPath });
+        }
+      }
+
+      if (endpoint === "import.pickBundle") {
+        try {
+          let dialog = null;
+          let BrowserWindow = null;
+          try {
+            const electron = await import("electron");
+            const mod = electron && electron.default ? electron.default : electron;
+            dialog = mod && mod.dialog;
+            BrowserWindow = mod && mod.BrowserWindow;
+          } catch (e) { /* electron not available */ }
+          if (!dialog || typeof dialog.showOpenDialog !== "function") {
+            return rpcError("directory-picker-unavailable", "系统文件选择器不可用，请粘贴 zip 的完整路径", {});
+          }
+          const win = (BrowserWindow && typeof BrowserWindow.getFocusedWindow === "function" && BrowserWindow.getFocusedWindow())
+            || (BrowserWindow && typeof BrowserWindow.getAllWindows === "function" && (BrowserWindow.getAllWindows()[0] || null))
+            || undefined;
+          const picked = await dialog.showOpenDialog(win || undefined, {
+            title: "选择 Project Brain bundle",
+            properties: ["openFile"],
+            filters: [
+              { name: "Brain bundle", extensions: ["zip"] },
+              { name: "All files", extensions: ["*"] },
+            ],
+          });
+          if (!picked || picked.canceled || !picked.filePaths || !picked.filePaths[0]) {
+            return rpcOk({ canceled: true, bundlePath: null });
+          }
+          return rpcOk({ canceled: false, bundlePath: picked.filePaths[0] });
+        } catch (e) {
+          return rpcError("directory-picker-unavailable", "无法打开文件选择器：" + String((e && e.message) || e), {});
+        }
+      }
+
       return rpcError("METHOD_NOT_FOUND", "未知 Project Brain RPC 方法：" + endpoint, { endpoint });
     },
     { authority: "loopback" },
   );
   return true;
+}
+
+async function attachRescanAndPreview({ result, projectPath, fs, sandboxPolicy, architectureRuntime, getMemoryConfig }) {
+  invalidateAggregatorCache(projectPath);
+  let rescanTriggered = false;
+  let rescanError = null;
+  try {
+    const scan = await scanAndWrite(
+      fs,
+      sandboxPolicy,
+      { path: projectPath, dryRun: false },
+      "project_rescan",
+      architectureRuntime,
+    );
+    rescanTriggered = !!(scan && scan.ok);
+    if (!rescanTriggered) {
+      const err = scan && scan.data && scan.data.error;
+      rescanError = (err && (err.message || err.code)) || (scan && scan.message) || "rescan failed";
+    }
+  } catch (e) {
+    rescanError = String((e && e.message) || e);
+  }
+  if (result && result.value && result.value.result && typeof result.value.result === "object") {
+    result.value.result.rescanTriggered = rescanTriggered;
+    if (rescanError) result.value.result.rescanError = rescanError;
+  }
+  try {
+    const preview = await buildWorkspacePreview(fs, projectPath);
+    preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+    if (result && result.value) result.value.preview = preview;
+  } catch (e) { /* preview 刷新失败不阻断导入/回滚 */ }
+  return result;
+}
+
+// Helper: 把 tools.execute 的结果包装成 connection RPC 的 ok 响应
+//   兼容两种 tools.execute 返回格式：
+//     A) { ok: true, data: { ... }, code?, message? }  ← 标准（v0.x DSH）
+//     B) { ...dataField... }                            ← 部分 DSH 版本直接返回数据
+//   rpcOk 返回 { ok: true, value: { name, result: <data> } }
+// 失败：把 code/message 传给 rpcError，并在 details 里保留原 data
+async function executeTool(tools, name, args) {
+  if (!tools || typeof tools.execute !== "function") {
+    return rpcError("TOOLS_UNAVAILABLE", "DSH tools service unavailable", { name });
+  }
+  try {
+    const result = await tools.execute({ name, args: args || {} });
+    if (!result) return rpcError("TOOL_RESULT_EMPTY", "tool returned empty result", { name });
+    if (result.ok === false) {
+      return rpcError(
+        result.code || "TOOL_FAILED",
+        result.message || "tool execution failed",
+        Object.assign({ name, toolData: result.data }, result.data || {}),
+      );
+    }
+    // unwrap data：兼容 A 格式、B 格式，以及 DSH 再包一层 {ok,data:{ok,data}}
+    const data = unwrapToolResult(result);
+    if (data && data.error === true) {
+      return rpcError(
+        data.code || "TOOL_FAILED",
+        data.message || "tool execution failed",
+        Object.assign({ name }, data.data || {}),
+      );
+    }
+    // 保持 tools.execute 的 { ok, data } 形状（Dashboard Quick Action 已验证可过 DSH schema）
+    return rpcOk({ name, result: { ok: true, data } });
+  } catch (error) {
+    return rpcError(
+      (error && error.code) || "TOOL_EXCEPTION",
+      String((error && error.message) || error),
+      { name },
+    );
+  }
 }
 
 export function registerSidebarRpc({ harness, ctx, fs, tools, getDefaultProjectPath, logger }) {
