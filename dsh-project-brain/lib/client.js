@@ -4028,12 +4028,12 @@
           { id: "overview", icon: "\u25EB", label: t("dash.tab.overview") },
           { id: "architecture", icon: "\u2318", label: t("dash.tab.architecture") },
           { id: "work", icon: "\u2713", label: t("dash.tab.work") },
-          { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") },
-          { id: "settings", icon: "\u2699", label: t("dash.tab.settings") }
+          { id: "knowledge", icon: "\u25C7", label: t("dash.tab.knowledge") }
         ];
         if (gitInfo && gitInfo.available === true) {
           tabDefs.push({ id: "git", icon: "\u2387", label: t("dash.tab.git") });
         }
+        tabDefs.push({ id: "settings", icon: "\u2699", label: t("dash.tab.settings") });
         const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
         const todoNode = todos.length > 0 ? React.createElement(
           "ul",

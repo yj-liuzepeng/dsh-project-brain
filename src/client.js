@@ -3689,12 +3689,12 @@ window.__ModuleLoader__.load({
         { id: "architecture", icon: "⌘", label: t("dash.tab.architecture") },
         { id: "work", icon: "✓", label: t("dash.tab.work") },
         { id: "knowledge", icon: "◇", label: t("dash.tab.knowledge") },
-        { id: "settings", icon: "⚙", label: t("dash.tab.settings") },
       ];
-      // v0.4.x: 仅当项目是 git 仓库时才显示 Git Tab
+      // Git 仓库才显示 Git Tab；设置始终在这一排最后
       if (gitInfo && gitInfo.available === true) {
         tabDefs.push({ id: "git", icon: "⎇", label: t("dash.tab.git") });
       }
+      tabDefs.push({ id: "settings", icon: "⚙", label: t("dash.tab.settings") });
       const emptyNode = React.createElement("span", { style: { opacity: 0.6, fontSize: "12px" } }, t("dash.none"));
       const todoNode = todos.length > 0
         ? React.createElement("ul", { style: { listStyle: "none", padding: 0, margin: 0 } },
