@@ -461,6 +461,61 @@ export async function buildArchitecture({ fs, projectPath, scan, previous, confi
     return enriched;
   } catch (error) { local.llm.error = explainLlmError(error); return local; }
 }
-export function architectureRelevantFiles(files) {
-  return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));
+const LOCK_NAMES = /^(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb|cargo\.lock|go\.sum|composer\.lock|poetry\.lock)$/i;
+const CHANGELOG_NAMES = /^changelog(?:\.[a-z0-9]+)?$/i;
+function fileNameOf(file) {
+  return String(file || "").replaceAll("\\", "/").split("/").pop() || "";
+}
+function isTestPath(file) {
+  const path = String(file || "").replaceAll("\\", "/");
+  return /(?:^|\/)(?:test|tests|__tests__|spec|specs)(?:\/|$)/i.test(path) || /\.(?:test|spec)\./i.test(path);
+}
+export function sourceChangeFiles(files) {
+  return (files || []).some((file) => !isGeneratedOrVendor(file) && SOURCE_EXTENSIONS.test(file));
+}
+// 约定入口文件名：跨语言通用（js/ts 的 index、go 的 main、python 的 __init__/__main__、rust 的 mod/lib）
+const ENTRY_BASENAMES = /^(?:index|main|app|server|mod|lib|__init__|__main__)$/i;
+function normalizeTriggerPath(file) {
+  return String(file || "").replaceAll("\\", "/").replace(/^\.\//, "");
+}
+function entrypointPathSet(entrypoints) {
+  const set = new Set();
+  for (const item of entrypoints || []) {
+    const raw = typeof item === "string" ? item : (item && item.path);
+    const type = item && typeof item === "object" ? String(item.type || "") : "";
+    if (type === "script") continue;
+    const path = normalizeTriggerPath(raw);
+    // 「npm run build」这类脚本入口不是文件，不能当触发源
+    if (!path || (/\s/.test(path) && !path.includes("/"))) continue;
+    set.add(path.toLowerCase());
+  }
+  return set;
+}
+// 只有「架构可能真的变了」才值得重跑 LLM：manifest、声明入口、约定入口文件、源码文件增删。
+// 普通源码改内容一律不触发（宁可漏触发，也不要因为改一行 UI 就跑一次 LLM）。
+export function architectureTriggerFiles(files, options = {}) {
+  const entrypoints = entrypointPathSet(options && options.entrypoints);
+  const structural = new Set();
+  for (const change of (options && options.changes) || []) {
+    const type = change && change.type;
+    if (type !== "added" && type !== "removed") continue;
+    const path = normalizeTriggerPath(change && change.path);
+    if (path) structural.add(path.toLowerCase());
+  }
+  const candidates = (files && files.length) ? files : ((options && options.changes) || []).map((c) => c && c.path);
+  return (candidates || []).some((file) => {
+    if (!file || isGeneratedOrVendor(file) || isTestPath(file)) return false;
+    const path = normalizeTriggerPath(file);
+    const name = fileNameOf(path);
+    if (README_NAMES.test(name) || LOCK_NAMES.test(name) || CHANGELOG_NAMES.test(name)) return false;
+    if (MANIFEST_NAMES.test(name) || /^cordis\.patch\.ya?ml$/i.test(name)) return true;
+    if (entrypoints.has(path.toLowerCase())) return true;
+    if (!SOURCE_EXTENSIONS.test(path)) return false;
+    if (ENTRY_BASENAMES.test(name.replace(/\.[^.]+$/, ""))) return true;
+    if (structural.has(path.toLowerCase())) return true;
+    return false;
+  });
+}
+export function architectureRelevantFiles(files, options) {
+  return architectureTriggerFiles(files, options);
 }

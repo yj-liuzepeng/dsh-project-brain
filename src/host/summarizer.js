@@ -15,11 +15,11 @@
 // 全部 try/catch + swallow：summarizer 抛错不能让 DSH 崩。
 
 import { brainPath, appendJsonl, readBrain } from "./store/brain-files.js";
-import { detectChanges } from "./diff/detector.js";
-import { scanAndWrite } from "./scan-and-write.js";
-import { architectureRelevantFiles, resolveSessionRoute } from "./architecture/analyzer.js";
+import { detectSessionChanges, sessionWindowStart } from "./diff/session-window.js";
+import { markArchitectureStale, scanAndWrite } from "./scan-and-write.js";
+import { architectureTriggerFiles, resolveSessionRoute, sourceChangeFiles } from "./architecture/analyzer.js";
 import { extractSessionMemories } from "./memory/session-extractor.js";
-import { admitMemory, persistHousekeep } from "./memory/admit.js";
+import { admitMemory, isChangelogGenre, persistHousekeep } from "./memory/admit.js";
 
 // 从 session 反推 cwd（不依赖 sandboxPolicy）
 function sessionCwd(session) {
@@ -67,17 +67,22 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
   }
 
-  // 1) git diff（仅作参考证据，不再作为主路径独立生成 change 记忆）
+  // 1) 本次会话窗口内的变更（工作树 mtime + 窗口内 commit）。
+  //    旧实现取 HEAD vs HEAD~1，等于把上一个 commit 当成本次成果：没提交就收不到，
+  //    别人刚提交过就算到自己头上。这里按时间窗口取，未提交的改动同样算数。
+  const windowStart = sessionWindowStart(brain, Date.now());
   let diff;
   try {
-    diff = await detectChanges({ projectPath, since: "1" });
+    diff = detectSessionChanges({ projectPath, sinceMs: windowStart, now: Date.now() });
   } catch (e) {
-    diff = { files: [], stat: "", error: String((e && e.message) || e) };
+    diff = { files: [], changes: [], commits: [], stat: "", error: String((e && e.message) || e) };
   }
   if (diff.error) {
-    log("info", "summarizer: no git diff (" + diff.error + ")");
+    log("info", "summarizer: session window degraded (" + diff.error + ")");
   }
   const changedFiles = (diff.files || []).filter(Boolean);
+  const changeEntries = Array.isArray(diff.changes) ? diff.changes : [];
+  diff.stat = changedFiles.length ? changedFiles.length + " files changed in session window" : "";
   const fingerprint = changedFiles.length ? changeFingerprint(diff) : null;
   const duplicateChange = Boolean(fingerprint && (brain.memories || []).some((m) =>
     m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint
@@ -131,14 +136,17 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
   }
 
   if (changedFiles.length > 0) {
-    log("info", `summarizer: git diff noted ${changedFiles.length} files (timeline only, no change memory)`);
+    log("info", `summarizer: session window noted ${changedFiles.length} files (timeline only, no change memory)`);
   } else if (duplicateChange) {
-    log("info", "summarizer: unchanged git window already recorded (" + fingerprint + ")");
+    log("info", "summarizer: unchanged window already recorded (" + fingerprint + ")");
   } else {
-    log("info", "summarizer: no git diff (non-git repo or no changes)");
+    log("info", "summarizer: no file changes in session window");
   }
 
   // 4) timeline 事件：session_summary（含会话总结 summary，供下个 Session 续接）
+  const rawSummary = String(semantic.summary || "").trim();
+  const summaryRejected = rawSummary && isChangelogGenre("", rawSummary) ? "changelog_genre" : "";
+  const summary = summaryRejected ? "" : rawSummary;
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
     title: "Session 摘要完成" + (changedFiles.length > 0
@@ -148,7 +156,11 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     occurredAt: now,
     detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + admittedIds.length + " semanticStatus=" + semantic.status + (changedFiles.length ? " files=" + changedFiles.slice(0, 20).join(",") : ""),
     sessionId: sessionId || null,
-    summary: semantic.summary || "",
+    summary,
+    files: changedFiles.slice(0, 20),
+    changes: changeEntries.slice(0, 20),
+    windowStart,
+    summaryRejected: summaryRejected || undefined,
     changeFingerprint: fingerprint,
     deduplicated: duplicateChange,
     semanticStatus: semantic.status,
@@ -183,7 +195,19 @@ export async function summarizeOne({ fs, projectPath, sessionId, session, llm, r
     }
   } catch (e) {}
 
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: admittedIds.length, summary: semantic.summary || "", autoDream: autoDreamResult };
+  return {
+    changedFiles: changedFiles.length,
+    files: changedFiles,
+    changes: changeEntries,
+    windowStart,
+    entrypoints: (brain.project && brain.project.entrypoints) || [],
+    fingerprint,
+    deduplicated: duplicateChange,
+    semanticStatus: semantic.status,
+    semanticMemories: admittedIds.length,
+    summary,
+    autoDream: autoDreamResult,
+  };
 }
 
 // 主入口：在 apply() 里调用，订阅 session/disposed
@@ -223,20 +247,44 @@ export function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
         .then(async (r) => {
           // 仅源码/配置结构发生变化时重建架构；内容未变时 fingerprint 会复用旧图，
           // 避免重复调用 LLM。失败只记录日志，不影响 Session 关闭。
-          if (r && r.changedFiles > 0 && architectureRelevantFiles(r.files)) {
-            const refreshed = await scanAndWrite(
-              fs,
-              sandboxPolicy,
-              { path: projectPath, dryRun: false },
-              "auto_architecture_refresh",
-              {
-                getMemoryConfig: runtime.getMemoryConfig,
-                getLlm: runtime.getLlm,
-                llmRoute: resolveSessionRoute(session),
-                sessionId,
-              },
-            );
-            if (!refreshed || !refreshed.ok) log("warn", "summarizer: architecture auto-refresh failed");
+          const files = (r && r.files) || [];
+          const refreshRuntime = {
+            getMemoryConfig: runtime.getMemoryConfig,
+            getLlm: runtime.getLlm,
+            llmRoute: resolveSessionRoute(session),
+            sessionId,
+            triggerFiles: files.slice(0, 20),
+          };
+          if (files.length && sourceChangeFiles(files)) {
+            try {
+              const light = await scanAndWrite(fs, sandboxPolicy, { path: projectPath, dryRun: false }, "auto_light_refresh", Object.assign({}, refreshRuntime, { architectureMode: "light" }));
+              if (!light || !light.ok) log("warn", "summarizer: light refresh failed");
+            } catch (e) {
+              log("warn", "summarizer: light refresh failed: " + String((e && e.message) || e));
+            }
+          }
+          const triggerOptions = { changes: (r && r.changes) || [], entrypoints: (r && r.entrypoints) || [] };
+          if (files.length && architectureTriggerFiles(files, triggerOptions)) {
+            // 触发了就必须给出结论：刷新成功 → scanAndWrite 自己把 architectureStale 清掉；
+            // 刷新失败 → 显式置过期，第一屏和注入都会说"架构可能过期"，而不是拿旧泳道当真理。
+            let refreshedOk = false;
+            try {
+              const refreshed = await scanAndWrite(
+                fs,
+                sandboxPolicy,
+                { path: projectPath, dryRun: false },
+                "auto_architecture_refresh",
+                Object.assign({}, refreshRuntime, { architectureMode: "full" }),
+              );
+              refreshedOk = Boolean(refreshed && refreshed.ok && !(refreshed.data && refreshed.data.architecture && refreshed.data.architecture.error));
+              if (!refreshedOk) log("warn", "summarizer: architecture auto-refresh failed");
+            } catch (e) {
+              log("warn", "summarizer: architecture auto-refresh failed: " + String((e && e.message) || e));
+            }
+            if (!refreshedOk) {
+              const marked = await markArchitectureStale(fs, sandboxPolicy, projectPath, true);
+              log(marked ? "info" : "warn", "summarizer: architectureStale=true " + (marked ? "written" : "write FAILED"));
+            }
           }
           // emit preview.changed 触发 rebuild
           try {

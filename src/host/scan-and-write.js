@@ -36,6 +36,23 @@ export function resolveWritePolicy(sandboxPolicy) {
   return sandboxPolicy;
 }
 
+// 只改 project.json 的架构过期标记，不重扫、不碰 architecture.json。
+// 用于「触发文件变了，但这次架构刷新没跑成」——此时旧泳道不能再当真理。
+export async function markArchitectureStale(fs, sandboxPolicy, projectPath, stale) {
+  try {
+    assertSafeProjectPath(projectPath);
+    const target = brainPath(projectPath, "project.json");
+    const project = await readJson(fs, target);
+    if (!project || project.__error) return false;
+    if (Boolean(project.architectureStale) === Boolean(stale)) return true;
+    project.architectureStale = Boolean(stale);
+    project.updatedAt = Date.now();
+    return Boolean(await writeJson(fs, target, project, resolveWritePolicy(sandboxPolicy)));
+  } catch (e) {
+    return false;
+  }
+}
+
 export function emitPreviewChanged(exec, projectPath) {
   try {
     const executor = (exec && exec.ctx) || null;
@@ -97,9 +114,11 @@ export async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime =
     previousArchitecture = await readJson(fs, brainPath(projectPath, "architecture.json"));
   } catch (e) {}
   const architectureConfig = runtime.getMemoryConfig ? runtime.getMemoryConfig() : {};
+  const architectureMode = (runtime && runtime.architectureMode) || "full";
+  const skipArchitecture = architectureMode === "light" || architectureMode === "none";
 
   let architecture = null;
-  if (architectureConfig.architectureEnabled !== false) {
+  if (!skipArchitecture && architectureConfig.architectureEnabled !== false) {
     try {
       architecture = await buildArchitecture({
         fs,
@@ -140,6 +159,9 @@ export async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime =
     createdAt: isRescan ? existing.createdAt : now,
     updatedAt: now,
     lastScannedAt: now,
+    architectureStale: skipArchitecture
+      ? Boolean(existing && existing.architectureStale)
+      : Boolean(architecture && architecture.error),
   };
 
   if (!dryRun) {
@@ -167,7 +189,11 @@ export async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime =
         title: isRescan ? "完成重扫（" + toolLabel + "）" : "完成 project_init 扫描",
         eventType: isRescan ? "rescan" : "init",
         occurredAt: now,
+        architectureMode: architectureMode,
+        sessionId: runtime.sessionId || null,
+        triggerFiles: Array.isArray(runtime.triggerFiles) ? runtime.triggerFiles.slice(0, 20) : undefined,
         detail: "languages=" + (Object.keys(scan.languages).join("/") || "none") + " files=" + scan.fileCount +
+          " architectureMode=" + architectureMode +
           (architecture && !architecture.error ? " modules=" + architecture.stats.modules + " edges=" + architecture.stats.edges + " architecture=" + architecture.source : ""),
       }, writePolicy);
     } catch (e) {

@@ -213,7 +213,7 @@ export function getGitHistory({ projectPath, limit = 50, branch = null } = {}) {
 // ── 工作树对比（不依赖 git binary，纯文件 IO + git object 读取） ──
 
 // 常见忽略（git status 默认也会忽略 .git 等）
-const WORKTREE_IGNORE_DIRS = new Set([
+export const WORKTREE_IGNORE_DIRS = new Set([
   ".git",
   ".project-brain",
   "node_modules",
@@ -234,8 +234,8 @@ const WORKTREE_IGNORE_DIRS = new Set([
   ".cache",
   ".pnpm-store",
 ]);
-const WORKTREE_IGNORE_SUFFIXES = [".log", ".bak", ".tmp", ".swp", ".swo"];
-const WORKTREE_IGNORE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
+export const WORKTREE_IGNORE_SUFFIXES = [".log", ".bak", ".tmp", ".swp", ".swo"];
+export const WORKTREE_IGNORE_NAMES = new Set([".DS_Store", "Thumbs.db"]);
 
 // 递归扫描工作树，返回 { filePath: true } map
 function collectWorkTreeFiles(projectPath) {

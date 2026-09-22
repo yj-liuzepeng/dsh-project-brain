@@ -86,7 +86,7 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     "从下面的软件开发 Session 中提取值得跨会话长期保存的项目知识，并总结本次会话做了什么。",
     "只保留有明确证据的架构决策、稳定需求、Bug 根因与修复、可复用教训、长期问题或重要项目背景。",
     "忽略寒暄、临时步骤、命令输出、未确认猜测、个人信息、凭据；没有稳定知识时 memories 返回空数组。",
-    "summary 用 2-4 句话客观概括本次会话的开发意图、主要动作与产出（作为下一个 Session 的续接上下文，不编造）。",
+    "summary 用 1–3 句话写本次做成了什么重要的以及为什么，作为下一个 Session 的续接上下文，不编造。禁止写成「改了 N 个文件」、验收清单或 changelog。",
     `最多 ${maxItems} 条记忆。只输出严格 JSON 对象，不要 Markdown。`,
     "每条记忆必须带 evidence：原文中能直接验证该记忆的连续片段（建议 8-60 字），用于 grounding 校验。",
     "如果某条记忆无法在原文中找到对应证据，请降低 confidence 或不输出。",
