@@ -11,7 +11,7 @@
 //      - project.json 正确生成
 //      - memory.jsonl 含 init/decision/lesson/change/session_summary
 //      - todo.jsonl 含 todo + session_start 列出来了
-//      - injector 输出 markdown 含 Top-K memories + 活跃 TODO
+//      - injector 输出 markdown 含 briefing 四段 + Core 记忆 + 活跃待办标题
 //
 // 退出码：0 = PASS，1 = FAIL
 
@@ -240,10 +240,11 @@ if (ourSection) {
   const md = typeof ourSection.text === "function" ? ourSection.text({}) : ourSection.text;
   console.log("\n--- injected context ---\n" + md + "\n---");
   check("injected context 包含 'Project Brain'", /## Project Brain/.test(md));
-  check("injected context 包含 project name 'my-app'", /my-app/.test(md));
+  check("injected context 包含项目介绍", /### 这是什么/.test(md) && !/### 这是什么\s*\nmy-app/.test(md));
+  check("injected context 包含 briefing 标题", /### 最近做什么/.test(md) && /### 这是什么/.test(md));
   check("injected context 包含 decision memory '采用 Express'", /采用 Express/.test(md));
   check("injected context 包含 lesson memory 'DSH host bundle'", /DSH host bundle/.test(md));
-  check("injected context 包含 active TODO '实现用户注册'", /实现用户注册/.test(md));
+  check("injected briefing 不把 pending TODO 当最近做什么", /### 最近做什么/.test(md) && !/### 最近做什么[\s\S]*实现用户注册/.test((md.split("### 从哪改")[0] || md)));
 }
 
 // ─── Step 7: build-time embed（build.js loadProjectData）───

@@ -44,6 +44,8 @@ import { todoStats, activeTodos, techStackToType, isCoreMemory } from "./src/hos
 import { sanitizeProjectDescription } from "./src/scanner.js";
 import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "./src/stack-taxonomy.js";
 import { buildLocalSuggestion } from "./src/host/suggest.js";
+import { buildProjectBriefing } from "./src/host/memory/briefing.js";
+import { buildSessionGraph } from "./src/host/memory/session-graph.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(__dirname, "dsh-project-brain");
@@ -181,6 +183,7 @@ export function loadProjectData(workspace) {
         languages: raw.languages || {},
         entrypoints: raw.entrypoints || [],
         lastUpdateAt: raw.updatedAt || raw.lastScannedAt || Date.now(),
+        architectureStale: Boolean(raw.architectureStale),
       },
       phase: phase,
       recentActivity: recentActivity.length > 0 ? recentActivity : [
@@ -213,6 +216,19 @@ export function loadProjectData(workspace) {
         todos: todosAll,
         timeline: timelineAll,
         architecture,
+      }),
+      briefing: buildProjectBriefing({
+        project: raw,
+        architecture,
+        timeline: timelineAll,
+        memories: memoriesRaw,
+        todos: todosAll,
+        architectureStale: Boolean(raw.architectureStale),
+      }),
+      sessionGraph: buildSessionGraph({
+        timeline: timelineAll,
+        memories: memoriesRaw,
+        todos: todosAll,
       }),
     };
   } catch (e) {

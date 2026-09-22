@@ -434,7 +434,8 @@ async function main() {
   // 触发 prompt section 渲染
   const injected = sp2.render({ session: { id: "sess-new", cwd: wsA }, sessionId: "sess-new" });
   record("5a", "systemPrompt section 注入 markdown", typeof injected === "string" && injected.length > 50, "length=" + (injected && injected.length));
-  record("5b", "注入包含项目名", injected && injected.includes("workspace-a"), "fragment: " + (injected && injected.split("\n").slice(0, 3).join(" | ")));
+  record("5b", "这是什么不带项目名前缀", injected && injected.includes("### 这是什么") && !/### 这是什么\s*\nworkspace-a/.test(injected));
+  record("5c", "注入含 briefing 标题", injected && injected.includes("### 这是什么") && injected.includes("### 最近做什么") && injected.includes("### 从哪改") && !injected.includes("### 现在卡在哪"));
 
   // ───── AC-6 session_semantic 生成 ─────
   console.log("\n=== AC-6: session_semantic 生成 ===");
@@ -493,6 +494,8 @@ async function main() {
   record("7b", "Quick Action rescan 成功", rescanAction && rescanAction.ok === true);
   const previewRes = await conn7.call("preview", { sessionId: "sess-qa" });
   record("7c", "preview 端点返回 preview 数据", previewRes && previewRes.ok === true && previewRes.value && previewRes.value.preview);
+  const familiarity = previewRes && previewRes.value && previewRes.value.preview;
+  record("7d", "preview 含 briefing 与 sessionGraph", Boolean(familiarity && familiarity.briefing && familiarity.sessionGraph && Array.isArray(familiarity.sessionGraph.nodes)));
 
   // ───── AC-8 LLM 路由显示 DSH LLM 增强 ─────
   console.log("\n=== AC-8: LLM 路由可用时显示增强 ===");
