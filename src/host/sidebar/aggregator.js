@@ -15,9 +15,28 @@ import { serializeJsonl } from "../store/brain-files.js";
 import { housekeepMemories, persistHousekeep } from "../memory/admit.js";
 import { sanitizeProjectDescription } from "../../scanner.js";
 import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "../../stack-taxonomy.js";
+import { buildProjectBriefing } from "../memory/briefing.js";
+import { buildSessionGraph } from "../memory/session-graph.js";
 
 const CACHE_TTL_MS = 5000;
 const cache = new Map(); // projectPath -> { ts, data }
+
+export function attachFamiliarity(data, parts) {
+  const project = (parts && parts.project) || (data && data.project) || null;
+  const brain = {
+    project,
+    architecture: (parts && parts.architecture) || (data && data.architecture) || null,
+    timeline: (parts && parts.timeline) || (data && data.timelineAll) || [],
+    memories: (parts && parts.memories) || (data && data.memoriesAll) || [],
+    todos: (parts && parts.todos) || (data && data.todos) || [],
+    architectureStale: Boolean(project && project.architectureStale),
+  };
+  if (data) {
+    data.briefing = buildProjectBriefing(brain);
+    data.sessionGraph = buildSessionGraph(brain);
+  }
+  return data;
+}
 
 export function invalidateAggregatorCache(projectPath) {
   if (projectPath) {
@@ -114,6 +133,7 @@ export function buildSidebarPreview(projectPath) {
         type: techStackToType(p.techStack),
         rootPath: p.rootPath || projectPath,
         lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now(),
+        architectureStale: Boolean(p.architectureStale),
       },
       phase: derivePhase(p, todos),
       recentActivity: activity.length > 0 ? activity : (p.lastScannedAt ? [{
@@ -134,6 +154,7 @@ export function buildSidebarPreview(projectPath) {
         decisions: visibleMemories.filter((m) => m.type === "decision").length,
       },
     };
+    attachFamiliarity(data, { project: p, architecture: architecture && !architecture.__error ? architecture : null, timeline, memories, todos });
   }
 
   cache.set(projectPath, { ts: Date.now(), data });
@@ -225,7 +246,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
   const todosDone = todosAll.filter((t) => t && t.status === "done");
   const todos = todosActive.concat(todosDone).slice(0, 50);
 
-  return {
+  const preview = {
     generatedAt: Date.now(),
     initialized: true,
     workspaceRoot: root,
@@ -242,6 +263,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       languages: p.languages || {},
       entrypoints: p.entrypoints || [],
       lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now(),
+      architectureStale: Boolean(p.architectureStale),
     },
     phase: phase,
     recentActivity: recentActivity.length > 0 ? recentActivity : (p.lastScannedAt ? [{
@@ -268,4 +290,6 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       archivedMemories: (Array.isArray(memoriesAll) ? memoriesAll : []).filter((m) => m && (m.status === "archived" || m.status === "superseded" || m.status === "deleted")).length,
     },
   };
+  attachFamiliarity(preview, { project: p, architecture, timeline, memories: memoriesAll, todos: todosAll });
+  return preview;
 }

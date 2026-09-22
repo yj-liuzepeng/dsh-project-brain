@@ -1,71 +1,34 @@
 // Shared Core injection assembler — injector and project_continue must render the same markdown.
 
-import { activeTodos, estimateTokens, isCoreMemory, techStackToType } from "../store/brain-logic.js";
+import { isCoreMemory } from "../store/brain-logic.js";
+import { buildProjectBriefing, truncateSummaryToTokens, latestDisposedSessionSummary } from "./briefing.js";
 
-const SUMMARY_MAX_TOKENS = 400;
-
-export function truncateSummaryToTokens(text, maxTokens) {
-  const raw = String(text || "").trim();
-  if (!raw) return "";
-  if (estimateTokens(raw) <= maxTokens) return raw;
-  const parts = raw.split(/(?<=[。！？.!?])\s*/).filter(Boolean);
-  let acc = "";
-  const suffix = "（摘要已截断）";
-  for (const part of parts) {
-    const next = acc + part;
-    if (estimateTokens(next + suffix) > maxTokens) break;
-    acc = next;
-  }
-  if (!acc) {
-    let cut = raw;
-    while (cut.length > 8 && estimateTokens(cut + suffix) > maxTokens) {
-      cut = cut.slice(0, Math.floor(cut.length * 0.85));
-    }
-    acc = cut.trim();
-  }
-  return acc.replace(/\s+$/, "") + suffix;
-}
-
-export function latestDisposedSessionSummary(timeline) {
-  const summaries = (timeline || [])
-    .filter((e) => e && e.eventType === "session_summary" && e.summary && String(e.summary).trim())
-    .sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
-  return summaries.length ? String(summaries[0].summary).trim() : "";
-}
-
-function renderTechStack(techStack) {
-  if (!techStack || typeof techStack !== "object") return "";
-  const parts = [];
-  for (const [k, v] of Object.entries(techStack)) {
-    if (Array.isArray(v)) {
-      if (v.length) parts.push(k + "=" + v.join("/"));
-    } else if (v) {
-      parts.push(k + "=" + v);
-    }
-  }
-  return parts.join(", ");
-}
+export { truncateSummaryToTokens, latestDisposedSessionSummary, buildProjectBriefing };
 
 export function buildInjectionContext(brain) {
   if (!brain || !brain.project || brain.project.__error) return "";
-  const project = brain.project;
+  const briefing = buildProjectBriefing(brain);
   const memories = ((brain.memories || []).filter(isCoreMemory)).slice()
     .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-  const todos = activeTodos(brain.todos || []);
-  const lastSummary = truncateSummaryToTokens(latestDisposedSessionSummary(brain.timeline), SUMMARY_MAX_TOKENS);
 
   const lines = [];
   lines.push("## Project Brain");
   lines.push("");
+  if (briefing.markdown) {
+    lines.push(briefing.markdown);
+    lines.push("");
+  }
 
-  lines.push("### 项目概况");
-  lines.push("- 名称: " + (project.name || "(未命名)"));
-  const type = project.type || techStackToType(project.techStack);
-  if (type) lines.push("- 类型: " + type);
-  const ts = renderTechStack(project.techStack);
-  if (ts) lines.push("- 技术栈: " + ts);
-  if (project.description) lines.push("- 简介: " + String(project.description).slice(0, 300));
-  lines.push("");
+  // 活跃待办单独成段：续接靠 TODO，不能只在「记忆约定」里空口叮嘱，也不能混进「最近做什么」。
+  const stuck = Array.isArray(briefing.stuck) ? briefing.stuck : [];
+  if (stuck.length > 0) {
+    lines.push("### 活跃待办");
+    for (const todo of stuck) {
+      const status = todo.status === "in_progress" ? "进行中" : (todo.status === "blocked" ? "阻塞" : "待办");
+      lines.push("- [" + status + "] " + todo.title);
+    }
+    lines.push("");
+  }
 
   if (memories.length > 0) {
     lines.push("### Core 记忆");
@@ -75,22 +38,6 @@ export function buildInjectionContext(brain) {
       if (m.content) {
         lines.push("  " + String(m.content).replace(/\n+/g, " "));
       }
-    }
-    lines.push("");
-  }
-
-  if (lastSummary) {
-    lines.push("### 上次会话");
-    lines.push("> " + lastSummary.replace(/\n+/g, " "));
-    lines.push("");
-  }
-
-  if (todos.length > 0) {
-    lines.push("### 活跃 TODO");
-    for (const t of todos.slice(0, 12)) {
-      const prio = t.priority ? "[" + t.priority + "] " : "";
-      const status = t.status === "in_progress" ? "⏳ " : "";
-      lines.push("- " + status + prio + t.title);
     }
     lines.push("");
   }
