@@ -261,6 +261,21 @@
           "settings.probe.running": "\u6D4B\u8BD5\u4E2D\u2026",
           "dash.snapshot": "\u6570\u636E\u5FEB\u7167 \xB7 {time}",
           "dash.none": "\uFF08\u7A7A\uFF09",
+          "briefing.what": "\u8FD9\u662F\u4EC0\u4E48",
+          "briefing.recent": "\u6700\u8FD1\u505A\u4EC0\u4E48",
+          "briefing.stale": "\u67B6\u6784\u53EF\u80FD\u8FC7\u671F\uFF0C\u5173\u952E\u6587\u4EF6\u6309\u626B\u63CF\u5165\u53E3\u964D\u7EA7\u3002",
+          "briefing.empty": "\uFF08\u6682\u65E0\uFF09",
+          "briefing.recent.empty": "\u8FD8\u6CA1\u6709\u4F1A\u8BDD\u6458\u8981",
+          "briefing.recent.outdated": "\u53EF\u80FD\u5DF2\u8FC7\u65F6",
+          "graph.title": "\u5F00\u53D1\u4E3B\u5E72",
+          "graph.empty": "\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u4F1A\u8BDD\u8282\u70B9",
+          "graph.collapsed": "\u5DF2\u6298\u53E0 {n} \u6BB5\u65E0\u5B9E\u8D28\u4EA7\u51FA\u7684\u8BB0\u5F55",
+          "graph.expandAll": "\u5C55\u5F00\u5168\u90E8",
+          "graph.collapse": "\u6309\u91CD\u8981\u8282\u70B9\u663E\u793A",
+          "graph.edge.todo": "TODO",
+          "graph.edge.supersede": "\u66FF\u4EE3",
+          "graph.edge.architecture": "\u67B6\u6784",
+          "graph.filesMore": "+{n} \u4E2A\u6587\u4EF6",
           "suggest.title": "\u{1F4A1} \u4F60\u4ECA\u5929\u53EF\u80FD\u60F3\u63A8\u8FDB",
           "suggest.llmTag": "AI \u63A8\u8350",
           "suggest.localTag": "\u672C\u5730\u63A8\u8350",
@@ -395,6 +410,21 @@
           "settings.probe.running": "Testing\u2026",
           "dash.snapshot": "Data snapshot \xB7 {time}",
           "dash.none": "(empty)",
+          "briefing.what": "What this is",
+          "briefing.recent": "What we did recently",
+          "briefing.stale": "Architecture may be stale; key files fall back to scan entrypoints.",
+          "briefing.empty": "(none)",
+          "briefing.recent.empty": "No session summary yet",
+          "briefing.recent.outdated": "may be outdated",
+          "graph.title": "Development trunk",
+          "graph.empty": "No session nodes to show yet",
+          "graph.collapsed": "Collapsed {n} records with no substantive output",
+          "graph.expandAll": "Expand all",
+          "graph.collapse": "Show important nodes",
+          "graph.edge.todo": "TODO",
+          "graph.edge.supersede": "Supersede",
+          "graph.edge.architecture": "Architecture",
+          "graph.filesMore": "+{n} files",
           "suggest.title": "\u{1F4A1} Today you may want to continue",
           "suggest.llmTag": "AI",
           "suggest.localTag": "Local",
@@ -3691,6 +3721,151 @@
           )
         );
       }
+      function BriefingBlock({ briefing, t, localeCode }) {
+        const b = briefing || {};
+        const empty = t("briefing.empty");
+        const row = (key, body) => React.createElement(
+          "div",
+          {
+            key,
+            style: { display: "grid", gridTemplateColumns: "84px minmax(0, 1fr)", gap: "10px", padding: "8px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)", fontSize: "12px", alignItems: "start" }
+          },
+          React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", paddingTop: "2px" } }, t(key)),
+          React.createElement("div", { style: { minWidth: 0, lineHeight: 1.55, whiteSpace: "normal", overflowWrap: "anywhere" } }, body)
+        );
+        return React.createElement(
+          "section",
+          {
+            "data-block": "briefing",
+            style: { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)" }
+          },
+          b.stale ? React.createElement("div", {
+            style: { fontSize: "11px", marginBottom: "8px", padding: "6px 8px", borderRadius: "8px", border: "1px solid var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-state-warn-primary)" }
+          }, t("briefing.stale")) : null,
+          row("briefing.what", b.purpose || empty),
+          row("briefing.recent", b.recentWork ? React.createElement(
+            "span",
+            null,
+            b.recentWork,
+            b.recentWorkAt ? React.createElement("span", {
+              style: { marginLeft: "6px", fontSize: "10px", color: b.recentWorkStale ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" }
+            }, formatRelativeTime(b.recentWorkAt, Date.now(), localeCode) + (b.recentWorkStale ? " \xB7 " + t("briefing.recent.outdated") : "")) : null
+          ) : t("briefing.recent.empty"))
+        );
+      }
+      function SessionGraphBlock({ graph, t }) {
+        const g = graph || { nodes: [], edges: [], collapsedEmptyCount: 0, hiddenCount: 0 };
+        const [expandAll, setExpandAll] = React.useState(false);
+        const [openId, setOpenId] = React.useState(null);
+        const nodes = Array.isArray(g.nodes) ? g.nodes.slice().sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0)) : [];
+        const edges = Array.isArray(g.edges) ? g.edges : [];
+        const visible = expandAll ? nodes : nodes.filter((n) => !n.hidden);
+        const reasonLabel = (reason) => {
+          const key = "graph.edge." + (reason || "todo");
+          const label = t(key);
+          return label === key ? reason : label;
+        };
+        const items = [];
+        if (!visible.length) {
+          items.push(React.createElement("div", { key: "empty", style: { fontSize: "12px", opacity: 0.6 } }, t("graph.empty")));
+        }
+        visible.forEach((node, index) => {
+          if (index > 0) {
+            items.push(React.createElement("div", {
+              key: "time-" + node.id,
+              "data-graph-kind": "time",
+              style: { display: "flex", alignItems: "stretch", minHeight: "14px", paddingLeft: "11px" }
+            }, React.createElement("div", { style: { width: "2px", background: "var(--dsw-alias-border-l2)", marginRight: "12px" } })));
+          }
+          const incoming = edges.filter((e) => e.kind === "evidence" && e.to === node.id);
+          if (incoming.length) {
+            items.push(React.createElement("div", {
+              key: "ev-" + node.id,
+              style: { display: "flex", flexWrap: "wrap", gap: "4px", padding: "0 0 6px 28px" }
+            }, incoming.map((e, i) => React.createElement("span", {
+              key: e.from + "-" + e.reason + "-" + i,
+              "data-graph-kind": e.kind,
+              title: e.from + " \u2192 " + e.to,
+              style: { fontSize: "10px", fontWeight: "700", padding: "1px 7px", borderRadius: "8px", border: "1px solid var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-brand-primary)" }
+            }, reasonLabel(e.reason)))));
+          }
+          const open = openId === node.id;
+          const detailText = String(node.detail || "").replace(/\s+/g, " ").trim();
+          const showDetail = Boolean(detailText) && detailText !== String(node.label || "").replace(/\s+/g, " ").trim();
+          const fileList = Array.isArray(node.files) ? node.files : [];
+          items.push(React.createElement(
+            "button",
+            {
+              key: node.id,
+              type: "button",
+              "data-graph-node": node.id,
+              onClick: () => setOpenId(open ? null : node.id),
+              style: { display: "block", width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: "8px", border: "1px solid " + (open ? "var(--dsw-alias-brand-primary)" : "var(--dsw-alias-border-l1)"), background: "var(--dsw-alias-bg-layer-1)", color: "inherit", font: "inherit", cursor: "pointer" }
+            },
+            React.createElement(
+              "div",
+              { style: { display: "flex", gap: "8px", alignItems: "baseline" } },
+              React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontVariantNumeric: "tabular-nums", flex: "0 0 auto" } }, node.occurredAt ? formatDate(node.occurredAt).slice(5) : ""),
+              React.createElement("span", { style: { fontSize: "12px", fontWeight: "600", minWidth: 0, overflow: "hidden", textOverflow: open ? "clip" : "ellipsis", whiteSpace: open ? "normal" : "nowrap" } }, node.label || node.sessionId)
+            ),
+            open && (showDetail || fileList.length) ? React.createElement(
+              "div",
+              { style: { marginTop: "8px" } },
+              showDetail ? React.createElement("div", {
+                "data-graph-detail": "1",
+                style: {
+                  fontSize: "12px",
+                  lineHeight: 1.6,
+                  color: "var(--dsw-alias-label-secondary)",
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  maxHeight: "220px",
+                  overflowY: "auto"
+                }
+              }, node.detail) : null,
+              fileList.length ? React.createElement(
+                "div",
+                { style: { marginTop: showDetail ? "6px" : "0", display: "flex", flexWrap: "wrap", gap: "4px" } },
+                fileList.map((f) => React.createElement("span", {
+                  key: f,
+                  style: { fontFamily: "monospace", fontSize: "10px", padding: "2px 6px", borderRadius: "6px", background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-l1)" }
+                }, f)),
+                node.filesMore ? React.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, t("graph.filesMore", { n: node.filesMore })) : null
+              ) : null
+            ) : !open && fileList.length ? React.createElement(
+              "div",
+              { style: { marginTop: "4px", fontSize: "10px", color: "var(--dsw-alias-label-secondary)", fontFamily: "monospace" } },
+              fileList[0] + (node.filesMore ? " " + t("graph.filesMore", { n: node.filesMore }) : fileList.length > 1 ? " +" + (fileList.length - 1) : "")
+            ) : null
+          ));
+        });
+        const toolbar = [];
+        if (g.collapsedEmptyCount > 0) {
+          toolbar.push(React.createElement("span", { key: "collapsed", style: { fontSize: "10px", color: "var(--dsw-alias-label-secondary)" } }, t("graph.collapsed", { n: g.collapsedEmptyCount })));
+        }
+        if (g.hiddenCount > 0) {
+          toolbar.push(React.createElement("button", {
+            key: "expand",
+            type: "button",
+            onClick: () => setExpandAll(!expandAll),
+            style: { fontSize: "10px", padding: "2px 7px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l1)", background: "transparent", color: "var(--dsw-alias-label-secondary)", cursor: "pointer", fontFamily: "inherit" }
+          }, expandAll ? t("graph.collapse") : t("graph.expandAll")));
+        }
+        return React.createElement(
+          "section",
+          {
+            "data-block": "session-graph",
+            style: { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)" }
+          },
+          React.createElement(
+            "div",
+            { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", flexWrap: "wrap" } },
+            React.createElement("h3", { style: Object.assign({}, sectionTitleStyle, { margin: 0, flex: "1 1 auto" }) }, "\u2387 " + t("graph.title")),
+            toolbar
+          ),
+          items
+        );
+      }
       function DashboardSection({ data, t, localeCode, sessionId, connection, onPreviewUpdate }) {
         const p = data.project || {};
         const todos = data.todos || [];
@@ -4668,25 +4843,35 @@
             { style: { padding: "12px" }, "data-dashboard-panel": activeTab },
             activeTab === "overview" ? React.createElement(
               "div",
-              { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
-              dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + devopsChips.length + toolingChips.length + structureChips.length + extraChips.length > 0 ? React.createElement(
+              { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+              React.createElement(BriefingBlock, { briefing: data.briefing, t, localeCode }),
+              React.createElement(
                 "div",
-                { style: { display: "flex", flexDirection: "column", gap: "6px" } },
-                techChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px" } }, techChips) : null,
-                extraChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, extraChips) : null,
-                devopsChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, devopsChips) : null,
-                structureChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, structureChips) : null,
-                toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, toolingChips) : null
-              ) : emptyNode),
-              dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
-              dashSection("\u{1F6AA}", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode)
+                { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "10px" } },
+                dashSection("\u{1F6E0}\uFE0F", "dash.tech", techChips.length + devopsChips.length + toolingChips.length + structureChips.length + extraChips.length > 0 ? React.createElement(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+                  techChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px" } }, techChips) : null,
+                  extraChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, extraChips) : null,
+                  devopsChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, devopsChips) : null,
+                  structureChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "2px" } }, structureChips) : null,
+                  toolingChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px", marginTop: "4px", paddingTop: "6px", borderTop: "1px dashed var(--dsw-alias-border-l1)" } }, toolingChips) : null
+                ) : emptyNode),
+                dashSection("\u{1F5C2}\uFE0F", "codegraph.langs", langChips.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, langChips) : emptyNode),
+                dashSection("\u{1F6AA}", "dash.entry", entryItems.length > 0 ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px" } }, entryItems) : emptyNode)
+              )
             ) : null,
             activeTab === "architecture" ? React.createElement(ArchitectureGraphBlock, { data, t, embedded: true, onRescan: runArchRescan }) : null,
             activeTab === "work" ? React.createElement(
               "div",
-              { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },
-              dashSection("\u{1F4CB}", "dash.todo", todoNode),
-              dashSection("\u{1F4C5}", "dash.timeline", timelineNode)
+              { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+              React.createElement(SessionGraphBlock, { graph: data.sessionGraph, t }),
+              React.createElement(
+                "div",
+                { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px", alignItems: "start" } },
+                dashSection("\u{1F4CB}", "dash.todo", todoNode),
+                dashSection("\u{1F4C5}", "dash.timeline", timelineNode)
+              )
             ) : null,
             activeTab === "knowledge" ? dashSection("\u{1F9E0}", "dash.memory", memoryNode) : null,
             activeTab === "git" ? React.createElement(GitTab, { gitInfo, t, onRefresh: refreshGit, autoRefresh: gitAutoRefresh, onToggleAutoRefresh: (v) => {

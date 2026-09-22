@@ -4069,8 +4069,56 @@ async function buildArchitecture({ fs, projectPath, scan, previous, config = {},
     return local;
   }
 }
-function architectureRelevantFiles(files) {
-  return (files || []).some((file) => !isGeneratedOrVendor(file) && (SOURCE_EXTENSIONS.test(file) || MANIFEST_NAMES.test(String(file).split("/").pop()) || README_NAMES.test(String(file).split("/").pop())));
+var LOCK_NAMES = /^(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb|cargo\.lock|go\.sum|composer\.lock|poetry\.lock)$/i;
+var CHANGELOG_NAMES = /^changelog(?:\.[a-z0-9]+)?$/i;
+function fileNameOf(file) {
+  return String(file || "").replaceAll("\\", "/").split("/").pop() || "";
+}
+function isTestPath(file) {
+  const path7 = String(file || "").replaceAll("\\", "/");
+  return /(?:^|\/)(?:test|tests|__tests__|spec|specs)(?:\/|$)/i.test(path7) || /\.(?:test|spec)\./i.test(path7);
+}
+function sourceChangeFiles(files) {
+  return (files || []).some((file) => !isGeneratedOrVendor(file) && SOURCE_EXTENSIONS.test(file));
+}
+var ENTRY_BASENAMES = /^(?:index|main|app|server|mod|lib|__init__|__main__)$/i;
+function normalizeTriggerPath(file) {
+  return String(file || "").replaceAll("\\", "/").replace(/^\.\//, "");
+}
+function entrypointPathSet(entrypoints) {
+  const set = /* @__PURE__ */ new Set();
+  for (const item of entrypoints || []) {
+    const raw = typeof item === "string" ? item : item && item.path;
+    const type = item && typeof item === "object" ? String(item.type || "") : "";
+    if (type === "script") continue;
+    const path7 = normalizeTriggerPath(raw);
+    if (!path7 || /\s/.test(path7) && !path7.includes("/")) continue;
+    set.add(path7.toLowerCase());
+  }
+  return set;
+}
+function architectureTriggerFiles(files, options = {}) {
+  const entrypoints = entrypointPathSet(options && options.entrypoints);
+  const structural = /* @__PURE__ */ new Set();
+  for (const change of options && options.changes || []) {
+    const type = change && change.type;
+    if (type !== "added" && type !== "removed") continue;
+    const path7 = normalizeTriggerPath(change && change.path);
+    if (path7) structural.add(path7.toLowerCase());
+  }
+  const candidates = files && files.length ? files : (options && options.changes || []).map((c) => c && c.path);
+  return (candidates || []).some((file) => {
+    if (!file || isGeneratedOrVendor(file) || isTestPath(file)) return false;
+    const path7 = normalizeTriggerPath(file);
+    const name2 = fileNameOf(path7);
+    if (README_NAMES.test(name2) || LOCK_NAMES.test(name2) || CHANGELOG_NAMES.test(name2)) return false;
+    if (MANIFEST_NAMES.test(name2) || /^cordis\.patch\.ya?ml$/i.test(name2)) return true;
+    if (entrypoints.has(path7.toLowerCase())) return true;
+    if (!SOURCE_EXTENSIONS.test(path7)) return false;
+    if (ENTRY_BASENAMES.test(name2.replace(/\.[^.]+$/, ""))) return true;
+    if (structural.has(path7.toLowerCase())) return true;
+    return false;
+  });
 }
 
 // src/host/scan-and-write.js
@@ -4188,10 +4236,10 @@ function memoryScore(m, now) {
   const nowMs = now != null ? now : Date.now();
   const importance = typeof m.importance === "number" ? m.importance : 0.5;
   const created = m.createdAt || 0;
-  const ageDays = Math.max(0, (nowMs - created) / 864e5);
-  let recency = 1 - ageDays / 90;
+  const ageDays2 = Math.max(0, (nowMs - created) / 864e5);
+  let recency = 1 - ageDays2 / 90;
   if (recency < 0) recency = 0;
-  if (ageDays <= 7) recency = 1;
+  if (ageDays2 <= 7) recency = 1;
   const typeBoost = HIGH_VALUE_MEMORY_TYPES[m.type] ? 1 : 0.5;
   return importance * 0.5 + recency * 0.3 + typeBoost * 0.2;
 }
@@ -4316,6 +4364,20 @@ function resolveWritePolicy2(sandboxPolicy) {
   }
   return sandboxPolicy;
 }
+async function markArchitectureStale(fs, sandboxPolicy, projectPath, stale) {
+  try {
+    assertSafeProjectPath(projectPath);
+    const target = brainPath2(projectPath, "project.json");
+    const project = await readJson(fs, target);
+    if (!project || project.__error) return false;
+    if (Boolean(project.architectureStale) === Boolean(stale)) return true;
+    project.architectureStale = Boolean(stale);
+    project.updatedAt = Date.now();
+    return Boolean(await writeJson(fs, target, project, resolveWritePolicy2(sandboxPolicy)));
+  } catch (e) {
+    return false;
+  }
+}
 function emitPreviewChanged(exec, projectPath) {
   try {
     const executor = exec && exec.ctx || null;
@@ -4372,8 +4434,10 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
   } catch (e) {
   }
   const architectureConfig = runtime.getMemoryConfig ? runtime.getMemoryConfig() : {};
+  const architectureMode = runtime && runtime.architectureMode || "full";
+  const skipArchitecture = architectureMode === "light" || architectureMode === "none";
   let architecture = null;
-  if (architectureConfig.architectureEnabled !== false) {
+  if (!skipArchitecture && architectureConfig.architectureEnabled !== false) {
     try {
       architecture = await buildArchitecture({
         fs,
@@ -4410,7 +4474,8 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
     directoryMap: existing && existing.directoryMap || [],
     createdAt: isRescan ? existing.createdAt : now,
     updatedAt: now,
-    lastScannedAt: now
+    lastScannedAt: now,
+    architectureStale: skipArchitecture ? Boolean(existing && existing.architectureStale) : Boolean(architecture && architecture.error)
   };
   if (!dryRun) {
     const writePolicy = resolveWritePolicy2(sandboxPolicy);
@@ -4436,7 +4501,10 @@ async function scanAndWrite(fs, sandboxPolicy, args, toolLabel, runtime = {}) {
         title: isRescan ? "\u5B8C\u6210\u91CD\u626B\uFF08" + toolLabel + "\uFF09" : "\u5B8C\u6210 project_init \u626B\u63CF",
         eventType: isRescan ? "rescan" : "init",
         occurredAt: now,
-        detail: "languages=" + (Object.keys(scan.languages).join("/") || "none") + " files=" + scan.fileCount + (architecture && !architecture.error ? " modules=" + architecture.stats.modules + " edges=" + architecture.stats.edges + " architecture=" + architecture.source : "")
+        architectureMode,
+        sessionId: runtime.sessionId || null,
+        triggerFiles: Array.isArray(runtime.triggerFiles) ? runtime.triggerFiles.slice(0, 20) : void 0,
+        detail: "languages=" + (Object.keys(scan.languages).join("/") || "none") + " files=" + scan.fileCount + " architectureMode=" + architectureMode + (architecture && !architecture.error ? " modules=" + architecture.stats.modules + " edges=" + architecture.stats.edges + " architecture=" + architecture.source : "")
       }, writePolicy);
     } catch (e) {
     }
@@ -5751,8 +5819,10 @@ function renderTodoUpdate(value) {
 init_brain_files();
 import { defineTool as defineTool5 } from "@deepseek-ai/dsh-tools";
 
-// src/host/memory/inject-context.js
+// src/host/memory/briefing.js
 var SUMMARY_MAX_TOKENS = 400;
+var STUCK_LIMIT = 3;
+var START_HERE_LIMIT = 5;
 function truncateSummaryToTokens(text, maxTokens) {
   const raw = String(text || "").trim();
   if (!raw) return "";
@@ -5774,39 +5844,218 @@ function truncateSummaryToTokens(text, maxTokens) {
   }
   return acc.replace(/\s+$/, "") + suffix;
 }
-function latestDisposedSessionSummary(timeline) {
-  const summaries = (timeline || []).filter((e) => e && e.eventType === "session_summary" && e.summary && String(e.summary).trim()).sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
-  return summaries.length ? String(summaries[0].summary).trim() : "";
+function qualifiedSummary(text) {
+  const summary = String(text || "").trim();
+  if (!summary) return "";
+  if (isChangelogGenre("", summary) || isChangelogGenre(summary, summary)) return "";
+  return summary;
 }
-function renderTechStack(techStack) {
-  if (!techStack || typeof techStack !== "object") return "";
-  const parts = [];
-  for (const [k, v] of Object.entries(techStack)) {
-    if (Array.isArray(v)) {
-      if (v.length) parts.push(k + "=" + v.join("/"));
-    } else if (v) {
-      parts.push(k + "=" + v);
-    }
+function latestQualifiedSummaryEvent(timeline) {
+  const summaries = (timeline || []).filter((e) => e && e.eventType === "session_summary").map((e) => Object.assign({}, e, { summary: qualifiedSummary(e.summary) })).filter((e) => e.summary).sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+  return summaries.length ? summaries[0] : null;
+}
+function isArchitectureStale(brain) {
+  if (!brain) return false;
+  if (brain.architectureStale === true) return true;
+  if (brain.architecture && brain.architecture.stale === true) return true;
+  if (brain.project && brain.project.architectureStale === true) return true;
+  return false;
+}
+function keyFilePaths(architecture) {
+  const list = architecture && architecture.keyFiles || [];
+  return list.map((item) => {
+    if (typeof item === "string") return item.replace(/\\/g, "/");
+    return String(item && item.path || "").replace(/\\/g, "/");
+  }).filter(Boolean);
+}
+function flowEndpointFiles(architecture) {
+  const flows = architecture && architecture.runtimeFlows || [];
+  const out = [];
+  for (const flow of flows) {
+    const steps = flow && flow.steps || [];
+    if (!steps.length) continue;
+    const first = steps[0] && steps[0].file;
+    const last = steps[steps.length - 1] && steps[steps.length - 1].file;
+    if (first) out.push(String(first).replace(/\\/g, "/"));
+    if (last && last !== first) out.push(String(last).replace(/\\/g, "/"));
   }
-  return parts.join(", ");
+  return out;
 }
+function asRelPath(path7) {
+  if (typeof path7 === "string") return path7.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (path7 && typeof path7 === "object") {
+    return String(path7.path || "").replace(/\\/g, "/").replace(/^\.\//, "");
+  }
+  return "";
+}
+function isSourcePath(item) {
+  const p = asRelPath(item);
+  if (!p) return false;
+  const type = item && typeof item === "object" ? String(item.type || "") : "";
+  if (type === "script") return false;
+  if (/^(npm|pnpm|yarn|npx|node)\s/i.test(p)) return false;
+  if (/\s/.test(p) && !/[\\/]/.test(p)) return false;
+  return true;
+}
+function uniquePaths(paths, limit) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const path7 of paths) {
+    const item = typeof path7 === "string" ? { path: path7 } : path7;
+    if (!isSourcePath(item)) continue;
+    const p = asRelPath(item);
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+var DESCRIPTION_PLACEHOLDER = /^auto-generated by dsh-project-brain$/i;
+function purposeLine(brain) {
+  const project = brain.project || {};
+  const overview = brain.architecture && brain.architecture.overview || {};
+  const fromArch = String(overview.purpose || "").trim();
+  const rawDesc = String(project.description || "").replace(/\s+/g, " ").trim();
+  const fromDesc = DESCRIPTION_PLACEHOLDER.test(rawDesc) ? "" : rawDesc;
+  return (fromArch || fromDesc).slice(0, 300);
+}
+function startHere(brain, stale) {
+  const project = brain.project || {};
+  const entries = (Array.isArray(project.entrypoints) ? project.entrypoints : []).filter(isSourcePath);
+  if (stale) return uniquePaths(entries, 2);
+  return uniquePaths(entries.concat(keyFilePaths(brain.architecture), flowEndpointFiles(brain.architecture)), START_HERE_LIMIT);
+}
+function stuckTodos(todos) {
+  const active = activeTodos(todos || []);
+  const inProgress = active.filter((t) => t && t.status === "in_progress");
+  const rest = active.filter((t) => t && t.status !== "in_progress");
+  return inProgress.concat(rest).slice(0, STUCK_LIMIT).map((t) => ({
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    priority: t.priority
+  }));
+}
+var DAY_MS = 864e5;
+var RECENT_WORK_STALE_DAYS = 30;
+function ageDays(at, now) {
+  if (!at) return 0;
+  return Math.max(0, Math.floor((now - at) / DAY_MS));
+}
+function recentWorkAgeLabel(at, now) {
+  if (!at) return "";
+  const days = ageDays(at, now);
+  if (days <= 0) return "\u4ECA\u5929";
+  if (days > RECENT_WORK_STALE_DAYS) return days + " \u5929\u524D\uFF0C\u53EF\u80FD\u5DF2\u8FC7\u65F6";
+  return days + " \u5929\u524D";
+}
+function recentWorkFrom(brain, now) {
+  const event = latestQualifiedSummaryEvent(brain.timeline);
+  const fromSummary = truncateSummaryToTokens(event ? event.summary : "", SUMMARY_MAX_TOKENS);
+  if (fromSummary) {
+    const at = Number(event && event.occurredAt) || 0;
+    return {
+      recentWork: fromSummary,
+      recentWorkSource: "session_summary",
+      recentWorkAt: at,
+      recentWorkStale: Boolean(at) && ageDays(at, now) > RECENT_WORK_STALE_DAYS
+    };
+  }
+  const inProgress = stuckTodos(brain.todos).filter((t) => t.status === "in_progress");
+  if (inProgress.length) {
+    return {
+      recentWork: inProgress.map((t) => "\u8FDB\u884C\u4E2D " + t.title).join("\uFF1B"),
+      recentWorkSource: "todo",
+      recentWorkAt: 0,
+      recentWorkStale: false
+    };
+  }
+  return { recentWork: "", recentWorkSource: "none", recentWorkAt: 0, recentWorkStale: false };
+}
+function briefingMarkdown({ stale, purpose, startHere: files, recentWork, recentWorkAt, now }) {
+  const lines = [];
+  lines.push("### \u8FD9\u662F\u4EC0\u4E48");
+  lines.push(purpose || "\uFF08\u6682\u65E0\u9879\u76EE\u5B9A\u4F4D\uFF0C\u91CD\u626B\u53EF\u7531\u67B6\u6784\u5206\u6790\u8865\u5168\uFF09");
+  lines.push("");
+  lines.push("### \u6700\u8FD1\u505A\u4EC0\u4E48");
+  if (recentWork) {
+    const age = recentWorkAgeLabel(recentWorkAt, now);
+    lines.push(recentWork.replace(/\n+/g, " ") + (age ? "\uFF08" + age + "\uFF09" : ""));
+  } else {
+    lines.push("\uFF08\u6682\u65E0\u4F1A\u8BDD\u6458\u8981\uFF09");
+  }
+  lines.push("");
+  lines.push("### \u4ECE\u54EA\u6539");
+  if (stale) lines.push("\u67B6\u6784\u53EF\u80FD\u8FC7\u671F\uFF0C\u5173\u952E\u6587\u4EF6\u6309\u626B\u63CF\u5165\u53E3\u964D\u7EA7\u3002");
+  if (files.length) {
+    for (const f of files) lines.push("- " + f);
+  } else {
+    lines.push("- \uFF08\u6682\u65E0\u5165\u53E3\uFF09");
+  }
+  return lines.join("\n");
+}
+function buildProjectBriefing(brain, now = Date.now()) {
+  if (!brain || !brain.project || brain.project.__error) {
+    return {
+      stale: false,
+      purpose: "",
+      startHere: [],
+      stuck: [],
+      recentWork: "",
+      recentWorkSource: "none",
+      recentWorkAt: 0,
+      recentWorkStale: false,
+      markdown: ""
+    };
+  }
+  const stale = isArchitectureStale(brain);
+  const purpose = purposeLine(brain);
+  const files = startHere(brain, stale);
+  const stuck = stuckTodos(brain.todos);
+  const recent = recentWorkFrom(brain, now);
+  const markdown = briefingMarkdown({
+    stale,
+    purpose,
+    startHere: files,
+    recentWork: recent.recentWork,
+    recentWorkAt: recent.recentWorkAt,
+    now
+  });
+  return {
+    stale,
+    purpose,
+    startHere: files,
+    stuck,
+    recentWork: recent.recentWork,
+    recentWorkSource: recent.recentWorkSource,
+    recentWorkAt: recent.recentWorkAt,
+    recentWorkStale: recent.recentWorkStale,
+    markdown
+  };
+}
+
+// src/host/memory/inject-context.js
 function buildInjectionContext(brain) {
   if (!brain || !brain.project || brain.project.__error) return "";
-  const project = brain.project;
+  const briefing = buildProjectBriefing(brain);
   const memories = (brain.memories || []).filter(isCoreMemory).slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-  const todos = activeTodos(brain.todos || []);
-  const lastSummary = truncateSummaryToTokens(latestDisposedSessionSummary(brain.timeline), SUMMARY_MAX_TOKENS);
   const lines = [];
   lines.push("## Project Brain");
   lines.push("");
-  lines.push("### \u9879\u76EE\u6982\u51B5");
-  lines.push("- \u540D\u79F0: " + (project.name || "(\u672A\u547D\u540D)"));
-  const type = project.type || techStackToType(project.techStack);
-  if (type) lines.push("- \u7C7B\u578B: " + type);
-  const ts = renderTechStack(project.techStack);
-  if (ts) lines.push("- \u6280\u672F\u6808: " + ts);
-  if (project.description) lines.push("- \u7B80\u4ECB: " + String(project.description).slice(0, 300));
-  lines.push("");
+  if (briefing.markdown) {
+    lines.push(briefing.markdown);
+    lines.push("");
+  }
+  const stuck = Array.isArray(briefing.stuck) ? briefing.stuck : [];
+  if (stuck.length > 0) {
+    lines.push("### \u6D3B\u8DC3\u5F85\u529E");
+    for (const todo of stuck) {
+      const status = todo.status === "in_progress" ? "\u8FDB\u884C\u4E2D" : todo.status === "blocked" ? "\u963B\u585E" : "\u5F85\u529E";
+      lines.push("- [" + status + "] " + todo.title);
+    }
+    lines.push("");
+  }
   if (memories.length > 0) {
     lines.push("### Core \u8BB0\u5FC6");
     for (const m of memories) {
@@ -5815,20 +6064,6 @@ function buildInjectionContext(brain) {
       if (m.content) {
         lines.push("  " + String(m.content).replace(/\n+/g, " "));
       }
-    }
-    lines.push("");
-  }
-  if (lastSummary) {
-    lines.push("### \u4E0A\u6B21\u4F1A\u8BDD");
-    lines.push("> " + lastSummary.replace(/\n+/g, " "));
-    lines.push("");
-  }
-  if (todos.length > 0) {
-    lines.push("### \u6D3B\u8DC3 TODO");
-    for (const t of todos.slice(0, 12)) {
-      const prio = t.priority ? "[" + t.priority + "] " : "";
-      const status = t.status === "in_progress" ? "\u23F3 " : "";
-      lines.push("- " + status + prio + t.title);
     }
     lines.push("");
   }
@@ -6344,8 +6579,8 @@ function normalizeScoreMap(map) {
 }
 function recencyScore(memory, now) {
   const created = memory.updatedAt || memory.createdAt || 0;
-  const ageDays = Math.max(0, (now - created) / 864e5);
-  return ageDays <= 7 ? 1 : Math.max(0, 1 - ageDays / 180);
+  const ageDays2 = Math.max(0, (now - created) / 864e5);
+  return ageDays2 <= 7 ? 1 : Math.max(0, 1 - ageDays2 / 180);
 }
 function tokenJaccard(a, b) {
   const aa = new Set(tokenizeMemoryText(memoryDocument(a)));
@@ -8663,8 +8898,425 @@ function renderRollback(_args, value) {
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import path5 from "node:path";
 init_brain_files();
+
+// src/host/memory/session-graph.js
+var FILE_SHOW = 5;
+var THIN_AFTER = 40;
+var KEEP_RECENT = 20;
+var DETAIL_MAX_CHARS = 900;
+var NO_SUMMARY_LABEL = "\u4EE3\u7801\u6709\u53D8\u66F4\uFF08\u65E0\u6458\u8981\uFF09";
+var INIT_LABEL = "\u9879\u76EE\u521D\u59CB\u5316";
+function qualifiedSummary2(text) {
+  const summary = String(text || "").trim();
+  if (!summary) return "";
+  if (isChangelogGenre("", summary) || isChangelogGenre(summary, summary)) return "";
+  return summary;
+}
+function firstSentence(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  const versions = [];
+  const masked = raw.replace(/\bv?\d+(?:\.\d+)+\b/gi, (m) => {
+    versions.push(m);
+    return "" + (versions.length - 1) + "";
+  });
+  const parts = masked.split(/(?<=[。！？.!?])\s*/).filter(Boolean);
+  const first = (parts[0] || masked).trim();
+  return first.replace(/\u0001(\d+)\u0001/g, (_, i) => versions[Number(i)] || "");
+}
+var PATCH_TONE = /(?:\bpatch\b|\bhotfix\b|\brelease[-\s]?(?:fix|notes)?\b|\bfix(?:es|ed)?\b|修复|补丁|发版|验收|改动说明|变更说明)/i;
+function isVersionLedTitle(text) {
+  const t = String(text || "").trim();
+  const m = t.match(/^v?\d+(?:\.\d+)+\b(.*)$/i);
+  if (!m) return false;
+  const rest = String(m[1] || "").trim();
+  if (!rest) return true;
+  return PATCH_TONE.test(rest);
+}
+function isWeakGraphTitle(text) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  if (isChangelogGenre("", t) || isChangelogGenre(t, t)) return true;
+  if (isVersionLedTitle(t)) return true;
+  return false;
+}
+function usableTitleLabel(text) {
+  if (isWeakGraphTitle(text)) return "";
+  const sentence = firstSentence(text);
+  const trimmed = String(sentence || "").trim();
+  if (!trimmed) return "";
+  if (/^v?\d+\.$/i.test(trimmed) || /v0\.$/.test(trimmed)) return "";
+  return trimmed;
+}
+function normalizeText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+function stripMarkdown(text) {
+  let out = String(text || "");
+  out = out.replace(/```[\s\S]*?```/g, " ");
+  out = out.replace(/^\s{0,3}#{1,6}\s+/gm, "");
+  out = out.replace(/^\s{0,3}>\s?/gm, "");
+  out = out.replace(/^\s{0,3}(?:[-*+]|\d+[.)])\s+/gm, "");
+  out = out.replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gm, " ");
+  out = out.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+  out = out.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  out = out.replace(/`+([^`]*)`+/g, "$1");
+  out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
+  out = out.replace(/(?<![\w*])\*([^*\n]+)\*(?!\w)/g, "$1");
+  out = out.replace(/(?<![\w_])__([^_]+)__(?![\w_])/g, "$1");
+  out = out.replace(/~~([^~]+)~~/g, "$1");
+  return normalizeText(out);
+}
+function clipDetail(text, limit) {
+  const raw = normalizeText(text);
+  if (raw.length <= limit) return raw;
+  const head = raw.slice(0, limit);
+  const lastStop = Math.max(
+    head.lastIndexOf("\u3002"),
+    head.lastIndexOf("\uFF01"),
+    head.lastIndexOf("\uFF1F"),
+    head.lastIndexOf("\uFF1B"),
+    head.lastIndexOf("."),
+    head.lastIndexOf("!"),
+    head.lastIndexOf("?")
+  );
+  const cut = lastStop >= limit * 0.6 ? head.slice(0, lastStop + 1) : head.replace(/\s+\S*$/, "");
+  return (cut || head).replace(/\s+$/, "") + "\u2026";
+}
+function restAfterFirstSentence(text) {
+  const raw = String(text || "").trim();
+  const first = firstSentence(raw);
+  if (!first || raw === first) return "";
+  if (raw.startsWith(first)) return raw.slice(first.length).trim();
+  return "";
+}
+function bodyWithoutTitle(content, title, label) {
+  let c = String(content || "").trim();
+  for (const head of [title, label]) {
+    const h = String(head || "").trim();
+    if (!h) continue;
+    if (normalizeText(c) === normalizeText(h)) return "";
+    if (c.startsWith(h)) c = c.slice(h.length).replace(/^[\s:：.\-—]+/, "").trim();
+  }
+  return c;
+}
+function pickDetail(g, label, summary) {
+  const rest = restAfterFirstSentence(summary);
+  if (rest && normalizeText(rest) !== normalizeText(label)) {
+    return clipDetail(stripMarkdown(rest), DETAIL_MAX_CHARS);
+  }
+  const lab = String(label || "").trim();
+  const details = (g.details || []).slice().sort((a, b) => {
+    const score = (d) => usableTitleLabel(d.title) === lab || d.title === lab ? 1 : 0;
+    return score(b) - score(a);
+  });
+  for (const d of details) {
+    const body = stripMarkdown(bodyWithoutTitle(d.content, d.title, label));
+    if (!body) continue;
+    return clipDetail(body, DETAIL_MAX_CHARS);
+  }
+  return "";
+}
+var SKIP_EVENT_TYPES = /* @__PURE__ */ new Set(["rescan", "export", "import", "rollback"]);
+var SUBSTANTIVE_EVENT_TYPES = /* @__PURE__ */ new Set(["session_summary", "todo", "todo_update", "memory", "memory_supersede"]);
+function dayKey(ts) {
+  const n = Number(ts) || 0;
+  if (!n) return "";
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (x) => x < 10 ? "0" + x : "" + x;
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function parseTodoId(event) {
+  if (event && event.todoId) return String(event.todoId);
+  const detail = String(event && event.detail || "");
+  const fromDetail = detail.match(/(?:todoId|id)=(todo-[A-Za-z0-9._:-]+|[A-Za-z0-9._:-]+)/);
+  if (fromDetail) return fromDetail[1];
+  const title = String(event && event.title || "");
+  const fromTitle = title.match(/\[(todo-[^\]]+)\]/);
+  return fromTitle ? fromTitle[1] : "";
+}
+function isTodoDone(event) {
+  if (event && event.todoStatus === "done") return true;
+  if (/status=done/.test(String(event && event.detail || ""))) return true;
+  return /^完成待办/.test(String(event && event.title || ""));
+}
+function displayTitle(event) {
+  let title = String(event && event.title || "").trim();
+  title = title.replace(/^新增记忆\[[^\]]+\]：/, "");
+  title = title.replace(/^新增待办(?:\[[^\]]+\])?：/, "");
+  title = title.replace(/^完成待办(?:\[[^\]]+\])?：/, "");
+  title = title.replace(/^更新待办\[[^\]]+\]：/, "");
+  return title.trim();
+}
+function sessionKey(event) {
+  if (event && event.sessionId) return String(event.sessionId);
+  if (event && event.eventType === "init") return "init";
+  if (!event || SKIP_EVENT_TYPES.has(event.eventType)) return "";
+  if (SUBSTANTIVE_EVENT_TYPES.has(event.eventType)) {
+    const day = dayKey(event.occurredAt);
+    return day ? "day:" + day : "";
+  }
+  return "";
+}
+function looksLikePath(token) {
+  const t = String(token || "").trim();
+  if (!t || /^\d+$/.test(t)) return false;
+  return t.includes("/") || /\.[A-Za-z0-9]{1,8}$/.test(t);
+}
+function parseFiles(event) {
+  if (Array.isArray(event && event.files)) {
+    return event.files.map((f) => String(f).replace(/\\/g, "/")).filter(looksLikePath);
+  }
+  const detail = String(event && event.detail || "");
+  const m = detail.match(/\bfiles=([^\s]+)/);
+  if (!m) return [];
+  return m[1].split(",").map((f) => f.trim()).filter(looksLikePath);
+}
+function parseTriggerFiles(event) {
+  if (Array.isArray(event && event.triggerFiles)) {
+    return event.triggerFiles.map((f) => String(f).replace(/\\/g, "/")).filter(Boolean);
+  }
+  return [];
+}
+function intersect(a, b) {
+  const set = new Set(b);
+  return a.some((x) => set.has(x));
+}
+function buildSessionGraph(brain) {
+  const timeline = Array.isArray(brain && brain.timeline) ? brain.timeline.filter(Boolean) : [];
+  const memories = Array.isArray(brain && brain.memories) ? brain.memories.filter(Boolean) : [];
+  const groups = /* @__PURE__ */ new Map();
+  function bucket(sessionId) {
+    if (!sessionId) return null;
+    let g = groups.get(sessionId);
+    if (!g) {
+      g = {
+        sessionId,
+        occurredAt: 0,
+        summaries: [],
+        files: [],
+        titles: [],
+        details: [],
+        todoIds: /* @__PURE__ */ new Set(),
+        todoOpened: /* @__PURE__ */ new Set(),
+        todoDone: /* @__PURE__ */ new Set(),
+        hasMemory: false,
+        triggerFiles: [],
+        architectureFull: false
+      };
+      groups.set(sessionId, g);
+    }
+    return g;
+  }
+  for (const event of timeline) {
+    const sid = sessionKey(event);
+    const g = bucket(sid);
+    if (!g) continue;
+    const at = Number(event.occurredAt) || 0;
+    if (at && (!g.occurredAt || at < g.occurredAt)) g.occurredAt = at;
+    if (at > (g.latestAt || 0)) g.latestAt = at;
+    const files = parseFiles(event);
+    for (const f of files) if (!g.files.includes(f)) g.files.push(f);
+    if (event.eventType === "session_summary") {
+      const q = qualifiedSummary2(event.summary);
+      if (q) g.summaries.push({ text: q, occurredAt: at });
+    }
+    if (event.eventType === "todo" || event.eventType === "todo_update") {
+      const id = parseTodoId(event);
+      if (id) {
+        g.todoIds.add(id);
+        if (isTodoDone(event)) g.todoDone.add(id);
+        else g.todoOpened.add(id);
+      }
+      const todoTitle = displayTitle(event);
+      if (todoTitle) g.titles.push(todoTitle);
+    }
+    if (event.eventType === "memory" || event.eventType === "memory_supersede") {
+      const memTitle = displayTitle(event);
+      if (memTitle && !isWeakGraphTitle(memTitle)) {
+        g.hasMemory = true;
+        g.titles.push(memTitle);
+      }
+    }
+    if (event.eventType === "rescan" || event.architectureMode === "full") {
+      const triggers = parseTriggerFiles(event);
+      g.triggerFiles = g.triggerFiles.concat(triggers);
+      if (event.architectureMode === "full" || /architecture=/.test(String(event.detail || ""))) g.architectureFull = true;
+    }
+  }
+  for (const m of memories) {
+    if (!m) continue;
+    const weak = isWeakGraphTitle(String(m.title || "")) || isChangelogGenre(String(m.title || ""), String(m.content || m.title || ""));
+    let sid = m && m.source && m.source.sessionId ? String(m.source.sessionId) : "";
+    if (!sid) {
+      if (weak) continue;
+      const day = dayKey(m.createdAt || m.updatedAt);
+      sid = day ? "day:" + day : "";
+    }
+    const g = bucket(sid);
+    if (!g) continue;
+    const at = Number(m.createdAt || m.updatedAt) || 0;
+    if (!weak) {
+      g.hasMemory = true;
+      if (m.title) g.titles.push(String(m.title));
+      const content = String(m.content || "").trim();
+      if (content) g.details.push({ title: String(m.title || ""), content, occurredAt: at });
+    }
+    if (at && (!g.occurredAt || at < g.occurredAt)) g.occurredAt = at;
+    if (at > (g.latestAt || 0)) g.latestAt = at;
+  }
+  let collapsedEmptyCount = 0;
+  const trunk = [];
+  for (const g of groups.values()) {
+    g.summaries.sort((a, b) => (b.occurredAt || 0) - (a.occurredAt || 0));
+    const summary = g.summaries.length ? g.summaries[0].text : "";
+    const hasFiles = g.files.length > 0;
+    const hasTodo = g.todoIds.size > 0;
+    const trunkOk = Boolean(summary || hasFiles || hasTodo || g.hasMemory || g.sessionId === "init");
+    if (!trunkOk) {
+      collapsedEmptyCount += 1;
+      continue;
+    }
+    let label = firstSentence(summary);
+    let labelFromSummary = Boolean(label);
+    if (!label) {
+      for (const t of g.titles || []) {
+        const titled = usableTitleLabel(t);
+        if (titled) {
+          label = titled;
+          break;
+        }
+      }
+    }
+    if (!label && g.sessionId === "init") label = INIT_LABEL;
+    if (!label && hasFiles) label = NO_SUMMARY_LABEL;
+    if (!label) label = firstSentence(summary) || g.sessionId;
+    const detail = pickDetail(g, label, summary);
+    const files = g.files.slice(0, FILE_SHOW);
+    trunk.push({
+      id: g.sessionId,
+      sessionId: g.sessionId,
+      occurredAt: g.latestAt || g.occurredAt || 0,
+      label,
+      detail,
+      files,
+      filesMore: Math.max(0, g.files.length - files.length),
+      important: Boolean(labelFromSummary || hasFiles || g.todoDone.size || g.architectureFull),
+      trunk: true,
+      hidden: false,
+      _todoOpened: g.todoOpened,
+      _todoDone: g.todoDone,
+      _allFiles: g.files,
+      _triggerFiles: g.triggerFiles,
+      _architectureFull: g.architectureFull,
+      _labelFromSummary: labelFromSummary
+    });
+  }
+  trunk.sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0));
+  const edges = [];
+  for (let i = 1; i < trunk.length; i++) {
+    edges.push({ from: trunk[i - 1].id, to: trunk[i].id, kind: "time", reason: "time" });
+  }
+  const byId = new Map(trunk.map((n) => [n.id, n]));
+  const doneAt = /* @__PURE__ */ new Map();
+  trunk.forEach((node, index) => {
+    for (const todoId of node._todoDone) {
+      if (!doneAt.has(todoId)) doneAt.set(todoId, []);
+      doneAt.get(todoId).push(index);
+    }
+  });
+  trunk.forEach((node, index) => {
+    for (const todoId of node._todoOpened) {
+      for (const j of doneAt.get(todoId) || []) {
+        if (j > index) edges.push({ from: node.id, to: trunk[j].id, kind: "evidence", reason: "todo" });
+      }
+    }
+  });
+  for (let i = 1; i < trunk.length; i++) {
+    const prev = trunk[i - 1];
+    const cur = trunk[i];
+    if (!cur._architectureFull) continue;
+    if (intersect(cur._triggerFiles.length ? cur._triggerFiles : cur._allFiles, prev._allFiles)) {
+      edges.push({ from: prev.id, to: cur.id, kind: "evidence", reason: "architecture" });
+    }
+  }
+  for (const m of memories) {
+    const newSid = m && m.source && m.source.sessionId ? String(m.source.sessionId) : "";
+    const oldId = m && (m.source && m.source.supersedes || m.supersedes);
+    if (!newSid || !oldId) continue;
+    const old = memories.find((x) => x && x.id === oldId);
+    const oldSid = old && old.source && old.source.sessionId ? String(old.source.sessionId) : "";
+    if (oldSid && oldSid !== newSid && byId.has(oldSid) && byId.has(newSid)) {
+      edges.push({ from: oldSid, to: newSid, kind: "evidence", reason: "supersede" });
+    }
+  }
+  const seenEdge = /* @__PURE__ */ new Set();
+  const uniqueEdges = [];
+  for (const e of edges) {
+    const key = e.kind + ":" + e.reason + ":" + e.from + "->" + e.to;
+    if (seenEdge.has(key)) continue;
+    seenEdge.add(key);
+    uniqueEdges.push(e);
+  }
+  const evidenceEnds = /* @__PURE__ */ new Set();
+  for (const e of uniqueEdges) {
+    if (e.kind === "evidence") {
+      evidenceEnds.add(e.from);
+      evidenceEnds.add(e.to);
+    }
+  }
+  for (const n of trunk) {
+    n.important = Boolean(n.important || evidenceEnds.has(n.id));
+  }
+  let hiddenCount = 0;
+  if (trunk.length > THIN_AFTER) {
+    const keepFrom = Math.max(0, trunk.length - KEEP_RECENT);
+    trunk.forEach((n, index) => {
+      if (n.important || index >= keepFrom) return;
+      n.hidden = true;
+      hiddenCount += 1;
+    });
+  }
+  const nodes = trunk.map((n) => {
+    const copy = Object.assign({}, n);
+    delete copy._todoOpened;
+    delete copy._todoDone;
+    delete copy._allFiles;
+    delete copy._triggerFiles;
+    delete copy._architectureFull;
+    delete copy._labelFromSummary;
+    delete copy.titles;
+    delete copy.details;
+    return copy;
+  });
+  return {
+    nodes,
+    edges: uniqueEdges,
+    collapsedEmptyCount,
+    hiddenCount
+  };
+}
+
+// src/host/sidebar/aggregator.js
 var CACHE_TTL_MS = 5e3;
 var cache = /* @__PURE__ */ new Map();
+function attachFamiliarity(data, parts) {
+  const project = parts && parts.project || data && data.project || null;
+  const brain = {
+    project,
+    architecture: parts && parts.architecture || data && data.architecture || null,
+    timeline: parts && parts.timeline || data && data.timelineAll || [],
+    memories: parts && parts.memories || data && data.memoriesAll || [],
+    todos: parts && parts.todos || data && data.todos || [],
+    architectureStale: Boolean(project && project.architectureStale)
+  };
+  if (data) {
+    data.briefing = buildProjectBriefing(brain);
+    data.sessionGraph = buildSessionGraph(brain);
+  }
+  return data;
+}
 function invalidateAggregatorCache(projectPath) {
   if (projectPath) {
     cache.delete(projectPath);
@@ -8757,7 +9409,8 @@ function buildSidebarPreview(projectPath) {
         name: p.name,
         type: techStackToType(p.techStack),
         rootPath: p.rootPath || projectPath,
-        lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now()
+        lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now(),
+        architectureStale: Boolean(p.architectureStale)
       },
       phase: derivePhase(p, todos),
       recentActivity: activity.length > 0 ? activity : p.lastScannedAt ? [{
@@ -8775,6 +9428,7 @@ function buildSidebarPreview(projectPath) {
         decisions: visibleMemories.filter((m) => m.type === "decision").length
       }
     };
+    attachFamiliarity(data, { project: p, architecture: architecture && !architecture.__error ? architecture : null, timeline, memories, todos });
   }
   cache.set(projectPath, { ts: Date.now(), data });
   return data;
@@ -8857,7 +9511,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
   const todosActive = activeTodos(todosAll);
   const todosDone = todosAll.filter((t) => t && t.status === "done");
   const todos = todosActive.concat(todosDone).slice(0, 50);
-  return {
+  const preview = {
     generatedAt: Date.now(),
     initialized: true,
     workspaceRoot: root,
@@ -8873,7 +9527,8 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       tooling: p.tooling || [],
       languages: p.languages || {},
       entrypoints: p.entrypoints || [],
-      lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now()
+      lastUpdateAt: p.updatedAt || p.lastScannedAt || Date.now(),
+      architectureStale: Boolean(p.architectureStale)
     },
     phase,
     recentActivity: recentActivity.length > 0 ? recentActivity : p.lastScannedAt ? [{
@@ -8900,6 +9555,8 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       archivedMemories: (Array.isArray(memoriesAll) ? memoriesAll : []).filter((m) => m && (m.status === "archived" || m.status === "superseded" || m.status === "deleted")).length
     }
   };
+  attachFamiliarity(preview, { project: p, architecture, timeline, memories: memoriesAll, todos: todosAll });
+  return preview;
 }
 
 // src/host/settings-probe.js
@@ -10377,8 +11034,152 @@ function setupInjector(ctx, fs, sandboxPolicy) {
 // src/host/summarizer.js
 init_brain_files();
 
+// src/host/diff/session-window.js
+import { existsSync as existsSync4, readdirSync as readdirSync3, statSync } from "node:fs";
+import { join as join3, relative as relative2, sep as sep2 } from "node:path";
+var MAX_WINDOW_MS = 14 * 864e5;
+var MAX_COMMITS = 30;
+var DEFAULT_MAX_FILES = 40;
+function sessionWindowStart(brain, now = Date.now()) {
+  const timeline = Array.isArray(brain && brain.timeline) ? brain.timeline : [];
+  let last = 0;
+  for (const e of timeline) {
+    if (!e || e.eventType !== "session_summary") continue;
+    const at = Number(e.occurredAt) || 0;
+    if (at > last) last = at;
+  }
+  const project = brain && brain.project || {};
+  const fallback = Number(project.lastScannedAt) || Number(project.createdAt) || 0;
+  const picked = last || fallback || now - 864e5;
+  return Math.max(picked, now - MAX_WINDOW_MS);
+}
+function walkWorkTree(projectPath, onFile) {
+  const stack = [projectPath];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync3(dir, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    for (const entry of entries) {
+      const name2 = entry.name;
+      if (WORKTREE_IGNORE_NAMES.has(name2) || WORKTREE_IGNORE_DIRS.has(name2)) continue;
+      if (entry.isSymbolicLink()) continue;
+      const full = join3(dir, name2);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (WORKTREE_IGNORE_SUFFIXES.some((suf) => name2.endsWith(suf))) continue;
+      let rel;
+      try {
+        rel = relative2(projectPath, full).split(sep2).join("/");
+      } catch (e) {
+        continue;
+      }
+      if (!rel || rel.startsWith("..")) continue;
+      onFile(rel, full);
+    }
+  }
+}
+function worktreeChangedSince(projectPath, sinceMs, now) {
+  const out = [];
+  walkWorkTree(projectPath, (rel, full) => {
+    let stat = null;
+    try {
+      stat = statSync(full);
+    } catch (e) {
+      return;
+    }
+    const mtime = stat.mtimeMs;
+    if (!(mtime > sinceMs && mtime <= now + 1e3)) return;
+    const birth = Number(stat.birthtimeMs) || 0;
+    out.push({ path: rel, born: Boolean(birth) && birth > sinceMs && birth <= now + 1e3 });
+  });
+  return out;
+}
+function diffTrees(gitDir, treeHash, parentTreeHash) {
+  const cur = collectTreeFiles(gitDir, treeHash);
+  const par = parentTreeHash ? collectTreeFiles(gitDir, parentTreeHash) : {};
+  const out = [];
+  const seen = /* @__PURE__ */ new Set([...Object.keys(cur), ...Object.keys(par)]);
+  for (const path7 of seen) {
+    const a = cur[path7];
+    const b = par[path7];
+    if (a === b) continue;
+    if (b === void 0) out.push({ path: path7, type: "added" });
+    else if (a === void 0) out.push({ path: path7, type: "removed" });
+    else out.push({ path: path7, type: "modified" });
+  }
+  return out;
+}
+function detectSessionChanges({ projectPath, sinceMs, now = Date.now(), maxFiles = DEFAULT_MAX_FILES }) {
+  const result = {
+    files: [],
+    changes: [],
+    commits: [],
+    windowStart: sinceMs,
+    source: "worktree",
+    truncated: false,
+    error: ""
+  };
+  if (!projectPath) {
+    result.error = "no project path";
+    return result;
+  }
+  const byPath = /* @__PURE__ */ new Map();
+  const note = (path7, type) => {
+    const p = String(path7 || "").replace(/\\/g, "/");
+    if (!p) return;
+    const prev = byPath.get(p);
+    if (!prev || type === "removed" || type === "added" && prev !== "removed") byPath.set(p, type);
+  };
+  const gitDir = join3(projectPath, ".git");
+  let headTreeFiles = null;
+  if (existsSync4(gitDir)) {
+    try {
+      const head = readHead(gitDir);
+      const headCommit = head && head.commit ? readCommitFull(gitDir, head.commit) : null;
+      if (headCommit) {
+        headTreeFiles = collectTreeFiles(gitDir, headCommit.tree);
+        result.source = "git+worktree";
+        let cursor = headCommit;
+        let depth = 0;
+        while (cursor && depth < MAX_COMMITS) {
+          const ts = (Number(cursor.committerTimestamp) || Number(cursor.authorTimestamp) || 0) * 1e3;
+          if (!ts || ts <= sinceMs) break;
+          result.commits.push({ hash: cursor.hash, at: ts, subject: cursor.subject });
+          const parentHash = cursor.parents && cursor.parents[0];
+          const parent = parentHash ? readCommitFull(gitDir, parentHash) : null;
+          for (const change of diffTrees(gitDir, cursor.tree, parent ? parent.tree : null)) {
+            note(change.path, change.type);
+          }
+          cursor = parent;
+          depth += 1;
+        }
+      } else {
+        result.error = "cannot read HEAD commit";
+      }
+    } catch (e) {
+      result.error = String(e && e.message || e);
+    }
+  }
+  for (const item of worktreeChangedSince(projectPath, sinceMs, now)) {
+    const tracked = headTreeFiles ? Object.prototype.hasOwnProperty.call(headTreeFiles, item.path) : !item.born;
+    note(item.path, tracked ? "modified" : "added");
+  }
+  const all = Array.from(byPath.entries()).map(([path7, type]) => ({ path: path7, type })).sort((a, b) => a.path.localeCompare(b.path));
+  result.truncated = all.length > maxFiles;
+  result.changes = all.slice(0, maxFiles);
+  result.files = result.changes.map((c) => c.path);
+  return result;
+}
+
 // src/host/memory/session-extractor.js
-import { isAbsolute, normalize, sep as sep2 } from "node:path";
+import { isAbsolute, normalize, sep as sep3 } from "node:path";
 var ALLOWED_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "context"]);
 function clean(value, limit) {
   return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
@@ -10418,7 +11219,7 @@ function boundedSessionTranscript(session, maxChars = 16e3) {
 function safeRelatedFile(value) {
   const file = clean(value, 240).replace(/\\/g, "/");
   if (!file || isAbsolute(file) || file.startsWith("../") || file === "..") return null;
-  const normalized = normalize(file).split(sep2).join("/");
+  const normalized = normalize(file).split(sep3).join("/");
   return normalized.startsWith("../") || normalized === ".." ? null : normalized;
 }
 function fingerprint(item) {
@@ -10446,7 +11247,7 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     "\u4ECE\u4E0B\u9762\u7684\u8F6F\u4EF6\u5F00\u53D1 Session \u4E2D\u63D0\u53D6\u503C\u5F97\u8DE8\u4F1A\u8BDD\u957F\u671F\u4FDD\u5B58\u7684\u9879\u76EE\u77E5\u8BC6\uFF0C\u5E76\u603B\u7ED3\u672C\u6B21\u4F1A\u8BDD\u505A\u4E86\u4EC0\u4E48\u3002",
     "\u53EA\u4FDD\u7559\u6709\u660E\u786E\u8BC1\u636E\u7684\u67B6\u6784\u51B3\u7B56\u3001\u7A33\u5B9A\u9700\u6C42\u3001Bug \u6839\u56E0\u4E0E\u4FEE\u590D\u3001\u53EF\u590D\u7528\u6559\u8BAD\u3001\u957F\u671F\u95EE\u9898\u6216\u91CD\u8981\u9879\u76EE\u80CC\u666F\u3002",
     "\u5FFD\u7565\u5BD2\u6684\u3001\u4E34\u65F6\u6B65\u9AA4\u3001\u547D\u4EE4\u8F93\u51FA\u3001\u672A\u786E\u8BA4\u731C\u6D4B\u3001\u4E2A\u4EBA\u4FE1\u606F\u3001\u51ED\u636E\uFF1B\u6CA1\u6709\u7A33\u5B9A\u77E5\u8BC6\u65F6 memories \u8FD4\u56DE\u7A7A\u6570\u7EC4\u3002",
-    "summary \u7528 2-4 \u53E5\u8BDD\u5BA2\u89C2\u6982\u62EC\u672C\u6B21\u4F1A\u8BDD\u7684\u5F00\u53D1\u610F\u56FE\u3001\u4E3B\u8981\u52A8\u4F5C\u4E0E\u4EA7\u51FA\uFF08\u4F5C\u4E3A\u4E0B\u4E00\u4E2A Session \u7684\u7EED\u63A5\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u7F16\u9020\uFF09\u3002",
+    "summary \u7528 1\u20133 \u53E5\u8BDD\u5199\u672C\u6B21\u505A\u6210\u4E86\u4EC0\u4E48\u91CD\u8981\u7684\u4EE5\u53CA\u4E3A\u4EC0\u4E48\uFF0C\u4F5C\u4E3A\u4E0B\u4E00\u4E2A Session \u7684\u7EED\u63A5\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u7F16\u9020\u3002\u7981\u6B62\u5199\u6210\u300C\u6539\u4E86 N \u4E2A\u6587\u4EF6\u300D\u3001\u9A8C\u6536\u6E05\u5355\u6216 changelog\u3002",
     `\u6700\u591A ${maxItems} \u6761\u8BB0\u5FC6\u3002\u53EA\u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002`,
     "\u6BCF\u6761\u8BB0\u5FC6\u5FC5\u987B\u5E26 evidence\uFF1A\u539F\u6587\u4E2D\u80FD\u76F4\u63A5\u9A8C\u8BC1\u8BE5\u8BB0\u5FC6\u7684\u8FDE\u7EED\u7247\u6BB5\uFF08\u5EFA\u8BAE 8-60 \u5B57\uFF09\uFF0C\u7528\u4E8E grounding \u6821\u9A8C\u3002",
     "\u5982\u679C\u67D0\u6761\u8BB0\u5FC6\u65E0\u6CD5\u5728\u539F\u6587\u4E2D\u627E\u5230\u5BF9\u5E94\u8BC1\u636E\uFF0C\u8BF7\u964D\u4F4E confidence \u6216\u4E0D\u8F93\u51FA\u3002",
@@ -10570,16 +11371,19 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     log("info", "summarizer: session already summarized, skip " + sessionId);
     return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
   }
+  const windowStart = sessionWindowStart(brain, Date.now());
   let diff;
   try {
-    diff = await detectChanges({ projectPath, since: "1" });
+    diff = detectSessionChanges({ projectPath, sinceMs: windowStart, now: Date.now() });
   } catch (e) {
-    diff = { files: [], stat: "", error: String(e && e.message || e) };
+    diff = { files: [], changes: [], commits: [], stat: "", error: String(e && e.message || e) };
   }
   if (diff.error) {
-    log("info", "summarizer: no git diff (" + diff.error + ")");
+    log("info", "summarizer: session window degraded (" + diff.error + ")");
   }
   const changedFiles = (diff.files || []).filter(Boolean);
+  const changeEntries = Array.isArray(diff.changes) ? diff.changes : [];
+  diff.stat = changedFiles.length ? changedFiles.length + " files changed in session window" : "";
   const fingerprint2 = changedFiles.length ? changeFingerprint(diff) : null;
   const duplicateChange = Boolean(fingerprint2 && (brain.memories || []).some(
     (m) => m && m.source && m.source.kind === "session_summary" && m.source.fingerprint === fingerprint2
@@ -10628,12 +11432,15 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     log("warn", "summarizer: semantic extraction degraded: " + semantic.error);
   }
   if (changedFiles.length > 0) {
-    log("info", `summarizer: git diff noted ${changedFiles.length} files (timeline only, no change memory)`);
+    log("info", `summarizer: session window noted ${changedFiles.length} files (timeline only, no change memory)`);
   } else if (duplicateChange) {
-    log("info", "summarizer: unchanged git window already recorded (" + fingerprint2 + ")");
+    log("info", "summarizer: unchanged window already recorded (" + fingerprint2 + ")");
   } else {
-    log("info", "summarizer: no git diff (non-git repo or no changes)");
+    log("info", "summarizer: no file changes in session window");
   }
+  const rawSummary = String(semantic.summary || "").trim();
+  const summaryRejected = rawSummary && isChangelogGenre("", rawSummary) ? "changelog_genre" : "";
+  const summary = summaryRejected ? "" : rawSummary;
   const timelineEntry = {
     id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
     title: "Session \u6458\u8981\u5B8C\u6210" + (changedFiles.length > 0 ? "\uFF08" + changedFiles.length + " \u6587\u4EF6\u53D8\u66F4\uFF0C" + admittedIds.length + " \u6761\u8BED\u4E49\u8BB0\u5FC6\uFF09" : "\uFF08" + admittedIds.length + " \u6761\u8BED\u4E49\u8BB0\u5FC6\uFF09"),
@@ -10641,7 +11448,11 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     occurredAt: now,
     detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + admittedIds.length + " semanticStatus=" + semantic.status + (changedFiles.length ? " files=" + changedFiles.slice(0, 20).join(",") : ""),
     sessionId: sessionId || null,
-    summary: semantic.summary || "",
+    summary,
+    files: changedFiles.slice(0, 20),
+    changes: changeEntries.slice(0, 20),
+    windowStart,
+    summaryRejected: summaryRejected || void 0,
     changeFingerprint: fingerprint2,
     deduplicated: duplicateChange,
     semanticStatus: semantic.status,
@@ -10671,7 +11482,19 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     }
   } catch (e) {
   }
-  return { changedFiles: changedFiles.length, files: changedFiles, fingerprint: fingerprint2, deduplicated: duplicateChange, semanticStatus: semantic.status, semanticMemories: admittedIds.length, summary: semantic.summary || "", autoDream: autoDreamResult };
+  return {
+    changedFiles: changedFiles.length,
+    files: changedFiles,
+    changes: changeEntries,
+    windowStart,
+    entrypoints: brain.project && brain.project.entrypoints || [],
+    fingerprint: fingerprint2,
+    deduplicated: duplicateChange,
+    semanticStatus: semantic.status,
+    semanticMemories: admittedIds.length,
+    summary,
+    autoDream: autoDreamResult
+  };
 }
 function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
@@ -10708,20 +11531,42 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
         route: resolveSessionRoute(session),
         config: runtime.getMemoryConfig ? runtime.getMemoryConfig() : {}
       }).then(async (r) => {
-        if (r && r.changedFiles > 0 && architectureRelevantFiles(r.files)) {
-          const refreshed = await scanAndWrite(
-            fs,
-            sandboxPolicy,
-            { path: projectPath, dryRun: false },
-            "auto_architecture_refresh",
-            {
-              getMemoryConfig: runtime.getMemoryConfig,
-              getLlm: runtime.getLlm,
-              llmRoute: resolveSessionRoute(session),
-              sessionId
-            }
-          );
-          if (!refreshed || !refreshed.ok) log("warn", "summarizer: architecture auto-refresh failed");
+        const files = r && r.files || [];
+        const refreshRuntime = {
+          getMemoryConfig: runtime.getMemoryConfig,
+          getLlm: runtime.getLlm,
+          llmRoute: resolveSessionRoute(session),
+          sessionId,
+          triggerFiles: files.slice(0, 20)
+        };
+        if (files.length && sourceChangeFiles(files)) {
+          try {
+            const light = await scanAndWrite(fs, sandboxPolicy, { path: projectPath, dryRun: false }, "auto_light_refresh", Object.assign({}, refreshRuntime, { architectureMode: "light" }));
+            if (!light || !light.ok) log("warn", "summarizer: light refresh failed");
+          } catch (e) {
+            log("warn", "summarizer: light refresh failed: " + String(e && e.message || e));
+          }
+        }
+        const triggerOptions = { changes: r && r.changes || [], entrypoints: r && r.entrypoints || [] };
+        if (files.length && architectureTriggerFiles(files, triggerOptions)) {
+          let refreshedOk = false;
+          try {
+            const refreshed = await scanAndWrite(
+              fs,
+              sandboxPolicy,
+              { path: projectPath, dryRun: false },
+              "auto_architecture_refresh",
+              Object.assign({}, refreshRuntime, { architectureMode: "full" })
+            );
+            refreshedOk = Boolean(refreshed && refreshed.ok && !(refreshed.data && refreshed.data.architecture && refreshed.data.architecture.error));
+            if (!refreshedOk) log("warn", "summarizer: architecture auto-refresh failed");
+          } catch (e) {
+            log("warn", "summarizer: architecture auto-refresh failed: " + String(e && e.message || e));
+          }
+          if (!refreshedOk) {
+            const marked = await markArchitectureStale(fs, sandboxPolicy, projectPath, true);
+            log(marked ? "info" : "warn", "summarizer: architectureStale=true " + (marked ? "written" : "write FAILED"));
+          }
         }
         try {
           if (ctx && typeof ctx.emit === "function") {
@@ -10926,12 +11771,12 @@ function setupRealtimeMemory(ctx, fs, sandboxPolicy, runtime = {}) {
 // src/index.js
 import { readFileSync as readFileSync4 } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join as join3 } from "node:path";
+import { dirname, join as join4 } from "node:path";
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = dirname(__filename);
 function readPluginVersion() {
   try {
-    const pkg = JSON.parse(readFileSync4(join3(__dirname, "..", "package.json"), "utf8"));
+    const pkg = JSON.parse(readFileSync4(join4(__dirname, "..", "package.json"), "utf8"));
     if (pkg.version) return String(pkg.version);
   } catch (e) {
   }
