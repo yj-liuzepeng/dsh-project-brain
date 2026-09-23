@@ -93,9 +93,25 @@ function normalizeScoreMap(map) {
 }
 
 function recencyScore(memory, now) {
-  const created = memory.updatedAt || memory.createdAt || 0;
-  const ageDays = Math.max(0, (now - created) / 86400000);
+  // 被检索命中过的按命中时间算「新鲜」。只看 updatedAt 的话，一条常被查到但很久
+  // 没改过的记忆会一路沉下去，而那恰恰是最该留着的。
+  const touched = Math.max(
+    Number(memory.lastAccessedAt) || 0,
+    Number(memory.updatedAt) || 0,
+    Number(memory.createdAt) || 0,
+  );
+  const ageDays = Math.max(0, (now - touched) / 86400000);
   return ageDays <= 7 ? 1 : Math.max(0, 1 - ageDays / 180);
+}
+
+// grounding 失败的记忆 confidence 会被压到 0.4，但 confidence 在加权和里只占 0.10，
+// 折算下来疑似幻觉和可靠事实只差 0.05 分。低可信度改成乘性打折，让差距真的体现出来。
+export const TRUSTED_CONFIDENCE = 0.6;
+
+export function trustFactor(confidence) {
+  const value = typeof confidence === "number" ? confidence : 0.6;
+  if (value >= TRUSTED_CONFIDENCE) return 1;
+  return Math.max(0.35, value / TRUSTED_CONFIDENCE);
 }
 
 function tokenJaccard(a, b) {
@@ -231,13 +247,14 @@ export function retrieveMemories({ memories, query = "", topK = 5, now = Date.no
   const ranked = candidates.map((memory) => {
     const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
     const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
-    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
-    const relevance = (keyword.get(memory.id) || 0) * weights.keyword
+    const stableType = ["decision", "requirement", "architecture", "bug", "lesson", "preference"].includes(memory.type) ? 1 : 0.35;
+    const weighted = (keyword.get(memory.id) || 0) * weights.keyword
       + (vector.get(memory.id) || 0) * weights.vector
       + importance * weights.importance
       + confidence * weights.confidence
       + recencyScore(memory, now) * weights.recency
       + stableType * weights.type;
+    const relevance = weighted * trustFactor(confidence);
     return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
   }).sort((a, b) => b.relevance - a.relevance);
 

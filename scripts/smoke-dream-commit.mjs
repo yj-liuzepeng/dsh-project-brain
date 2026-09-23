@@ -43,24 +43,27 @@ check("archiveReason backfill_rule", c1 && c1.archiveReason === "backfill_rule")
 check("durable lesson stays core", isCoreMemory(ch.rows.find((m) => m.id === "mem-h1")));
 
 console.log("=== cap evicts excess active, never deletes ===");
+// 显式给上限，测的是淘汰行为本身，不跟着默认配置走。
+const CAP = { maxItems: 15, maxTokens: 800 };
+const OVER = CAP.maxItems + 1;
 const many = [];
-for (let i = 0; i < 16; i++) {
+for (let i = 0; i < OVER; i++) {
   many.push(makeMemoryEntry({
     id: "mem-cap-" + i,
     type: "decision",
     title: "长期决策 " + i,
     content: "这是一条仍然成立的项目决策，用来撑满 Core 上限。编号 " + i,
     importance: i === 0 ? 0.2 : 0.8,
-  }, now - (16 - i) * 86400000));
+  }, now - (OVER - i) * 86400000));
 }
-const capped = housekeepMemories(many, { now });
-check("row count unchanged", capped.rows.length === 16);
+const capped = housekeepMemories(many, { now, limits: CAP });
+check("row count unchanged", capped.rows.length === OVER);
 check("some dormant", capped.rows.some((m) => m.status === "dormant"));
-check("core <= 15", capped.rows.filter(isCoreMemory).length <= 15);
+check("core <= cap", capped.rows.filter(isCoreMemory).length <= CAP.maxItems);
 check("lowest importance evicted", capped.rows.find((m) => m.id === "mem-cap-0").status === "dormant");
 
 console.log("=== no-op does not claim change ===");
-const again = housekeepMemories(capped.rows, { now });
+const again = housekeepMemories(capped.rows, { now, limits: CAP });
 check("second housekeep unchanged", again.changed === false);
 
 console.log("=== full mode must not vacuum archived ===");

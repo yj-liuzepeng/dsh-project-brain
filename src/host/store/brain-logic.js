@@ -4,14 +4,14 @@
 
 export const MEMORY_TYPES = [
   "decision", "requirement", "architecture", "change",
-  "bug", "lesson", "issue", "context",
+  "bug", "lesson", "issue", "context", "preference",
 ];
 
 export const TODO_STATUSES = ["pending", "in_progress", "blocked", "done", "cancelled"];
 export const TODO_PRIORITIES = ["low", "medium", "high", "urgent"];
 
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
-const HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true };
+const HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true, preference: true };
 
 export function makeId(prefix, now, rand) {
   const t = (now != null ? now : Date.now()).toString(36);

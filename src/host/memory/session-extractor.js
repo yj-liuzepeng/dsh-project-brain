@@ -4,7 +4,7 @@ import { parseArchitectureJson, streamLlmText } from "../architecture/analyzer.j
 import { isRetrievableMemory, makeMemoryEntry, normalizeMemoryType } from "../store/brain-logic.js";
 import { memoryFingerprint } from "./admit.js";
 
-const ALLOWED_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson", "context"]);
+const ALLOWED_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson", "context", "preference"]);
 
 function clean(value, limit) {
   return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
@@ -24,17 +24,24 @@ function textFromContent(content) {
   return content.filter((block) => block && block.type === "text").map((block) => block.text || "").join("\n");
 }
 
-export function boundedSessionTranscript(session, maxChars = 16000) {
+// 把 session 里的 user/assistant 消息转成带角色前缀、已脱敏的行。
+// 挑哪几条是调用方的事：做会话总结要最近的，做指代消解还得带上开头。
+export function sessionMessageLines(session, perMessageChars = 6000) {
   let messages = [];
   try {
     messages = session && typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
-  } catch (e) { return ""; }
-  const parts = (Array.isArray(messages) ? messages : []).map((message) => {
+  } catch (e) { return []; }
+  return (Array.isArray(messages) ? messages : []).map((message) => {
     const role = message && message.role;
     if (role !== "user" && role !== "assistant") return "";
     const value = redactSessionText(textFromContent(message.content));
-    return value ? `${role.toUpperCase()}: ${value.slice(0, 6000)}` : "";
+    return value ? `${role.toUpperCase()}: ${value.slice(0, perMessageChars)}` : "";
   }).filter(Boolean);
+}
+
+export function boundedSessionTranscript(session, maxChars = 16000, maxMessages = 0) {
+  const all = sessionMessageLines(session);
+  const parts = maxMessages > 0 ? all.slice(-maxMessages) : all;
   const selected = [];
   let used = 0;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
@@ -85,6 +92,8 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
   const parts = [
     "从下面的软件开发 Session 中提取值得跨会话长期保存的项目知识，并总结本次会话做了什么。",
     "只保留有明确证据的架构决策、稳定需求、Bug 根因与修复、可复用教训、长期问题或重要项目背景。",
+    "用户明确表达的长期协作口径与工作偏好（输出结构、沉淀目标、语气要求等）用 type=preference 记下来，它和技术事实同样重要。",
+    "每条记忆必须能脱离本次对话独立阅读：正文里不允许出现「这个 / 那个 / 上面说的 / 这样 / this / that」这类指代词，一律替换成它真正指的东西。",
     "忽略寒暄、临时步骤、命令输出、未确认猜测、个人信息、凭据；没有稳定知识时 memories 返回空数组。",
     "summary 用 1–3 句话写本次做成了什么重要的以及为什么，作为下一个 Session 的续接上下文，不编造。禁止写成「改了 N 个文件」、验收清单或 changelog。",
     `最多 ${maxItems} 条记忆。只输出严格 JSON 对象，不要 Markdown。`,
@@ -92,7 +101,7 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     "如果某条记忆无法在原文中找到对应证据，请降低 confidence 或不输出。",
     "durable=true 仅当该事实去掉日期/版本号后仍为真；changelog、本次改了哪些文件、会话流水账必须 durable=false。",
     "title 写成站立事实句（例如「路径以 session cwd 为准」），不要写成 v1.2.0 patch 或验收清单。content 用 2–4 句把 what+why 写完。",
-    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson", title: "简洁标题", content: "自包含的事实与理由", evidence: "原文片段（8-60 字）", durable: true, importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"], supersedes: null }] }),
+    "格式：" + JSON.stringify({ summary: "本次会话总结（2-4 句话）", memories: [{ type: "decision|requirement|architecture|bug|lesson|preference", title: "简洁标题", content: "自包含的事实与理由", evidence: "原文片段（8-60 字）", durable: true, importance: 0.8, confidence: 0.9, relatedFiles: ["相对路径"], tags: ["标签"], supersedes: null }] }),
   ];
   if (diffEvidence && String(diffEvidence).trim()) {
     parts.push("【git diff 参考证据（仅辅助核对文件级事实，不要逐条复述为记忆）】\n" + String(diffEvidence).trim());

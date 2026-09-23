@@ -39,7 +39,7 @@ function readPluginVersion() {
     const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
     if (pkg.version) return String(pkg.version);
   } catch (e) {}
-  return "1.3.1";
+  return "1.4.0";
 }
 const PLUGIN_VERSION = readPluginVersion();
 

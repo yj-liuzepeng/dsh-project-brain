@@ -105,20 +105,29 @@ const readBack = await readJsonl(fsAdapter, p9);
 check("3 行全部读回", readBack.length === 3);
 check("中文 + 引号正确反序列化", JSON.stringify(readBack) === JSON.stringify(items));
 
-console.log("\n=== 10) 性能基准：1000 行 append < 4000ms（跨平台 + 并发安全） ===");
-const p10 = join(TMP, "j.jsonl");
-writeFileSync(p10, "", "utf8");
-const t0 = Date.now();
-for (let i = 0; i < 1000; i++) {
-  await appendJsonl(fsAdapter, p10, { i, data: "x".repeat(50) });
-}
-const elapsed = Date.now() - t0;
-// v0.7.0-beta.3 调整：旧实现预期 ~1500-3000ms（每次 read+serialize 整个 jsonl）；
-// 新实现预期 ~800ms（只读+拼接），但 Windows 下 fsAdapter 模拟 readFileSync 约
-// 2059-2700ms，并发跑 npm test 时可达 3500+ms。把阈值放到 4000ms 仍能验证
-// "比旧实现快"的核心目的且不误报。
-const perfBudget = process.platform === "win32" ? 4000 : 2000;
-check(`1000 行 append 耗时 ${elapsed}ms < ${perfBudget}ms（比旧实现快）`, elapsed < perfBudget, `actual ${elapsed}ms`);
+console.log("\n=== 10) 性能基准：append 的单行成本不得失控 ===");
+// 这一项原本断言「新实现比旧实现（readJsonl + push + serializeJsonl）快」。
+// 2026-09-23 用交替对跑实测后发现这个前提不成立：
+//     N= 300 → 1.02x    N=1000 → 0.97x    N=2500 → 1.15x
+// 两者差异全在噪声范围内。因为瓶颈是「读全文 + 写全文」的文件 IO，
+// JSON.parse / stringify 的开销相对可以忽略。此前测出的 1.4~1.5x 是
+// 连跑两轮新实现再连跑两轮旧实现造成的缓存不对称，不是真实差距。
+//
+// 所以改成守单行平均成本：它抓得住真正的灾难（比如误改成每条 append 都扫全表
+// 两遍、或退化成 O(N²)），又不会被机器负载晃出误报。实测约 2ms/行，留 10 倍余量。
+const BENCH_N = 300;
+const row = (i) => ({ i, data: "x".repeat(50) });
+const benchPath = join(TMP, "bench.jsonl");
+writeFileSync(benchPath, "", "utf8");
+const benchStart = Date.now();
+for (let i = 0; i < BENCH_N; i++) await appendJsonl(fsAdapter, benchPath, row(i));
+const perRow = (Date.now() - benchStart) / BENCH_N;
+check(
+  `${BENCH_N} 行 append 平均 ${perRow.toFixed(2)}ms/行（上限 20ms/行）`,
+  perRow < 20,
+  `actual ${perRow.toFixed(2)}ms/行`,
+);
+check("append 的行数完整", (await readJsonl(fsAdapter, benchPath)).length === BENCH_N);
 
 console.log("\n=== 11) appendLine 空文件 ===");
 const p11 = join(TMP, "k.jsonl");

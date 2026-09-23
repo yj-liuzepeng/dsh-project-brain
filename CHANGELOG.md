@@ -7,8 +7,23 @@
 
 ## Unreleased
 
+## [v1.4.0] - 2026-09-23
+
+本版主题是**把记忆机制修到可用**：实时记忆能解开指代、页面上可以手动维护记忆、并发写入不再丢数据、Core 有了容量与置顶保障。
+
 ### Added（新增）
 
+- **`project_dream` 的 `mode=full` 现在真的做事**：此前它与 `light` 完全相同。现在会额外跑一次 vacuum，把超期的归档记忆与旧时间线搬到 `.project-brain/archive/<kind>-<时间戳>.jsonl`，主文件真的变小但数据仍可找回。四道保护：活跃与 dormant 记忆不动、置顶的不动、被 `supersedes` 指向的证据链不动、`init` 与最新 `session_summary` 这两个界面锚点不动；再加一个保留下限（默认至少留 200 条归档）。先写 archive 成功才缩主文件，顺序反了就等于真删。默认 `dryRun=true`，不自动触发。新增四个配置项：`vacuumMemoryRetainDays`(90) / `vacuumMemoryMinRetained`(200) / `vacuumTimelineMaxEvents`(2000) / `vacuumTimelineRetainDays`(180)。
+- **热度回升**：`project_ask` 命中的记忆会回写 `lastAccessedAt` 与 `accessCount`（同一条 5 分钟内只记一次，避免一轮对话把整表重写好几遍）。排序的 recency 改看「最近被命中」而非只看 `updatedAt`，Core 淘汰时也把近 7 天命中过的往后排。此前 `lastAccessedAt` 只在归档/替换时写过，等于系统完全感知不到哪些记忆真的常用，沉下去的就永远沉着。
+- **弱信号也能落盘**：「以后都…」「约定…」「going forward…」这类表达此前只检测不写入，全靠会话结束的语义抽取碰运气。现在同样走带上下文的 LLM 消解，但门槛更严——必须模型能解开（不退回原话）、来源标为 `user_intent_weak` 而非 `user_explicit`、重要性与可信度都压到 0.7 以内、走常规准入通道。解不开时安静跳过，不写「未记住」：用户并没有点名要记，报成失败是噪音。
+- **记忆置顶**：页面编辑表单里可以把一条记忆标为置顶，Core 满员时不会被自动挤成 dormant。置顶数量上限为容量的一半（向下取整），超出时拒绝并提示先取消其他置顶——全部置顶等于没有置顶，淘汰时挑不出对象，这条保证就作废了。
+- **Core 容量可配置**：新增 `coreMaxItems`（默认 25，原 15）与 `coreMaxTokens`（默认 1500，原 800）。限额集中存一份并在配置变更时同步，让 injector / aggregator / dream 这些拿不到 config 的路径不会用旧上限再挤一遍。
+- **淘汰时区分来源**：`user_explicit` 写入的、以及人工编辑过的记忆排在最后才被挤出 Core，自动抓取的先走。
+- **「未记住」会留痕**：用户明确说了「记住」但没能落盘时（指代解不开、无可用模型、被规则拒），往 timeline 写一条 `memory_rejected`，标题带上原话、正文说明原因与下一步。Agent 通道的常规拒绝不记，避免把「任务动态」刷屏。
+- **页面上手动维护记忆**：「项目记忆」tab 的详情弹框新增编辑 / 归档 / 恢复 / 永久删除。编辑为原地修改，保留 `id` 与 `createdAt`，可改标题、正文、类型、重要性、标签与 active/dormant 状态；正文改动后自动重算 `source.fingerprint`。归档后进入新增的「已归档」折叠区，可一键恢复；永久删除需二次确认（RPC 侧要求 `confirm=true`），并会清理指向被删条目的悬空 `supersededBy`。纯逻辑收敛在 `src/host/memory/edit.js`，RPC 端点 `memory.update` / `memory.status` / `memory.delete`。
+- **记忆类型 `preference`**：用户明确表达的长期协作口径与工作偏好（输出结构、沉淀目标、语气要求）单独成类，不再混在 `context` 里。参与检索加权与 Core 注入，`project_memory_add` 与会话语义抽取都能产出。
+- **实时记忆的指代消解**：强「记住」信号命中后，带最近 12 条消息（含 assistant）的上下文窗口调一次 LLM，把触发语整理成能脱离本次对话独立阅读的正文，并返回 `resolved` 标志。新增配置 `realtimeMemoryEnabled` / `realtimeMemoryTimeoutMs`。
+- **偏好重申走 supersede**：同类型、同为 `user_explicit` 来源、标题 Jaccard ≥ 0.72 的旧条目会被新条目 supersede，Core 里不再堆同义项。
 - **项目熟悉度（Project Familiarity）**：人第一屏两句（这是什么 = 架构 LLM purpose；最近做什么 = 上次会话摘要，否则仅「进行中」待办）。Agent 注入另附「从哪改」源码入口与「活跃待办」。关会话轻扫与架构刷新分开；任务动态为 Session 主干图（无 sessionId 的旧时间线按日成干）。
 - **会话变更窗口 `src/host/diff/session-window.js`**：`detectSessionChanges` 按时间窗口取本次会话的变更——工作树 mtime 落窗的文件（未提交也算，非 git 项目同样可用）+ 窗口内 commit 的 tree diff，输出带 `added/modified/removed` 类型。窗口起点 = 上次 `session_summary` > `lastScannedAt` > 建脑时间，最长回看 14 天。
 - **`markArchitectureStale`**：只改 `project.json` 的过期标记，不重扫、不碰 `architecture.json`。
@@ -16,6 +31,21 @@
 
 ### Fixed（修复）
 
+- **低可信度记忆和可靠事实几乎同权重**：`confidence` 在加权和里只占 0.10，而 grounding 失败的记忆被压到 0.4——折算下来疑似幻觉和可靠事实只差 0.05 分。新增乘性的 `trustFactor`：可信度低于 0.6 时按比例打折（下限 0.35），差距真的体现在排序上。
+- **准入校验的是截断前的文本**：`evaluateAdmit` 先用 `compactCandidate` 把正文截断，却拿原始 candidate 过 `ruleGate`，导致长度判定与 changelog 体裁判定跟实际落盘的内容不是同一份。改为校验 compact 之后的那份。
+- **往回指的表达永远解不开**：指代消解的上下文窗口只取最近 12 条消息，于是「这个对话的第一句」「最开始说的」这类指代必定落在窗口外，模型只能诚实返回 `resolved: false`——看起来就像插件没记住。改为头 4 条 + 尾 10 条，中间用省略标记占位；超预算时整体压缩每条长度而不是丢消息（丢掉哪一条都可能正是用户指的那条）。prompt 也补上了「第一句」「刚才说的」分别对应窗口哪一端。
+- **模型没返回 JSON 就直接放弃提炼**：实时记忆的 `refineSignal` 只解析一次，模型偶尔带上前言或直接用自然语言作答就会落到 `refine_unparseable`，用户看到「未记住」但其实模型是好的。现在把模型自己的原始输出丢回去重排一次；prompt 也改成明确要求「第一个字符必须是 `{`」，`maxTokens` 从 700 提到 1000。
+- **失败原因写得不准会把人引偏**：`refine_unparseable` 之前被笼统地报成「缺少可用的上下文或模型」，看到的人会跑去查模型配置。现在按 `refineStatus` 分别给出人话解释，并把模型的原始输出片段存进 `sample` 字段供排查。
+- **归档/恢复点了一直转圈，重启后才发现已生效**：`handleMemoryMutation` 持有 `memory.jsonl` 事务锁时调用了 `buildWorkspacePreview`，而后者内部会走 `persistHousekeep` 再取同一把锁——自己等自己。数据在 `writeJsonl` 时已经落盘，但 RPC 永远不 settle，前端 `finally` 执行不到。改为锁内只做读-改-写，timeline / 缓存失效 / preview 全部移到锁外。
+- **锁重入现在会当场报错而不是挂起**：`withWriteLock` 用 `AsyncLocalStorage` 跟踪当前调用链持有的 key，持锁期间再取同一把锁直接 reject `E_WRITE_LOCK_REENTRY`。死锁是最难查的一类 bug，宁可吵闹地失败。
+- **前端加了 15 秒超时兜底**：host 端万一不返回，按钮不再无限转圈，会提示刷新确认是否已生效。
+- **并发写入会静默丢数据**：DSH 的 fs 只有覆盖写，`appendLine` 是「读全文 → 拼接 → 写全文」，admit / housekeep / 人工编辑则是「读整表 → 改 → 写整表」。两个并发序列各自基于旧快照写回，后写的把先写的抹掉且无任何报错。实测 40 条并发 append 最终只剩 1 条。新增 `src/host/store/write-lock.js`：文件锁（key = 路径）包住单次 append / 覆盖写，事务锁（key = `projectPath::tx::memory.jsonl`）包住 `admitMemory` / `persistHousekeep` / RPC 人工维护 / `project_memory_archive` 的整段读改写。两把锁 key 不同且获取顺序固定，不会死锁。
+- **侧边栏同步读路径会绕过锁回写**：`readMemoriesHousekeptSync` 用 `writeFileSync` 落盘，异步锁管不到。改为只在内存里整理供展示，落盘交给 `ensureHousekeepOnRead` 与 `persistHousekeep`。
+- **页面编辑记忆后注入内容不刷新**：`handleMemoryMutation` 只清了 aggregator 缓存，没 emit `project_brain/preview.changed`，而 injector 的注入缓存只认这个事件。结果是侧边栏已经变了、模型那边还是旧的，要等下个 Session 才生效。
+- **向量缓存被误删**：`ensureEmbeddingIndex` 拿调用方传入的候选子集当全集做 GC，只要某次调用传的不是全量，其余条目的向量会被整片删掉、下次重新付费重建。改为新增 `knownMemoryIds` 参数显式传入全集，没传就不做清理。
+- **实时记忆把指代残句当成了知识**：用户说「把我这个需求点记住，以后对话要从这个角度出发」时，旧实现只看当前这一条 user 消息，正则捕获组拿到的是触发语后面的残句「以后对话要从这个角度出发」——真正的内容（沉淀目标、结构口径）在上一轮，而且多半是 assistant 说的，永远看不到。现在正则只当触发器，正文由带上下文的 LLM 提炼；解不开指代时不落盘，交给会话结束的语义抽取兜底。
+- **凑字数绕过质量门**：正文不足 20 字时旧实现补一句「这是用户明确要求记住的长期偏好。」硬凑过 `content_too_short`，等于越空洞的记忆越容易通过。删掉填充；`user_explicit` 的长度下限降到 12 字，把关口挪到「是否解开指代」上。
+- **admit 缺少指代门**：`ruleGate` 新增 `unresolved_reference` —— 正文带指代词、又没有标识符/路径/引号专名这类锚点、且短于 30 字时拒绝写入，所有写入通道共用。
 - **会话改了什么取错了**：旧实现用 `detectChanges({ since: "1" })`（HEAD vs HEAD~1），等于把上一个 commit 当成本次成果——没提交就收不到任何文件，别人刚提交过就会算到自己头上，轻扫/架构刷新和主干文件证据全部跟着错。改走会话时间窗口。
 - **非 git 项目识别不出新增文件**：没有 HEAD tree 可比时，原本把所有落窗文件都标成 `modified`，架构的「源码增删」触发永远不生效。改为用 `birthtimeMs` 落窗判定新增。
 - **架构过期判定形同虚设**：过去只有「架构生成报错」才置 `architectureStale`。现在触发文件命中后必须给出结论：刷新成功 → 清除过期；刷新失败或架构带 error → 显式置 `architectureStale=true`，第一屏与注入都会说「架构可能过期」。

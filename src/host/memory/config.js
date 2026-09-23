@@ -1,5 +1,7 @@
 import z from "@deepseek-ai/schemastery";
 
+import { maxPinnedCount, setCoreLimits } from "./admit.js";
+
 export const MEMORY_SETTINGS_NS = "dsh-project-brain";
 
 export const Config = z.object({
@@ -21,6 +23,14 @@ export const Config = z.object({
   sessionSemanticMaxChars: z.number().step(1).min(2000).max(40000).default(16000),
   sessionSemanticMaxItems: z.number().step(1).min(1).max(8).default(4),
   sessionSemanticTimeoutMs: z.number().step(1).min(5000).max(120000).default(30000),
+  realtimeMemoryEnabled: z.boolean().default(true),
+  realtimeMemoryTimeoutMs: z.number().step(1).min(5000).max(60000).default(20000),
+  coreMaxItems: z.number().step(1).min(5).max(60).default(25),
+  coreMaxTokens: z.number().step(1).min(400).max(4000).default(1500),
+  vacuumMemoryRetainDays: z.number().step(1).min(7).max(3650).default(90),
+  vacuumMemoryMinRetained: z.number().step(1).min(0).max(10000).default(200),
+  vacuumTimelineMaxEvents: z.number().step(1).min(200).max(100000).default(2000),
+  vacuumTimelineRetainDays: z.number().step(1).min(7).max(3650).default(180),
   architectureEnabled: z.boolean().default(true),
   architectureLlmEnabled: z.boolean().default(true),
   architectureLlmIncludeSource: z.boolean().default(true),
@@ -56,6 +66,14 @@ export function normalizeMemoryConfig(value) {
     sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16000, 2000, 40000),
     sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
     sessionSemanticTimeoutMs: integer("sessionSemanticTimeoutMs", 30000, 5000, 120000),
+    realtimeMemoryEnabled: input.realtimeMemoryEnabled !== false,
+    realtimeMemoryTimeoutMs: integer("realtimeMemoryTimeoutMs", 20000, 5000, 60000),
+    coreMaxItems: integer("coreMaxItems", 25, 5, 60),
+    coreMaxTokens: integer("coreMaxTokens", 1500, 400, 4000),
+    vacuumMemoryRetainDays: integer("vacuumMemoryRetainDays", 90, 7, 3650),
+    vacuumMemoryMinRetained: integer("vacuumMemoryMinRetained", 200, 0, 10000),
+    vacuumTimelineMaxEvents: integer("vacuumTimelineMaxEvents", 2000, 200, 100000),
+    vacuumTimelineRetainDays: integer("vacuumTimelineRetainDays", 180, 7, 3650),
     architectureEnabled: input.architectureEnabled !== false,
     architectureLlmEnabled: input.architectureLlmEnabled !== false,
     architectureLlmIncludeSource: input.architectureLlmIncludeSource !== false,
@@ -108,6 +126,15 @@ export function publicMemoryConfig(config) {
       maxChars: c.sessionSemanticMaxChars,
       maxItems: c.sessionSemanticMaxItems,
     },
+    realtimeMemory: {
+      enabled: c.realtimeMemoryEnabled,
+      timeoutMs: c.realtimeMemoryTimeoutMs,
+    },
+    core: {
+      maxItems: c.coreMaxItems,
+      maxTokens: c.coreMaxTokens,
+      maxPinned: maxPinnedCount({ maxItems: c.coreMaxItems, maxTokens: c.coreMaxTokens }),
+    },
     architecture: {
       enabled: c.architectureEnabled,
       llmEnabled: c.architectureLlmEnabled,
@@ -120,6 +147,9 @@ export function publicMemoryConfig(config) {
 
 export function createMemoryConfigRuntime(ctx, entryConfig) {
   let current = normalizeMemoryConfig(entryConfig);
+  // Core 限额得让 injector / aggregator / dream 这些拿不到 config 的路径也看得见，
+  // 否则同一份 memory.jsonl 会被两套上限来回挤。
+  setCoreLimits(current);
   let credentials = null;
   let settingsService = null;
   let settingsScope = null;
@@ -132,9 +162,12 @@ export function createMemoryConfigRuntime(ctx, entryConfig) {
         if (!settings || typeof settings.register !== "function") return;
         settingsService = settings;
         settingsScope = settings.register(MEMORY_SETTINGS_NS, Config, { base: entryConfig || {} });
-        try { current = normalizeMemoryConfig(settingsScope.get()); } catch (e) {}
+        try { current = normalizeMemoryConfig(settingsScope.get()); setCoreLimits(current); } catch (e) {}
         if (settingsScope && typeof settingsScope.watch === "function") {
-          settingsScope.watch((next) => { current = normalizeMemoryConfig(next); });
+          settingsScope.watch((next) => {
+            current = normalizeMemoryConfig(next);
+            setCoreLimits(current);
+          });
         }
       });
     } catch (e) {}

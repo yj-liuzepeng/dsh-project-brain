@@ -248,6 +248,9 @@
           "dash.memory.dormant": "\u4F11\u7720\uFF08\u4E0D\u6CE8\u5165\uFF0C\u53EF\u7528 project_ask\uFF09",
           "dash.memory.dormantShow": "\u5C55\u5F00\u4F11\u7720\u8BB0\u5FC6",
           "dash.memory.dormantHide": "\u6536\u8D77\u4F11\u7720\u8BB0\u5FC6",
+          "dash.memory.archived": "\u5DF2\u5F52\u6863\uFF08\u4E0D\u6CE8\u5165\u3001\u4E0D\u68C0\u7D22\uFF0C\u53EF\u6062\u590D\u6216\u6C38\u4E45\u5220\u9664\uFF09",
+          "dash.memory.archivedShow": "\u5C55\u5F00\u5DF2\u5F52\u6863",
+          "dash.memory.archivedHide": "\u6536\u8D77\u5DF2\u5F52\u6863",
           "dash.tab.overview": "\u6982\u89C8",
           "dash.tab.architecture": "\u67B6\u6784",
           "dash.tab.work": "\u4EFB\u52A1\u52A8\u6001",
@@ -293,7 +296,8 @@
           "mem.type.architecture": "\u67B6\u6784",
           "mem.type.change": "\u53D8\u66F4",
           "mem.type.context": "\u5907\u6CE8",
-          "mem.type.issue": "\u95EE\u9898"
+          "mem.type.issue": "\u95EE\u9898",
+          "mem.type.preference": "\u504F\u597D"
         },
         "en-US": {
           "tab.label": "Project",
@@ -397,6 +401,9 @@
           "dash.memory.dormant": "Dormant (askable, not injected)",
           "dash.memory.dormantShow": "Show dormant memories",
           "dash.memory.dormantHide": "Hide dormant memories",
+          "dash.memory.archived": "Archived (not injected or retrieved; restore or delete permanently)",
+          "dash.memory.archivedShow": "Show archived",
+          "dash.memory.archivedHide": "Hide archived",
           "dash.tab.overview": "Overview",
           "dash.tab.architecture": "Architecture",
           "dash.tab.work": "Work & activity",
@@ -442,7 +449,8 @@
           "mem.type.architecture": "Architecture",
           "mem.type.change": "Change",
           "mem.type.context": "Note",
-          "mem.type.issue": "Issue"
+          "mem.type.issue": "Issue",
+          "mem.type.preference": "Preference"
         }
       };
       function interpolate(template, vars) {
@@ -1527,7 +1535,7 @@
         const memories = data.memories || [];
         if (memories.length === 0) return null;
         const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
-        const typeIcon = (type) => ({ decision: "\u{1F4A1}", bug: "\u{1F41B}", lesson: "\u{1F4D6}", requirement: "\u{1F4CC}", architecture: "\u{1F3DB}\uFE0F", change: "\u{1F504}", context: "\u{1F4AC}", issue: "\u2753" })[type] || "\u{1F4DD}";
+        const typeIcon = (type) => ({ decision: "\u{1F4A1}", bug: "\u{1F41B}", lesson: "\u{1F4D6}", requirement: "\u{1F4CC}", architecture: "\u{1F3DB}\uFE0F", change: "\u{1F504}", context: "\u{1F4AC}", issue: "\u2753", preference: "\u{1F3AF}" })[type] || "\u{1F4DD}";
         const importanceStars = (imp) => {
           const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
           return "\u2605".repeat(stars) + "\u2606".repeat(5 - stars);
@@ -3871,18 +3879,104 @@
         const todos = data.todos || [];
         const timelineAll = data.timelineAll || [];
         const memoriesAll = data.memoriesAll || [];
+        const memoriesArchived = data.memoriesArchived || [];
         const retrieval = data.retrieval || {};
         const [quickActionState, setQuickActionState] = React.useState({});
         const [activeTab, setActiveTab] = React.useState("overview");
         const [memoryModal, setMemoryModal] = React.useState(null);
         const [dormantOpen, setDormantOpen] = React.useState(false);
+        const [archivedOpen, setArchivedOpen] = React.useState(false);
+        const [memoryDraft, setMemoryDraft] = React.useState(null);
+        const [memoryBusy, setMemoryBusy] = React.useState(false);
+        const [memoryError, setMemoryError] = React.useState(null);
+        const [confirmDelete, setConfirmDelete] = React.useState(false);
+        const resetMemoryEditing = React.useCallback(() => {
+          setMemoryDraft(null);
+          setMemoryError(null);
+          setConfirmDelete(false);
+          setMemoryBusy(false);
+        }, []);
         const openMemoryModal = React.useCallback((m) => {
+          resetMemoryEditing();
           setMemoryModal(m);
-        }, []);
+        }, [resetMemoryEditing]);
         const closeMemoryModal = React.useCallback(() => {
+          resetMemoryEditing();
           setMemoryModal(null);
-        }, []);
+        }, [resetMemoryEditing]);
         const rpc = connection && connection.rpc;
+        const callMemoryRpc = React.useCallback(async (endpoint, extra) => {
+          if (!rpc || typeof rpc.call !== "function") {
+            setMemoryError("DSH Connection RPC \u4E0D\u53EF\u7528");
+            return null;
+          }
+          setMemoryBusy(true);
+          setMemoryError(null);
+          try {
+            const res = await Promise.race([
+              rpc.call("/project-brain", endpoint, Object.assign({ sessionId: sessionId || void 0 }, extra || {})),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("\u64CD\u4F5C\u8D85\u65F6\uFF0C\u8BF7\u5237\u65B0\u540E\u786E\u8BA4\u662F\u5426\u5DF2\u751F\u6548")), 15e3))
+            ]);
+            if (!res || !res.ok || !res.value) {
+              setMemoryError(res && res.error && res.error.message || "\u64CD\u4F5C\u5931\u8D25");
+              return null;
+            }
+            if (res.value.preview && typeof onPreviewUpdate === "function") {
+              try {
+                onPreviewUpdate(res.value);
+              } catch (e) {
+              }
+            }
+            return res.value;
+          } catch (e) {
+            setMemoryError(String(e && e.message || e));
+            return null;
+          } finally {
+            setMemoryBusy(false);
+          }
+        }, [rpc, sessionId, onPreviewUpdate]);
+        const startMemoryEdit = React.useCallback((m) => {
+          setConfirmDelete(false);
+          setMemoryError(null);
+          setMemoryDraft({
+            title: m.title || "",
+            content: m.content || "",
+            type: m.type || "context",
+            importance: typeof m.importance === "number" ? m.importance : 0.5,
+            status: m.status === "dormant" ? "dormant" : "active",
+            pinned: m.pinned === true,
+            tags: Array.isArray(m.tags) ? m.tags.join(", ") : ""
+          });
+        }, []);
+        const saveMemoryEdit = React.useCallback(async () => {
+          if (!memoryModal || !memoryDraft) return;
+          const patch = {
+            title: memoryDraft.title,
+            content: memoryDraft.content,
+            type: memoryDraft.type,
+            importance: Number(memoryDraft.importance),
+            status: memoryDraft.status,
+            pinned: memoryDraft.pinned === true,
+            tags: String(memoryDraft.tags || "").split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+          };
+          const value = await callMemoryRpc("memory.update", { id: memoryModal.id, patch });
+          if (!value) return;
+          setMemoryDraft(null);
+          setMemoryModal(value.memory || null);
+        }, [memoryModal, memoryDraft, callMemoryRpc]);
+        const setMemoryStatus = React.useCallback(async (status) => {
+          if (!memoryModal) return;
+          const value = await callMemoryRpc("memory.status", { id: memoryModal.id, status });
+          if (!value) return;
+          if (status === "archived") closeMemoryModal();
+          else setMemoryModal(value.memory || null);
+        }, [memoryModal, callMemoryRpc, closeMemoryModal]);
+        const deleteMemory = React.useCallback(async () => {
+          if (!memoryModal) return;
+          const value = await callMemoryRpc("memory.delete", { id: memoryModal.id, confirm: true });
+          if (!value) return;
+          closeMemoryModal();
+        }, [memoryModal, callMemoryRpc, closeMemoryModal]);
         const runArchRescan = React.useCallback(async () => {
           if (!sessionId || !rpc || typeof rpc.call !== "function") throw new Error(t("arch.retryFailed"));
           const res = await rpc.call("/project-brain", "action", { sessionId, action: "rescan" });
@@ -4192,6 +4286,41 @@
         );
         const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
         const typeChipStyle = { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)" };
+        const MEMORY_TYPE_OPTIONS = ["decision", "requirement", "architecture", "bug", "lesson", "preference", "context", "issue", "change"];
+        const memoryInputStyle = {
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          fontSize: "12.5px",
+          borderRadius: "8px",
+          border: "1px solid var(--dsw-alias-border-l1)",
+          background: "var(--dsw-alias-bg-layer-2)",
+          color: "var(--dsw-alias-label-primary)",
+          fontFamily: "inherit"
+        };
+        const memoryField = (label, control) => React.createElement(
+          "label",
+          { style: { display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 } },
+          React.createElement("span", { style: { fontSize: "10.5px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)" } }, label),
+          control
+        );
+        const updateDraft = (patch) => setMemoryDraft((prev) => prev ? Object.assign({}, prev, patch) : prev);
+        const isArchivedMemory = (m) => Boolean(m) && (m.status === "archived" || m.status === "superseded");
+        const memoryButtonStyle = (tone) => {
+          const accent = tone === "danger" ? "var(--dsw-alias-state-error-primary)" : tone === "primary" ? "var(--dsw-alias-brand-primary)" : null;
+          return {
+            fontSize: "11px",
+            padding: "4px 10px",
+            borderRadius: "6px",
+            background: accent || "transparent",
+            border: "1px solid " + (accent || "var(--dsw-alias-border-l1)"),
+            color: accent ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-primary)",
+            cursor: memoryBusy ? "wait" : "pointer",
+            opacity: memoryBusy ? 0.6 : 1,
+            fontFamily: "inherit",
+            fontWeight: "500"
+          };
+        };
         const dashPanelStyle = { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", minWidth: 0 };
         const dashSection = (icon, titleKey, children) => React.createElement(
           "section",
@@ -4588,7 +4717,8 @@
               "div",
               { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
               React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
-              m.status === "dormant" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, "dormant") : null,
+              m.pinned === true ? React.createElement("span", { title: "\u5DF2\u7F6E\u9876\uFF1ACore \u6EE1\u5458\u65F6\u4E0D\u4F1A\u88AB\u6324\u6389", style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontWeight: "600" } }, "\u7F6E\u9876") : null,
+              m.status && m.status !== "active" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, m.status) : null,
               React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title)
             ),
             contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "\u2026" : "")) : null,
@@ -4609,6 +4739,33 @@
         const coreMemList = memoriesAll.filter((m) => m && m.status !== "dormant");
         const dormantMemList = memoriesAll.filter((m) => m && m.status === "dormant");
         const memoryGrid = (items) => React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } }, items.slice(0, 20).map(renderMemoryCard));
+        const archivedSection = memoriesArchived.length > 0 ? React.createElement(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+          React.createElement("button", {
+            type: "button",
+            "data-action": "toggle-archived-memories",
+            onClick: () => setArchivedOpen((open) => !open),
+            style: {
+              alignSelf: "flex-start",
+              background: "transparent",
+              border: "1px solid var(--dsw-alias-border-l1)",
+              borderRadius: "8px",
+              cursor: "pointer",
+              fontSize: "11px",
+              fontWeight: "600",
+              color: "var(--dsw-alias-label-secondary)",
+              padding: "4px 10px",
+              fontFamily: "inherit"
+            }
+          }, (archivedOpen ? t("dash.memory.archivedHide") : t("dash.memory.archivedShow")) + " \xB7 " + memoriesArchived.length),
+          archivedOpen ? React.createElement(
+            "div",
+            null,
+            React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", marginBottom: "8px" } }, t("dash.memory.archived")),
+            memoryGrid(memoriesArchived)
+          ) : null
+        ) : null;
         const memoryNode = memoriesAll.length > 0 ? React.createElement(
           "div",
           { style: { display: "flex", flexDirection: "column", gap: "12px" } },
@@ -4640,8 +4797,9 @@
               React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", marginBottom: "8px" } }, t("dash.memory.dormant")),
               memoryGrid(dormantMemList)
             ) : null
-          ) : null
-        ) : emptyNode;
+          ) : null,
+          archivedSection
+        ) : memoriesArchived.length > 0 ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } }, emptyNode, archivedSection) : emptyNode;
         const memoryModalNode = memoryModal ? React.createElement(
           "div",
           {
@@ -4688,6 +4846,7 @@
               "div",
               { style: { padding: "14px 18px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "flex-start", gap: "10px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
               React.createElement("span", { style: typeChipStyle }, typeLabel(memoryModal.type)),
+              memoryModal.pinned === true ? React.createElement("span", { title: "\u5DF2\u7F6E\u9876", style: { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontWeight: "600" } }, "\u7F6E\u9876") : null,
               React.createElement("span", { style: { fontSize: "15px", fontWeight: "600", flex: "1 1 auto", minWidth: 0, wordBreak: "break-word", lineHeight: 1.45 } }, memoryModal.title || "(\u65E0\u6807\u9898)"),
               React.createElement("button", {
                 type: "button",
@@ -4709,11 +4868,86 @@
                 }
               }, "\xD7")
             ),
-            // 主体：完整内容（v1.2.x 走 markdown 渲染：标题/列表/代码块/链接等）
+            // 主体：只读时渲染 markdown，编辑态换成表单（v1.2.x 起正文走 markdown：标题/列表/代码块/链接等）
             React.createElement("div", {
               "data-block": "memory-modal-body",
               style: { padding: "20px 24px 24px", overflowY: "auto", flex: "1 1 auto", color: "var(--dsw-alias-label-primary)" }
-            }, memoryModal.content ? renderMarkdown(String(memoryModal.content), React) : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "\uFF08\u65E0\u5185\u5BB9\uFF09")),
+            }, memoryDraft ? React.createElement(
+              "div",
+              { "data-block": "memory-edit-form", style: { display: "flex", flexDirection: "column", gap: "14px" } },
+              memoryField("\u6807\u9898", React.createElement("input", {
+                type: "text",
+                "data-field": "memory-title",
+                value: memoryDraft.title,
+                maxLength: 200,
+                onChange: (e) => updateDraft({ title: e.target.value }),
+                style: memoryInputStyle
+              })),
+              memoryField("\u6B63\u6587\uFF08\u81F3\u5C11 12 \u4E2A\u5B57\u7B26\uFF09", React.createElement("textarea", {
+                "data-field": "memory-content",
+                value: memoryDraft.content,
+                rows: 10,
+                maxLength: 4e3,
+                onChange: (e) => updateDraft({ content: e.target.value }),
+                style: Object.assign({}, memoryInputStyle, { resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" })
+              })),
+              React.createElement(
+                "div",
+                { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" } },
+                memoryField("\u7C7B\u578B", React.createElement("select", {
+                  "data-field": "memory-type",
+                  value: memoryDraft.type,
+                  onChange: (e) => updateDraft({ type: e.target.value }),
+                  style: memoryInputStyle
+                }, MEMORY_TYPE_OPTIONS.map((v) => React.createElement("option", { key: v, value: v }, typeLabel(v))))),
+                memoryField("\u91CD\u8981\u6027 " + Number(memoryDraft.importance).toFixed(2), React.createElement("input", {
+                  type: "range",
+                  "data-field": "memory-importance",
+                  min: 0,
+                  max: 1,
+                  step: 0.05,
+                  value: memoryDraft.importance,
+                  onChange: (e) => updateDraft({ importance: Number(e.target.value) }),
+                  style: { width: "100%", accentColor: "var(--dsw-alias-brand-primary)" }
+                })),
+                memoryField("\u72B6\u6001", React.createElement(
+                  "select",
+                  {
+                    "data-field": "memory-status",
+                    value: memoryDraft.status,
+                    onChange: (e) => updateDraft({ status: e.target.value }),
+                    style: memoryInputStyle
+                  },
+                  React.createElement("option", { value: "active" }, "Core\uFF08\u6BCF\u8F6E\u6CE8\u5165\uFF09"),
+                  React.createElement("option", { value: "dormant" }, "\u4F11\u7720\uFF08\u4E0D\u6CE8\u5165\uFF09")
+                )),
+                memoryField("\u7F6E\u9876", React.createElement(
+                  "label",
+                  {
+                    style: { display: "flex", alignItems: "center", gap: "7px", fontSize: "12px", padding: "8px 0", cursor: "pointer", color: "var(--dsw-alias-label-secondary)" }
+                  },
+                  React.createElement("input", {
+                    type: "checkbox",
+                    "data-field": "memory-pinned",
+                    checked: memoryDraft.pinned === true,
+                    onChange: (e) => updateDraft({ pinned: e.target.checked }),
+                    style: { accentColor: "var(--dsw-alias-brand-primary)", margin: 0 }
+                  }),
+                  React.createElement("span", null, "Core \u6EE1\u5458\u65F6\u4E0D\u88AB\u6324\u6389")
+                ))
+              ),
+              memoryField("\u6807\u7B7E\uFF08\u9017\u53F7\u5206\u9694\uFF09", React.createElement("input", {
+                type: "text",
+                "data-field": "memory-tags",
+                value: memoryDraft.tags,
+                onChange: (e) => updateDraft({ tags: e.target.value }),
+                style: memoryInputStyle
+              }))
+            ) : memoryModal.content ? renderMarkdown(String(memoryModal.content), React) : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "\uFF08\u65E0\u5185\u5BB9\uFF09")),
+            memoryError ? React.createElement("div", {
+              "data-block": "memory-modal-error",
+              style: { padding: "8px 18px", fontSize: "11.5px", color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-bg-layer-2)", borderTop: "1px solid var(--dsw-alias-border-l1)" }
+            }, "\u26A0 " + memoryError) : null,
             // 底部：importance + 时间 + tags + 复制
             React.createElement(
               "div",
@@ -4722,25 +4956,86 @@
               memoryModal.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(memoryModal.createdAt)) : null,
               Array.isArray(memoryModal.tags) && memoryModal.tags.length > 0 ? React.createElement("span", null, memoryModal.tags.map((tag) => "#" + tag).join(" ")) : null,
               React.createElement("span", { style: { flex: "1 1 auto" } }),
-              React.createElement("button", {
-                type: "button",
-                "data-action": "memory-modal-copy",
-                onClick: (e) => {
-                  const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
-                  copyPrompt(text, e, "\u2713 \u5DF2\u590D\u5236", "\u590D\u5236\u5931\u8D25");
-                },
-                style: {
-                  fontSize: "11px",
-                  padding: "4px 10px",
-                  borderRadius: "6px",
-                  background: "transparent",
-                  border: "1px solid var(--dsw-alias-border-l1)",
-                  color: "var(--dsw-alias-label-primary)",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontWeight: "500"
-                }
-              }, "\u{1F4CB} \u590D\u5236\u5168\u6587")
+              memoryDraft ? React.createElement(
+                React.Fragment,
+                null,
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-edit-cancel",
+                  disabled: memoryBusy,
+                  onClick: () => {
+                    setMemoryDraft(null);
+                    setMemoryError(null);
+                  },
+                  style: memoryButtonStyle()
+                }, "\u53D6\u6D88"),
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-edit-save",
+                  disabled: memoryBusy,
+                  onClick: saveMemoryEdit,
+                  style: memoryButtonStyle("primary")
+                }, memoryBusy ? "\u4FDD\u5B58\u4E2D\u2026" : "\u2713 \u4FDD\u5B58")
+              ) : confirmDelete ? React.createElement(
+                React.Fragment,
+                null,
+                React.createElement("span", { style: { color: "var(--dsw-alias-state-error-primary)", fontWeight: "600" } }, "\u6C38\u4E45\u5220\u9664\u540E\u65E0\u6CD5\u6062\u590D\uFF0C\u786E\u5B9A\uFF1F"),
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-delete-cancel",
+                  disabled: memoryBusy,
+                  onClick: () => setConfirmDelete(false),
+                  style: memoryButtonStyle()
+                }, "\u53D6\u6D88"),
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-delete-confirm",
+                  disabled: memoryBusy,
+                  onClick: deleteMemory,
+                  style: memoryButtonStyle("danger")
+                }, memoryBusy ? "\u5220\u9664\u4E2D\u2026" : "\u786E\u8BA4\u6C38\u4E45\u5220\u9664")
+              ) : React.createElement(
+                React.Fragment,
+                null,
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-modal-copy",
+                  onClick: (e) => {
+                    const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
+                    copyPrompt(text, e, "\u2713 \u5DF2\u590D\u5236", "\u590D\u5236\u5931\u8D25");
+                  },
+                  style: memoryButtonStyle()
+                }, "\u{1F4CB} \u590D\u5236\u5168\u6587"),
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-edit-start",
+                  disabled: memoryBusy,
+                  onClick: () => startMemoryEdit(memoryModal),
+                  style: memoryButtonStyle()
+                }, "\u270F\uFE0F \u7F16\u8F91"),
+                isArchivedMemory(memoryModal) ? React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-restore",
+                  disabled: memoryBusy,
+                  onClick: () => setMemoryStatus("active"),
+                  style: memoryButtonStyle()
+                }, "\u21A9 \u6062\u590D") : React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-archive",
+                  disabled: memoryBusy,
+                  onClick: () => setMemoryStatus("archived"),
+                  title: "\u4ECE Core \u548C\u68C0\u7D22\u4E2D\u79FB\u9664\uFF0C\u4E4B\u540E\u53EF\u5728\u300C\u5DF2\u5F52\u6863\u300D\u91CC\u6062\u590D",
+                  style: memoryButtonStyle()
+                }, "\u{1F5C2} \u5F52\u6863"),
+                React.createElement("button", {
+                  type: "button",
+                  "data-action": "memory-delete",
+                  disabled: memoryBusy,
+                  onClick: () => setConfirmDelete(true),
+                  title: "\u7269\u7406\u5220\u9664\uFF0C\u4E0D\u53EF\u6062\u590D",
+                  style: memoryButtonStyle()
+                }, "\u{1F5D1} \u5220\u9664")
+              )
             )
           )
         ) : null;

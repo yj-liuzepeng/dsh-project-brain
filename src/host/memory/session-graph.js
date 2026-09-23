@@ -131,7 +131,7 @@ function pickDetail(g, label, summary) {
 }
 
 const SKIP_EVENT_TYPES = new Set(["rescan", "export", "import", "rollback"]);
-const SUBSTANTIVE_EVENT_TYPES = new Set(["session_summary", "todo", "todo_update", "memory", "memory_supersede"]);
+const SUBSTANTIVE_EVENT_TYPES = new Set(["session_summary", "todo", "todo_update", "memory", "memory_supersede", "memory_rejected"]);
 
 function dayKey(ts) {
   const n = Number(ts) || 0;
@@ -267,6 +267,11 @@ export function buildSessionGraph(brain) {
         g.hasMemory = true;
         g.titles.push(memTitle);
       }
+    }
+    // 「未记住」要原样带进节点标题：用户需要看到的就是那句没记成的原话。
+    if (event.eventType === "memory_rejected") {
+      const rejectedTitle = displayTitle(event);
+      if (rejectedTitle) g.titles.push(rejectedTitle);
     }
     if (event.eventType === "rescan" || event.architectureMode === "full") {
       const triggers = parseTriggerFiles(event);

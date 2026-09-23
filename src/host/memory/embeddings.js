@@ -71,7 +71,9 @@ async function readCache(fs, projectPath) {
   try { return await readJsonl(fs, brainPath(projectPath, CACHE_FILE)); } catch (e) { return []; }
 }
 
-export async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolveCredential, signal, fetchImpl } = {}) {
+// knownMemoryIds：memory.jsonl 里当前存在的全部 id。只有拿到全集才敢清理缓存行——
+// 用调用方传进来的候选子集做 GC，会把没参与本次检索的向量整片删掉，下次要重新付费重建。
+export async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolveCredential, signal, fetchImpl, knownMemoryIds } = {}) {
   const active = activeMemories(memories);
   const modelKey = embeddingModelKey(config);
   const rows = await readCache(fs, projectPath);
@@ -126,8 +128,13 @@ export async function ensureEmbeddingIndex({ fs, projectPath, memories, config, 
   }
 
   if (indexedNow > 0) {
-    const activeIds = new Set(active.map((memory) => memory.id));
-    const wrote = await writeJsonl(fs, brainPath(projectPath, CACHE_FILE), [...currentById.values()].filter((row) => activeIds.has(row.memoryId)));
+    const keepIds = Array.isArray(knownMemoryIds) && knownMemoryIds.length
+      ? new Set(knownMemoryIds.map(String))
+      : null;
+    const nextRows = keepIds
+      ? [...currentById.values()].filter((row) => keepIds.has(String(row.memoryId)))
+      : [...currentById.values()];
+    const wrote = await writeJsonl(fs, brainPath(projectPath, CACHE_FILE), nextRows);
     if (!wrote && !error) {
       error = Object.assign(new Error("Embedding cache could not be written"), { code: "EMBEDDING_CACHE_WRITE_FAILED" });
     }

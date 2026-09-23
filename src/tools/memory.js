@@ -7,6 +7,7 @@ import { brainPath, appendJsonl, readJsonl, writeJsonl } from "../host/store/bra
 import { MEMORY_TYPES, isCoreMemory, isRetrievableMemory, normalizeMemoryType } from "../host/store/brain-logic.js";
 import { resolveProjectPath } from "../host/store/path-resolver.js";
 import { admitMemory, confirmWithSessionLlm, ensureHousekeepOnRead } from "../host/memory/admit.js";
+import { brainTxKey, withWriteLock } from "../host/store/write-lock.js";
 import { resolveSessionRoute } from "../host/architecture/analyzer.js";
 
 function emitPreviewChanged(exec, projectPath) {
@@ -38,8 +39,10 @@ export function buildMemoryAddTool({ fs, sandboxPolicy, getLlm }) {
   return defineTool({
     name: "project_memory_add",
     description:
-      "dsh-project-brain: 写入一条跨会话仍为真的项目记忆（decision/requirement/architecture/bug/lesson）。" +
+      "dsh-project-brain: 写入一条跨会话仍为真的项目记忆（decision/requirement/architecture/bug/lesson/preference）。" +
+      "用户明确表达的长期协作口径与工作偏好用 preference。" +
       "不要写入 changelog、本次改了哪些文件或会话流水账；进行中的工作用 project_todo_*。" +
+      " content 必须自包含：不要出现「这个/那个/上面说的」这类指代词，换成它真正指的东西。" +
       " importance 0~1。工具可能因规则或模型确认拒绝，不要改写成 changelog 再试。",
     parameters: {
       type: { type: "string", description: "记忆类型，枚举：" + MEMORY_TYPES.join(" | ") },
@@ -254,30 +257,34 @@ export function buildMemoryArchiveTool({ fs, sandboxPolicy }) {
         if (!idPrefix) {
           return { ok: false, code: "E_NO_ID", message: "id 必填" };
         }
-        const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
-        // 唯一匹配：id 等于或以 prefix 开头
-        const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
-        if (matches.length === 0) {
-          return { ok: false, code: "E_NOT_FOUND", message: `未找到 id=${idPrefix} 的活跃记忆` };
-        }
-        if (matches.length > 1) {
-          return { ok: false, code: "E_AMBIGUOUS_ID", message: `id=${idPrefix} 匹配到 ${matches.length} 条，请提供更精确的 id` };
-        }
-        const target = matches[0];
         const now = Date.now();
-        const updated = memories.map((m) => {
-          if (m.id !== target.id) return m;
-          return Object.assign({}, m, {
-            status: "archived",
-            updatedAt: now,
-            lastAccessedAt: now,
-            ...(reason ? { archiveReason: reason } : {}),
+        // 读整表到写回之间要独占，否则和并发的 admit / 人工编辑互相覆盖。
+        const archived = await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+          const memories = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+          // 唯一匹配：id 等于或以 prefix 开头
+          const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
+          if (matches.length === 0) {
+            return { ok: false, code: "E_NOT_FOUND", message: `未找到 id=${idPrefix} 的活跃记忆` };
+          }
+          if (matches.length > 1) {
+            return { ok: false, code: "E_AMBIGUOUS_ID", message: `id=${idPrefix} 匹配到 ${matches.length} 条，请提供更精确的 id` };
+          }
+          const hit = matches[0];
+          const updated = memories.map((m) => {
+            if (m.id !== hit.id) return m;
+            return Object.assign({}, m, {
+              status: "archived",
+              updatedAt: now,
+              lastAccessedAt: now,
+              ...(reason ? { archiveReason: reason } : {}),
+            });
           });
+          const ok = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), updated);
+          if (!ok) return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
+          return { ok: true, target: hit };
         });
-        const wrote = await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), updated);
-        if (!wrote) {
-          return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
-        }
+        if (!archived.ok) return archived;
+        const target = archived.target;
         // timeline 事件
         await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
@@ -376,12 +383,16 @@ export function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
         }
         const newEntry = admitted.entry || { id: admitted.id, type, title };
         if (reason && admitted.action === "insert") {
-          const latest = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
-          const withReason = latest.map((m) => {
-            if (m.id !== oldTarget.id) return m;
-            return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
+          // 这是整表重写，必须独占。admitMemory 此时已经释放了锁，不会重入；
+          // 不加锁的话，读到写之间任何并发 append 的新记忆都会被整片吞掉。
+          await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+            const latest = await readJsonl(fs, brainPath(projectPath, "memory.jsonl"));
+            const withReason = latest.map((m) => {
+              if (m.id !== oldTarget.id) return m;
+              return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
+            });
+            return writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), withReason);
           });
-          await writeJsonl(fs, brainPath(projectPath, "memory.jsonl"), withReason);
         }
         await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),

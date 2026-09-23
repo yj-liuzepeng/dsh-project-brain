@@ -15,6 +15,7 @@ import { brainPath, readJson, readJsonl } from "../host/store/brain-files.js";
 import { techStackToType } from "../host/store/brain-logic.js";
 import { resolveProjectPath } from "../host/store/path-resolver.js";
 import { activeMemories, retrieveMemories } from "../host/memory/retrieval.js";
+import { recordMemoryAccess } from "../host/memory/access.js";
 import { embedQuery, ensureEmbeddingIndex } from "../host/memory/embeddings.js";
 import { normalizeMemoryConfig } from "../host/memory/config.js";
 import { resolveSessionRoute, streamLlmText } from "../host/architecture/analyzer.js";
@@ -178,6 +179,7 @@ export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbedd
               memories: activeMemoryList,
               config: memoryConfig,
               resolveCredential: resolveEmbeddingCredential,
+              knownMemoryIds: (memories || []).map((m) => m && m.id).filter(Boolean),
             });
             vectors = indexState.vectors;
             vectorState = { ...vectorState, ...indexState, requested: true, used: false, fallbackReason: indexState.error };
@@ -225,6 +227,13 @@ export function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbedd
           return s < 0 ? null : { ...e, _score: s };
         }).filter(Boolean);
         tlScored.sort((a, b) => (b._score || 0) - (a._score || 0));
+
+        // 命中即「用过」：排序和淘汰都靠 lastAccessedAt 才能认出哪些记忆真的常用。
+        await recordMemoryAccess({
+          fs,
+          projectPath,
+          ids: memScored.map((hit) => hit.memory && hit.memory.id).filter(Boolean),
+        });
 
         const memSources = memScored.map((hit) => ({
           kind: "memory", id: hit.memory.id, type: hit.memory.type, title: hit.memory.title,

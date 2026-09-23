@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 
 import { streamLlmText } from "../architecture/analyzer.js";
 import { appendJsonl, brainPath, readBrain, writeJsonl } from "../store/brain-files.js";
+import { brainTxKey, withWriteLock } from "../store/write-lock.js";
 import {
   estimateTokens,
   isCoreMemory,
@@ -15,11 +16,64 @@ import {
   normalizeMemoryType,
 } from "../store/brain-logic.js";
 
-export const CORE_MAX_ITEMS = 15;
-export const CORE_MAX_TOKENS = 800;
+export const CORE_MAX_ITEMS = 25;
+export const CORE_MAX_TOKENS = 1500;
 export const TITLE_JACCARD_SUGGEST = 0.85;
+// 置顶占掉一半配额就封顶。全都置顶等于没有置顶——淘汰时挑不出victim，
+// 只能回头去淘汰置顶项，那条保证就作废了。
+export const PINNED_RATIO = 0.5;
 
-const DURABLE_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson"]);
+// Core 限额是插件级配置，不是每次调用的参数。集中放一份，让 injector、
+// aggregator、dream 这些拿不到 config 的路径也能跟用户设置保持一致。
+let coreLimits = { maxItems: CORE_MAX_ITEMS, maxTokens: CORE_MAX_TOKENS };
+
+export function setCoreLimits(config) {
+  const items = Number(config && config.coreMaxItems);
+  const tokens = Number(config && config.coreMaxTokens);
+  coreLimits = {
+    maxItems: Number.isFinite(items) && items > 0 ? Math.round(items) : CORE_MAX_ITEMS,
+    maxTokens: Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : CORE_MAX_TOKENS,
+  };
+  return coreLimits;
+}
+
+export function getCoreLimits() {
+  return coreLimits;
+}
+
+export function maxPinnedCount(limits) {
+  const resolved = limits || coreLimits;
+  return Math.max(1, Math.floor(resolved.maxItems * PINNED_RATIO));
+}
+
+export function pinnedMemories(rows) {
+  return (rows || []).filter((m) => m && m.pinned === true && isCoreMemory(m));
+}
+
+const DURABLE_TYPES = new Set(["decision", "requirement", "architecture", "bug", "lesson", "preference"]);
+
+// 指代词：正文出现这些，说明作者默认读者刚看过上下文。跨会话读的人没有那个上下文。
+const DEIXIS_RE = /(这个|这些|这条|这段|这句|这点|这样|这种|这方面|这角度|那个|那些|上述|上面(?:说|提|讲)?的|前面(?:说|提|讲)?的|刚才(?:说|提|讲)?的|如上|此事|本次讨论|你说的|我说的|上文)|\b(?:this|these|those|the above)\b/i;
+
+// 锚点 = 标识符、路径、引号里的专名。带锚点的正文即使有指代词也仍然认得出说的是什么。
+const ANCHOR_RE = /[A-Za-z][A-Za-z0-9._/-]{1,}|[「『《"'`\[(][^\s」』》"'`\])]{2,}[」』》"'`\])]/;
+
+// 既无锚点、又短到这个程度，指代词就是正文的全部内容。
+export const DEIXIS_SELF_CONTAINED_CHARS = 30;
+
+export function findDeixis(text) {
+  const hit = String(text || "").match(DEIXIS_RE);
+  return hit ? hit[0] : "";
+}
+
+export function hasUnresolvedReference(title, content, { maxSelfContainedChars = DEIXIS_SELF_CONTAINED_CHARS } = {}) {
+  const body = String(content || "").trim();
+  const blob = String(title || "") + "\n" + body;
+  if (!findDeixis(blob)) return false;
+  if (maxSelfContainedChars <= 0) return true;
+  if (ANCHOR_RE.test(blob)) return false;
+  return body.replace(/\s+/g, "").length <= maxSelfContainedChars;
+}
 
 export function memoryFingerprint(item) {
   const type = String((item && item.type) || "").toLowerCase();
@@ -137,8 +191,14 @@ export function ruleGate(candidate) {
   } else if (!DURABLE_TYPES.has(type)) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "type_forbidden" };
   }
-  if (content.length < 20) {
+  // user_explicit 的正文是从用户原话提炼的，可以很短但依然自包含（「PostgreSQL 是首选数据库」）。
+  // 把关口从长度挪到「是否解开了指代」上，见下面的 unresolved_reference。
+  const minContent = sourceKind === "user_explicit" ? 12 : 20;
+  if (content.length < minContent) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "content_too_short" };
+  }
+  if (hasUnresolvedReference(title, content)) {
+    return { ok: false, code: "E_ADMIT_RULE", reason: "unresolved_reference" };
   }
   if (isChangelogGenre(title, content)) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "changelog_genre", route: "timeline" };
@@ -152,9 +212,25 @@ function coreTokenSum(rows) {
   }, 0);
 }
 
-export function enforceCoreCap(rows, { pinnedIds = [], now = Date.now() } = {}) {
+// 用户亲手写下或明确要求记住的，比自动抓来的更该留在 Core 里。
+function isUserAuthored(memory) {
+  const source = memory && memory.source;
+  if (!source) return false;
+  return source.kind === "user_explicit" || source.editedBy === "user";
+}
+
+// 最近被检索命中过 = 还在用，别急着挤走。
+export const RECENT_ACCESS_WINDOW_MS = 7 * 86_400_000;
+
+function wasRecentlyAccessed(memory, now) {
+  const at = Number(memory && memory.lastAccessedAt) || 0;
+  return at > 0 && now - at <= RECENT_ACCESS_WINDOW_MS;
+}
+
+export function enforceCoreCap(rows, { pinnedIds = [], now = Date.now(), limits } = {}) {
   const list = (rows || []).map((m) => Object.assign({}, m));
   const pinned = new Set(pinnedIds || []);
+  const { maxItems, maxTokens } = limits || coreLimits;
   let changed = false;
 
   function actives() {
@@ -162,9 +238,22 @@ export function enforceCoreCap(rows, { pinnedIds = [], now = Date.now() } = {}) 
   }
 
   function pickVictim(active) {
-    const unpinned = active.filter((m) => !pinned.has(m.id));
-    const pool = unpinned.length ? unpinned.slice() : active.slice();
+    // 依次放宽：先只考虑没置顶的，再考虑没被本次调用临时 pin 的，最后才是全量。
+    // 置顶有数量上限，正常情况下第一层就能挑出人来。
+    const pools = [
+      active.filter((m) => !pinned.has(m.id) && m.pinned !== true),
+      active.filter((m) => !pinned.has(m.id)),
+      active.slice(),
+    ];
+    const pool = pools.find((p) => p.length > 0);
+    if (!pool) return null;
     pool.sort((a, b) => {
+      const ua = isUserAuthored(a) ? 1 : 0;
+      const ub = isUserAuthored(b) ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      const ra = wasRecentlyAccessed(a, now) ? 1 : 0;
+      const rb = wasRecentlyAccessed(b, now) ? 1 : 0;
+      if (ra !== rb) return ra - rb;
       const ia = Math.round((Number(a.importance) || 0) * 10);
       const ib = Math.round((Number(b.importance) || 0) * 10);
       if (ia !== ib) return ia - ib;
@@ -175,7 +264,7 @@ export function enforceCoreCap(rows, { pinnedIds = [], now = Date.now() } = {}) 
 
   while (true) {
     const active = actives();
-    if (active.length <= CORE_MAX_ITEMS && coreTokenSum(active) <= CORE_MAX_TOKENS) break;
+    if (active.length <= maxItems && coreTokenSum(active) <= maxTokens) break;
     if (!active.length) break;
     const victim = pickVictim(active);
     if (!victim) break;
@@ -234,10 +323,10 @@ function collectSuggestSupersede(rows) {
   return actions;
 }
 
-export function housekeepMemories(rows, { now = Date.now(), pinnedIds = [] } = {}) {
+export function housekeepMemories(rows, { now = Date.now(), pinnedIds = [], limits } = {}) {
   const before = (rows || []).slice();
   const bf = backfillMemoryStatuses(before, now);
-  const cap = enforceCoreCap(bf.rows, { pinnedIds, now });
+  const cap = enforceCoreCap(bf.rows, { pinnedIds, now, limits });
   const suggestions = collectSuggestSupersede(cap.rows);
   const changed = bf.changed || cap.changed;
   const actions = [];
@@ -273,7 +362,8 @@ export function evaluateAdmit(candidate, ctx) {
     return { action: "reject", code: "E_NOT_INITIALIZED", reason: "project not initialized" };
   }
   const working = compactCandidate(Object.assign({}, candidate), channel);
-  const gated = ruleGate(candidate);
+  // 校验 compact 之后的那份：落盘的是 working，拿原文过门会让判定和实际内容对不上。
+  const gated = ruleGate(working);
   if (!gated.ok) {
     return { action: "reject", code: gated.code, reason: gated.reason, route: gated.route };
   }
@@ -407,7 +497,16 @@ async function persistAdmitted({ fs, projectPath, memories, entry, supersedesId,
   return { ok: true, entry, rows: capped.rows };
 }
 
-export async function admitMemory({
+export async function admitMemory(options = {}) {
+  const { fs, projectPath } = options;
+  if (!fs || !projectPath) {
+    return { ok: false, code: "E_NOT_INITIALIZED", message: "missing fs/projectPath" };
+  }
+  // readBrain 到写回之间不能插进别的写入序列，否则两个并发 admit 会各自基于旧快照落盘。
+  return withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => admitMemoryTx(options));
+}
+
+async function admitMemoryTx({
   fs,
   projectPath,
   candidate,
@@ -416,9 +515,6 @@ export async function admitMemory({
   now = Date.now(),
   pinnedIds,
 } = {}) {
-  if (!fs || !projectPath) {
-    return { ok: false, code: "E_NOT_INITIALIZED", message: "missing fs/projectPath" };
-  }
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     return { ok: false, code: "E_NOT_INITIALIZED", message: "project not initialized" };
@@ -514,7 +610,11 @@ export async function admitMemory({
   };
 }
 
-export async function persistHousekeep(fs, projectPath, { now = Date.now(), pinnedIds = [], writeTimeline = true } = {}) {
+export async function persistHousekeep(fs, projectPath, options = {}) {
+  return withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => persistHousekeepTx(fs, projectPath, options));
+}
+
+async function persistHousekeepTx(fs, projectPath, { now = Date.now(), pinnedIds = [], writeTimeline = true } = {}) {
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     return { ok: false, code: "E_NOT_INITIALIZED", changed: false };

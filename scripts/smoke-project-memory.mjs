@@ -9,8 +9,18 @@ import { resolveProjectPath } from "../src/host/store/path-resolver.js";
 import { setupInjector } from "../src/host/injector.js";
 import { summarizeOne } from "../src/host/summarizer.js";
 import { evidenceMatchesTranscript, extractSessionMemories } from "../src/host/memory/session-extractor.js";
-import { detectSignal } from "../src/host/realtime-memory.js";
+import { contextWindow, detectSignal, fallbackCandidate, handleOne } from "../src/host/realtime-memory.js";
+import { admitMemory, enforceCoreCap, getCoreLimits, hasUnresolvedReference, maxPinnedCount } from "../src/host/memory/admit.js";
+import { applyMemoryDelete, applyMemoryEdit, applyMemoryStatus } from "../src/host/memory/edit.js";
+import { ACCESS_THROTTLE_MS, applyAccessTouch } from "../src/host/memory/access.js";
+import { planMemoryVacuum, planTimelineTrim, vacuumBrain } from "../src/host/memory/vacuum.js";
+import { retrieveMemories, trustFactor } from "../src/host/memory/retrieval.js";
+import { appendJsonl, readJsonl, writeJsonl } from "../src/host/store/brain-files.js";
+import { brainTxKey, pendingLockCount, withWriteLock } from "../src/host/store/write-lock.js";
+import { isCoreMemory } from "../src/host/store/brain-logic.js";
 import { buildMemoryArchiveTool, buildMemorySupersedeTool } from "../src/tools/memory.js";
+import { buildDreamTool } from "../src/tools/dream.js";
+import { handleMemoryMutation } from "../src/host/rpc/sidebar.js";
 import { createMemoryConfigRuntime } from "../src/host/memory/config.js";
 
 const root = mkdtempSync(join(tmpdir(), "dsh-brain-memory-"));
@@ -361,7 +371,8 @@ assert.equal(autoDreamResult.autoDream.triggered, true, "housekeep 因 Core cap 
 assert.ok(autoDreamResult.autoDream.evicted > 0, "超额 active 被标 dormant");
 const afterHousekeep = readFileSync(join(projectD, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
 assert.equal(afterHousekeep.length, 32, "housekeep 不得因标题相似删除行");
-assert.ok(afterHousekeep.filter((m) => m.status === "dormant").length >= 17, "超出 15 条的 Core 进入 dormant");
+assert.ok(afterHousekeep.filter((m) => isCoreMemory(m)).length <= getCoreLimits().maxItems, "Core 条数不超过配置上限");
+assert.ok(afterHousekeep.filter((m) => m.status === "dormant").length >= 32 - getCoreLimits().maxItems, "超出上限的 Core 进入 dormant");
 assert.equal(afterHousekeep.filter((m) => m.status === "deleted").length, 0);
 
 const dreamTimeline = readFileSync(join(projectD, ".project-brain", "timeline.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
@@ -426,5 +437,573 @@ let threwReadonly = false;
 try { await readonlyRuntime.updateSettings({ vectorEnabled: true }); } catch (e) { threwReadonly = true; assert.equal(e.code, "SETTINGS_READONLY"); }
 assert.ok(threwReadonly, "writable=false 必须抛错");
 
+// ───────── 实时记忆：指代消解 ─────────
+// 复现真实缺陷：用户说「把这个记住」，真正的内容在上一轮（且是 assistant 说的），
+// 旧实现把正则捕获到的残句「以后对话要从这个角度出发」当成了记忆正文。
+const projectRt = join(root, "project-c");
+writeBrain(projectRt, "realtime", "初始决策");
+
+const priorTurns = [
+  { role: "user", content: [{ type: "text", text: "我要以面试的角度，去沉淀这些项目，把平常工作中的一些项目经历及时沉淀总结，为以后跳槽面试准备" }] },
+  { role: "assistant", content: [{ type: "text", text: "目标：面试素材库（AI 应用 / Agent 工程师方向）。结构：STAR 法则 + 技术亮点 + 可深挖点。身份：主要开发者。" }] },
+];
+const triggerText = "需要你把我这个需求点记住，以后对话要从这个角度出发";
+const realtimeSession = { id: "rt-1", cwd: projectRt, deriveMessages() { return priorTurns; } };
+const realtimeRoute = { provider: "test", model: "test-model" };
+const mockLlm = (payload) => ({ async *stream() {
+  yield { type: "text-delta", index: 0, text: payload };
+  yield { type: "finish", reason: { kind: "stop" } };
+} });
+
+const triggerSignal = detectSignal(triggerText);
+assert.ok(triggerSignal && triggerSignal.strength === "strong", "「把这个记住」是强信号");
+assert.equal(triggerSignal.content, "以后对话要从这个角度出发", "正则捕获到的仍然是那句残句");
+assert.equal(hasUnresolvedReference(triggerSignal.content, triggerSignal.content), true, "残句被判定为未消解指代");
+assert.equal(fallbackCandidate(triggerSignal), null, "指代未消解时兜底不产出候选，且不再凑字数");
+
+// LLM 不可用 → 不写入，留给会话结束的 session-extractor
+const noLlm = await handleOne({ fs: fsAdapter, projectPath: projectRt, sessionId: "rt-1", signal: triggerSignal, session: realtimeSession, llm: null, route: null });
+assert.equal(noLlm.skipped, "needs_context", "无 LLM 且指代未消解 → 不落盘");
+assert.equal(readFileSync(join(projectRt, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").length, 1, "无 LLM 时 memory.jsonl 没有新增行");
+
+// LLM 说解不开 → 同样不写入，不退回原话
+const unresolved = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-1", signal: triggerSignal, session: realtimeSession,
+  llm: mockLlm(JSON.stringify({ resolved: false })), route: realtimeRoute,
+});
+assert.equal(unresolved.skipped, "unresolved_reference", "模型判定解不开 → 不落盘");
+
+// 用户说了「记住」却没记成，必须在 timeline 里留痕，否则用户以为已经记下了
+assert.equal(unresolved.noted, true, "未记住的情况被记录下来");
+const rtTimeline = readFileSync(join(projectRt, ".project-brain", "timeline.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+const rejectEvents = rtTimeline.filter((e) => e.eventType === "memory_rejected");
+assert.equal(rejectEvents.length, 2, "无 LLM 和解不开指代各留一条「未记住」");
+assert.match(rejectEvents[0].title, /^未记住：/, "标题一眼能看出没记成");
+assert.match(rejectEvents[0].title, /以后对话要从这个角度出发/, "标题带上用户的原话");
+assert.equal(rejectEvents[1].rejectReason, "unresolved_reference", "记录了具体原因");
+assert.match(rejectEvents[1].detail, /指的是什么/, "原因写成人话而不是错误码");
+
+// 正常路径：带上下文消解成自包含的 preference
+const refinedPayload = JSON.stringify({
+  resolved: true,
+  type: "preference",
+  title: "项目沉淀一律按面试素材库的口径组织",
+  content: "所有项目沉淀的目标是面试素材库，方向为 AI 应用 / Agent 工程师。结构默认 STAR 法则加技术亮点与可深挖点，突出本人角色、难点、决策与量化结果，不写成项目复盘或团队交接文档。",
+  importance: 0.9,
+});
+const refined = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-1", signal: triggerSignal, session: realtimeSession,
+  llm: mockLlm(refinedPayload), route: realtimeRoute,
+});
+assert.equal(refined.appended, true, "带上下文消解后成功落盘");
+assert.equal(refined.refineStatus, "refined", "走的是 LLM 提炼路径");
+const rtRows = readFileSync(join(projectRt, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+const rtEntry = rtRows[rtRows.length - 1];
+assert.equal(rtEntry.type, "preference", "用户工作偏好落成 preference 类型");
+assert.match(rtEntry.content, /面试素材库/, "正文带上了上一轮里的真实指代对象");
+assert.match(rtEntry.content, /STAR/, "正文带上了 assistant 那轮说的结构口径");
+assert.equal(/这个角度/.test(rtEntry.content), false, "正文不再包含未消解的指代");
+assert.equal(/这是用户明确要求记住的长期偏好/.test(rtEntry.content), false, "不再用套话凑长度");
+assert.equal(rtEntry.source.refined, true, "source 标记为已提炼");
+assert.equal(rtEntry.source.trigger, triggerText, "source 保留用户触发原话");
+
+// 重申同一条偏好 → supersede 旧条目，而不是在 Core 里堆同义项
+const restatedPayload = JSON.stringify({
+  resolved: true,
+  type: "preference",
+  title: "项目沉淀一律按面试素材库的口径组织",
+  content: "所有项目沉淀的目标是面试素材库，方向为 AI 应用 / Agent 工程师。结构默认 STAR 法则加技术亮点与可深挖点，并补充难点与踩坑复盘。",
+  importance: 0.9,
+});
+const restated = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-2", signal: detectSignal("记住：沉淀口径不要变"), session: realtimeSession,
+  llm: mockLlm(restatedPayload), route: realtimeRoute,
+});
+assert.equal(restated.appended, true, "重申时仍然落盘");
+assert.equal(restated.supersedesId, rtEntry.id, "重申走 supersede 而不是新增同义条目");
+const afterRestate = readFileSync(join(projectRt, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(afterRestate.find((m) => m.id === rtEntry.id).status, "superseded", "旧条目被标记 superseded");
+assert.equal(afterRestate.filter((m) => m.type === "preference" && isCoreMemory(m)).length, 1, "Core 里只剩一条偏好");
+
+// 模型没按格式返回 JSON 时要重试一次，而不是一次失败就放弃
+let refineCalls = 0;
+const flakyJsonLlm = { async *stream() {
+  refineCalls += 1;
+  const payload = refineCalls === 1
+    ? "好的，我来整理一下：\n这条记忆讲的是回答风格要求。"   // 第一次答成自然语言
+    : JSON.stringify({ resolved: true, type: "preference", title: "回答须言简意赅直击重点", content: "用户要求所有回答言简意赅、直击重点，不铺垫不啰嗦，适用于全部对话场景。", importance: 0.85 });
+  yield { type: "text-delta", index: 0, text: payload };
+  yield { type: "finish", reason: { kind: "stop" } };
+} };
+const retriedSignal = detectSignal("帮我记住我说的首句");
+const retried = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-retry", signal: retriedSignal, session: realtimeSession,
+  llm: flakyJsonLlm, route: realtimeRoute,
+});
+assert.equal(refineCalls, 2, "第一次输出不是 JSON 时会重排一次");
+assert.equal(retried.appended, true, "重试成功后正常落盘，而不是报「未记住」");
+
+// 两次都不是 JSON → 放弃，但失败原因要说准，并留下模型的原始输出供排查
+const badJsonLlm = { async *stream() {
+  yield { type: "text-delta", index: 0, text: "我觉得这条不用记吧，你看呢？" };
+  yield { type: "finish", reason: { kind: "stop" } };
+} };
+const badJson = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-badjson", signal: detectSignal("帮我记住我说的准则"), session: realtimeSession,
+  llm: badJsonLlm, route: realtimeRoute,
+});
+assert.equal(badJson.refineStatus, "refine_unparseable", "两次都解析不了才放弃");
+const badJsonTimeline = readFileSync(join(projectRt, ".project-brain", "timeline.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+const badJsonEvent = badJsonTimeline.filter((e) => e.eventType === "memory_rejected").pop();
+assert.match(badJsonEvent.detail, /没按要求返回 JSON/, "原因写的是格式问题，不是「缺少模型」");
+assert.doesNotMatch(badJsonEvent.detail, /缺少可用的.*模型/, "模型明明可用，不能把人引去查配置");
+assert.match(badJsonEvent.sample, /我觉得这条不用记吧/, "留下模型的原始输出，排查时比任何描述都有用");
+
+// 弱信号（「以后都…」）现在也会落盘，但门槛更严、标记不同
+const weakSignal = detectSignal("以后都用 PostgreSQL，别再用 MySQL 了");
+assert.equal(weakSignal.strength, "weak", "「以后都…」仍归为弱信号");
+
+// 弱信号 + 无 LLM → 安静跳过，不写「未记住」（用户并没要求记）
+const weakNoLlm = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-w0", signal: weakSignal, session: realtimeSession,
+  llm: null, route: null,
+});
+assert.equal(weakNoLlm.skipped, "weak_unresolved", "弱信号解不开就跳过");
+assert.equal(weakNoLlm.noted, undefined, "弱信号失败不写「未记住」，避免报没人要求的事");
+
+const weakPayload = JSON.stringify({
+  resolved: true,
+  type: "decision",
+  title: "订单库统一用 PostgreSQL",
+  content: "项目约定订单相关数据一律存 PostgreSQL，不再新增 MySQL 依赖，理由是需要事务能力。",
+  importance: 0.95,
+});
+const weakAdmitted = await handleOne({
+  fs: fsAdapter, projectPath: projectRt, sessionId: "rt-w1", signal: weakSignal, session: realtimeSession,
+  llm: mockLlm(weakPayload), route: realtimeRoute,
+});
+assert.equal(weakAdmitted.appended, true, "弱信号经 LLM 消解后可以落盘");
+const weakRows = readFileSync(join(projectRt, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+const weakEntry = weakRows[weakRows.length - 1];
+assert.equal(weakEntry.source.kind, "user_intent_weak", "弱信号不冒充 user_explicit");
+assert.ok(weakEntry.tags.includes("weak_signal"), "打上 weak_signal 标签");
+assert.ok(weakEntry.importance <= 0.7, "弱信号重要性被压一档，不能靠模型自报 0.95");
+assert.ok(weakEntry.confidence <= 0.7, "弱信号可信度被压一档");
+
+// 上下文窗口必须带上 assistant 消息，否则指代永远解不开
+const window = contextWindow(realtimeSession);
+assert.match(window, /ASSISTANT: /, "上下文窗口包含 assistant 消息");
+assert.match(window, /面试素材库/, "上下文窗口带上了真正的指代对象");
+
+// 长对话里「这个对话的第一句」也要能解开：只取末尾 N 条的话，开头永远在窗口外
+const longSession = { deriveMessages() {
+  const msgs = [{ role: "user", content: [{ type: "text", text: "开场白：这个项目要沉淀成面试素材库" }] }];
+  for (let i = 0; i < 40; i++) {
+    msgs.push({ role: i % 2 === 0 ? "assistant" : "user", content: [{ type: "text", text: "中间第 " + i + " 轮的闲聊内容" }] });
+  }
+  msgs.push({ role: "user", content: [{ type: "text", text: "最后一句：收尾确认" }] });
+  return msgs;
+} };
+const longWindow = contextWindow(longSession);
+assert.match(longWindow, /开场白：这个项目要沉淀成面试素材库/, "长对话里开头那句仍在窗口内");
+assert.match(longWindow, /最后一句：收尾确认/, "最近的消息也在窗口内");
+assert.match(longWindow, /中间省略/, "中间轮次被省略时有明确标记");
+assert.equal(longWindow.includes("中间第 20 轮"), false, "中间大段确实被省略，不会撑爆预算");
+assert.ok(longWindow.length <= 7000, "窗口不超过字符预算");
+
+// 带锚点的正文不该被指代门误伤
+assert.equal(hasUnresolvedReference("网关约定", "所有对外 API 必须走这个网关，内网调用不走。"), false, "含标识符锚点的短正文不算未消解");
+assert.equal(hasUnresolvedReference("事务约定", "业务数据库必须支持事务能力，用于保障订单写入一致性和故障恢复。"), false, "无指代词的正文直接放行");
+
+// ───────── 人工维护记忆：编辑 / 归档 / 恢复 / 永久删除 ─────────
+const editRows = [
+  { id: "mem-edit-1", type: "context", title: "旧标题", content: "这条记忆的内容需要被人工修正，原文写得不清楚。", importance: 0.5, status: "active", tags: ["realtime"], source: { kind: "user_explicit", fingerprint: "stale-fingerprint" }, createdAt: 1000, updatedAt: 1000 },
+  { id: "mem-edit-2", type: "decision", title: "另一条决策", content: "项目决定用 PostgreSQL 承载订单数据，因为需要事务能力。", importance: 0.8, status: "active", createdAt: 2000, updatedAt: 2000 },
+];
+
+// 编辑：原地改，id 与 createdAt 不变
+const edited = applyMemoryEdit(editRows, {
+  id: "mem-edit-1",
+  patch: { title: "项目沉淀按面试素材库口径组织", content: "所有项目沉淀的目标是面试素材库，结构默认 STAR 加技术亮点。", type: "preference", importance: 0.9, status: "active", tags: ["preference", "user"] },
+  now: 5000,
+});
+assert.equal(edited.ok, true, "编辑成功");
+assert.equal(edited.changed, true, "编辑标记为已改动");
+assert.equal(edited.entry.id, "mem-edit-1", "编辑保留原 id");
+assert.equal(edited.entry.createdAt, 1000, "编辑保留原 createdAt");
+assert.equal(edited.entry.updatedAt, 5000, "编辑刷新 updatedAt");
+assert.equal(edited.entry.type, "preference", "类型可改");
+assert.equal(edited.entry.importance, 0.9, "重要性可改");
+assert.deepEqual(edited.entry.tags, ["preference", "user"], "标签可改");
+assert.equal(edited.entry.source.kind, "user_explicit", "来源 kind 保留");
+assert.notEqual(edited.entry.source.fingerprint, "stale-fingerprint", "正文改了必须重算 fingerprint");
+assert.equal(edited.entry.source.editedBy, "user", "留下人工编辑痕迹");
+assert.equal(edited.rows.length, 2, "编辑不新增行");
+
+// 编辑校验
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { title: "   " } }).code, "E_NO_TITLE", "空标题被拒");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { content: "太短" } }).code, "E_CONTENT_TOO_SHORT", "正文过短被拒");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { type: "nonsense" } }).code, "E_INVALID_TYPE", "非法类型被拒");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { importance: 3 } }).code, "E_INVALID_IMPORTANCE", "越界重要性被拒");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { status: "archived" } }).code, "E_INVALID_STATUS", "归档不能走编辑表单");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-nope", patch: { title: "x" } }).code, "E_NOT_FOUND", "id 不存在");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit", patch: { title: "x" } }).code, "E_AMBIGUOUS_ID", "前缀命中多条要报歧义");
+assert.equal(applyMemoryEdit(editRows, { id: "mem-edit-1", patch: { title: "旧标题" }, now: 5000 }).changed, false, "没有实际变化 → changed=false");
+
+// 归档 → 从 Core 消失但行还在
+const archived = applyMemoryStatus(editRows, { id: "mem-edit-1", status: "archived", reason: "内容空洞", now: 6000 });
+assert.equal(archived.ok, true, "归档成功");
+assert.equal(archived.rows.length, 2, "归档保留行");
+assert.equal(archived.entry.status, "archived", "状态变 archived");
+assert.equal(archived.entry.archiveReason, "内容空洞", "归档理由被记下");
+assert.equal(archived.rows.filter(isCoreMemory).length, 1, "归档后不再算 Core");
+
+// 恢复 → 清掉归档痕迹，否则 housekeep 下轮又按旧理由归回去
+const restored = applyMemoryStatus(archived.rows, { id: "mem-edit-1", status: "active", now: 7000 });
+assert.equal(restored.ok, true, "恢复成功");
+assert.equal(restored.entry.status, "active", "状态回到 active");
+assert.equal(restored.entry.archiveReason, undefined, "恢复清掉 archiveReason");
+assert.equal(restored.rows.filter(isCoreMemory).length, 2, "恢复后重新进 Core");
+
+// 归档态的记忆仍可被 id 命中并恢复；但重复归档是 no-op
+assert.equal(applyMemoryStatus(archived.rows, { id: "mem-edit-1", status: "archived", now: 8000 }).changed, false, "重复归档 → changed=false");
+
+// 永久删除 → 物理删行，并清理指向它的悬空 supersededBy
+const withPointer = archived.rows.map((m) => (m.id === "mem-edit-2" ? Object.assign({}, m, { supersededBy: "mem-edit-1" }) : m));
+const deleted = applyMemoryDelete(withPointer, { id: "mem-edit-1" });
+assert.equal(deleted.ok, true, "删除成功");
+assert.equal(deleted.rows.length, 1, "删除后物理少一行");
+assert.equal(deleted.rows.find((m) => m.id === "mem-edit-1"), undefined, "目标行已消失");
+assert.equal(deleted.rows[0].supersededBy, undefined, "指向被删条目的悬空指针被清理");
+assert.equal(applyMemoryDelete(editRows, { id: "mem-nope" }).code, "E_NOT_FOUND", "删除不存在的 id 会报错");
+
+// ───────── 热度回升：命中即「用过」 ─────────
+const accessRows = [
+  { id: "mem-hot", type: "decision", title: "常被查到的决策", content: "这条会被反复命中，用来验证热度回升。", importance: 0.5, status: "dormant", createdAt: 1000, updatedAt: 1000 },
+  { id: "mem-cold", type: "decision", title: "没人查的决策", content: "这条从来没被命中过，用来做对照组。", importance: 0.5, status: "active", createdAt: 1000, updatedAt: 1000 },
+];
+const touched = applyAccessTouch(accessRows, ["mem-hot"], 500000);
+assert.equal(touched.changed, true, "首次命中会写 lastAccessedAt");
+assert.equal(touched.rows.find((m) => m.id === "mem-hot").lastAccessedAt, 500000, "记录命中时间");
+assert.equal(touched.rows.find((m) => m.id === "mem-hot").accessCount, 1, "命中次数从 1 开始");
+assert.equal(touched.rows.find((m) => m.id === "mem-cold").lastAccessedAt, undefined, "没命中的不动");
+
+// 节流：一轮对话里连续 ask 不该把整表重写好几遍
+const throttled = applyAccessTouch(touched.rows, ["mem-hot"], 500000 + 60_000);
+assert.equal(throttled.changed, false, "节流窗口内重复命中不再写盘");
+const afterWindow = applyAccessTouch(touched.rows, ["mem-hot"], 500000 + ACCESS_THROTTLE_MS + 1);
+assert.equal(afterWindow.changed, true, "超过节流窗口后重新记一次");
+assert.equal(afterWindow.rows.find((m) => m.id === "mem-hot").accessCount, 2, "命中次数累加");
+
+// 排序：常被查到的记忆不该因为很久没改就沉下去
+const hotNow = Date.now();
+const rankRows = [
+  { id: "r-hot", type: "decision", title: "事务一致性约定", content: "订单写入必须走事务，用于保障跨表一致性。", importance: 0.6, confidence: 0.8, status: "active", createdAt: hotNow - 200 * 86400000, updatedAt: hotNow - 200 * 86400000, lastAccessedAt: hotNow },
+  { id: "r-cold", type: "decision", title: "事务一致性备注", content: "订单写入必须走事务，用于保障跨表一致性。", importance: 0.6, confidence: 0.8, status: "active", createdAt: hotNow - 200 * 86400000, updatedAt: hotNow - 200 * 86400000 },
+];
+const ranked = retrieveMemories({ memories: rankRows, query: "事务", topK: 2, now: hotNow });
+assert.equal(ranked[0].memory.id, "r-hot", "近期被命中过的排在前面");
+
+// 淘汰：最近用过的比没人用的更晚被挤出 Core
+const evictRows = [
+  { id: "e-used", type: "decision", title: "用过的", content: "最近被检索命中过的记忆，应该更晚被淘汰。", importance: 0.5, status: "active", createdAt: 1, updatedAt: 1, lastAccessedAt: hotNow, source: { kind: "agent" } },
+  { id: "e-idle", type: "decision", title: "没用过的", content: "从来没被命中过的记忆，应该先被挤出 Core。", importance: 0.5, status: "active", createdAt: 9000, updatedAt: 9000, source: { kind: "agent" } },
+];
+const evicted = enforceCoreCap(evictRows, { limits: { maxItems: 1, maxTokens: 100000 }, now: hotNow });
+assert.equal(evicted.rows.find((m) => m.id === "e-used").status, "active", "最近用过的留在 Core");
+assert.equal(evicted.rows.find((m) => m.id === "e-idle").status, "dormant", "没人用的先被挤成 dormant");
+
+// ───────── 低可信度记忆要被打折 ─────────
+assert.equal(trustFactor(0.9), 1, "可信度达标不打折");
+assert.equal(trustFactor(0.6), 1, "刚好到阈值不打折");
+assert.ok(trustFactor(0.4) < 0.7, "grounding 失败（0.4）明显打折");
+assert.ok(trustFactor(0.4) > trustFactor(0.2), "可信度越低折扣越狠");
+assert.ok(trustFactor(0.01) >= 0.35, "打折有下限，不会把记忆完全抹掉");
+
+const trustNow = Date.now();
+const trustRows = [
+  { id: "t-solid", type: "decision", title: "数据库选型", content: "订单库选 PostgreSQL，因为需要事务能力。", importance: 0.7, confidence: 0.9, status: "active", createdAt: trustNow, updatedAt: trustNow },
+  { id: "t-shaky", type: "decision", title: "数据库选型备选", content: "订单库选 PostgreSQL，因为需要事务能力。", importance: 0.75, confidence: 0.4, status: "active", createdAt: trustNow, updatedAt: trustNow },
+];
+const trustRanked = retrieveMemories({ memories: trustRows, query: "数据库", topK: 2, now: trustNow });
+assert.equal(trustRanked[0].memory.id, "t-solid", "重要性略低但可信的，排在疑似幻觉前面");
+
+// ───────── Core 保障：置顶 / 容量 / 来源优先级 ─────────
+const capLimits = { maxItems: 3, maxTokens: 100000 };
+const makeRow = (id, extra) => Object.assign({
+  id,
+  type: "decision",
+  title: "记忆 " + id,
+  content: "用来验证 Core 容量淘汰顺序的占位正文，长度足够通过校验。",
+  importance: 0.5,
+  status: "active",
+  createdAt: 1000,
+  updatedAt: 1000,
+}, extra || {});
+
+// 置顶的不被挤掉，哪怕它重要性最低、最旧
+const pinRows = [
+  makeRow("m-pinned", { pinned: true, importance: 0.1, updatedAt: 1 }),
+  makeRow("m-a", { importance: 0.9, updatedAt: 9000 }),
+  makeRow("m-b", { importance: 0.8, updatedAt: 8000 }),
+  makeRow("m-c", { importance: 0.7, updatedAt: 7000 }),
+  makeRow("m-d", { importance: 0.6, updatedAt: 6000 }),
+];
+const pinCapped = enforceCoreCap(pinRows, { limits: capLimits, now: 10000 });
+assert.equal(pinCapped.rows.find((m) => m.id === "m-pinned").status, "active", "置顶的记忆不会被容量淘汰挤掉");
+assert.equal(pinCapped.rows.filter(isCoreMemory).length, 3, "淘汰到配置上限为止");
+
+// 用户亲手写的比自动抓的更晚被淘汰
+const authorRows = [
+  makeRow("m-auto-1", { importance: 0.5, updatedAt: 9000, source: { kind: "agent" } }),
+  makeRow("m-auto-2", { importance: 0.5, updatedAt: 8000, source: { kind: "session_semantic" } }),
+  makeRow("m-user", { importance: 0.5, updatedAt: 1, source: { kind: "user_explicit" } }),
+  makeRow("m-edited", { importance: 0.5, updatedAt: 2, source: { kind: "agent", editedBy: "user" } }),
+];
+const authorCapped = enforceCoreCap(authorRows, { limits: { maxItems: 2, maxTokens: 100000 }, now: 10000 });
+assert.equal(authorCapped.rows.find((m) => m.id === "m-user").status, "active", "user_explicit 的记忆最后才被淘汰");
+assert.equal(authorCapped.rows.find((m) => m.id === "m-edited").status, "active", "人工编辑过的记忆最后才被淘汰");
+assert.equal(authorCapped.rows.find((m) => m.id === "m-auto-1").status, "dormant", "自动抓的先被挤成 dormant");
+
+// 置顶有数量上限：全部置顶等于没有置顶
+const pinLimit = maxPinnedCount(capLimits);
+assert.equal(pinLimit, 1, "置顶上限 = 容量的一半（向下取整，至少 1）");
+const alreadyPinned = [
+  makeRow("p-1", { pinned: true }),
+  makeRow("p-2"),
+];
+const pinRejected = applyMemoryEdit(alreadyPinned, { id: "p-2", patch: { pinned: true }, limits: capLimits });
+assert.equal(pinRejected.code, "E_PIN_LIMIT", "超出置顶上限时拒绝并给出原因");
+const pinAccepted = applyMemoryEdit(alreadyPinned, { id: "p-1", patch: { pinned: false }, limits: capLimits });
+assert.equal(pinAccepted.ok, true, "取消置顶不受上限限制");
+assert.equal(pinAccepted.entry.pinned, undefined, "取消置顶后字段被移除而不是留 false");
+
+// ───────── vacuum：主文件瘦身，但绝不真删 ─────────
+const vacNow = Date.now();
+const old = (days) => vacNow - days * 86400000;
+const vacConfig = { vacuumMemoryRetainDays: 90, vacuumMemoryMinRetained: 0, vacuumTimelineMaxEvents: 3, vacuumTimelineRetainDays: 180 };
+const vacRows = [
+  { id: "v-active", type: "decision", title: "活跃决策", content: "还在用的决策，任何情况下都不该被搬走。", status: "active", updatedAt: old(999) },
+  { id: "v-dormant", type: "decision", title: "休眠决策", content: "休眠只是不注入，仍然可检索，不该被搬走。", status: "dormant", updatedAt: old(999) },
+  { id: "v-old", type: "decision", title: "过期归档", content: "归档很久且没人引用，可以搬到 archive。", status: "archived", updatedAt: old(200) },
+  { id: "v-fresh", type: "decision", title: "新归档", content: "刚归档不久，还在保留期内，先留着。", status: "archived", updatedAt: old(10) },
+  { id: "v-pinned", type: "decision", title: "置顶但已归档", content: "用户置顶过的条目，即使归档也别动。", status: "archived", pinned: true, updatedAt: old(300) },
+  { id: "v-referenced", type: "decision", title: "被引用的旧版", content: "它是某条现行记忆的前身，证据链要留着。", status: "superseded", updatedAt: old(300) },
+  { id: "v-successor", type: "decision", title: "现行版本", content: "取代了上面那条旧版，指向它作为证据链。", status: "active", supersededBy: null, source: { supersedes: "v-referenced" }, updatedAt: vacNow },
+];
+const vacPlan = planMemoryVacuum(vacRows, { now: vacNow, config: vacConfig });
+const evictedIds = vacPlan.evict.map((m) => m.id);
+assert.deepEqual(evictedIds, ["v-old"], "只搬走过期、无人引用、非置顶的归档行");
+assert.equal(vacPlan.keep.length, 6, "其余全部留在主文件");
+assert.equal(vacPlan.keep.some((m) => m.id === "v-active"), true, "活跃记忆绝不被搬走");
+assert.equal(vacPlan.keep.some((m) => m.id === "v-dormant"), true, "dormant 仍可检索，不被搬走");
+assert.equal(vacPlan.keep.some((m) => m.id === "v-pinned"), true, "置顶的即使归档也不搬");
+assert.equal(vacPlan.keep.some((m) => m.id === "v-referenced"), true, "被 supersedes 指向的证据链留着");
+
+// 保留下限：宁可不瘦身也别把归档区一次清空
+const floorPlan = planMemoryVacuum(vacRows, { now: vacNow, config: Object.assign({}, vacConfig, { vacuumMemoryMinRetained: 200 }) });
+assert.equal(floorPlan.evict.length, 0, "归档总数没超过保留下限时一行都不搬");
+
+// timeline 截断要留住第一屏依赖的锚点
+const vacEvents = [
+  { id: "e-init", eventType: "init", title: "项目初始化", occurredAt: old(900) },
+  { id: "e-sum-old", eventType: "session_summary", title: "旧摘要", occurredAt: old(800) },
+  { id: "e-sum-new", eventType: "session_summary", title: "最新摘要", occurredAt: old(400) },
+  { id: "e-noise-1", eventType: "memory", title: "杂项 1", occurredAt: old(500) },
+  { id: "e-noise-2", eventType: "memory", title: "杂项 2", occurredAt: old(3) },
+  { id: "e-noise-3", eventType: "memory", title: "杂项 3", occurredAt: old(2) },
+  { id: "e-noise-4", eventType: "memory", title: "杂项 4", occurredAt: old(1) },
+];
+const trimPlan = planTimelineTrim(vacEvents, { now: vacNow, config: vacConfig });
+const trimKeptIds = trimPlan.keep.map((e) => e.id);
+assert.ok(trimKeptIds.includes("e-init"), "init 是任务动态的主干起点，再旧也留");
+assert.ok(trimKeptIds.includes("e-sum-new"), "最新 session_summary 是第一屏「最近做什么」的来源，必须留");
+assert.equal(trimKeptIds.includes("e-sum-old"), false, "旧摘要超出保留窗口，可以搬走");
+assert.equal(trimKeptIds.includes("e-noise-1"), false, "超出保留天数的杂项被搬走");
+assert.ok(trimPlan.evict.length > 0, "确实有事件被搬走");
+assert.equal(trimPlan.keep.length + trimPlan.evict.length, vacEvents.length, "搬走的加留下的等于总数，没有凭空消失");
+
+// 端到端：先写 archive 再缩主文件，数据找得回来
+const vacProject = join(root, "vacuum");
+writeBrain(vacProject, "vacuum", "基线决策");
+writeFileSync(join(vacProject, ".project-brain", "memory.jsonl"), vacRows.map((m) => JSON.stringify(m)).join("\n") + "\n");
+writeFileSync(join(vacProject, ".project-brain", "timeline.jsonl"), vacEvents.map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+const vacDry = await vacuumBrain({ fs: fsAdapter, projectPath: vacProject, config: vacConfig, now: vacNow, dryRun: true });
+assert.equal(vacDry.dryRun, true, "dryRun 默认只出计划");
+assert.equal(vacDry.plan.memory.evicted, 1, "计划里报了会搬走多少条记忆");
+assert.equal(readFileSync(join(vacProject, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").length, 7, "dryRun 不碰文件");
+
+const vacRun = await vacuumBrain({ fs: fsAdapter, projectPath: vacProject, config: vacConfig, now: vacNow, dryRun: false });
+assert.equal(vacRun.ok, true, "vacuum 执行成功");
+assert.equal(vacRun.changed, true, "确实做了改动");
+const vacMain = readFileSync(join(vacProject, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(vacMain.length, 6, "主文件真的变小了");
+assert.equal(vacMain.some((m) => m.id === "v-old"), false, "过期归档已移出主文件");
+
+const memArchive = vacRun.archives.find((a) => a.kind === "memory");
+assert.ok(memArchive, "记录了归档文件路径");
+const archivedRows = readFileSync(join(vacProject, ".project-brain", memArchive.path), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(archivedRows.length, 1, "被搬走的行完整落在 archive 里");
+assert.equal(archivedRows[0].id, "v-old", "搬走的就是那条过期归档，数据没丢");
+
+// 重复跑不该再动任何东西
+const vacAgain = await vacuumBrain({ fs: fsAdapter, projectPath: vacProject, config: vacConfig, now: vacNow, dryRun: false });
+assert.equal(vacAgain.changed, false, "已经没有可搬的行时不再写文件");
+assert.equal(vacAgain.archives.length, 0, "空跑不产生新的 archive 文件");
+
+// project_dream 工具层：light 不碰主文件体积，full 才 vacuum
+const dreamProject = join(root, "dream-full");
+writeBrain(dreamProject, "dream-full", "基线决策");
+writeFileSync(join(dreamProject, ".project-brain", "memory.jsonl"), vacRows.map((m) => JSON.stringify(m)).join("\n") + "\n");
+writeFileSync(join(dreamProject, ".project-brain", "timeline.jsonl"), vacEvents.map((e) => JSON.stringify(e)).join("\n") + "\n");
+const dreamTool = buildDreamTool({ fs: fsAdapter, sandboxPolicy: null, getMemoryConfig: () => vacConfig });
+const dreamExec = { sessionId: "dream-1", session: { id: "dream-1", header: { cwd: dreamProject } } };
+
+const lightRun = await dreamTool.execute({ mode: "light", dryRun: false, path: dreamProject }, dreamExec);
+assert.equal(lightRun.ok, true, "light 模式执行成功");
+assert.equal(lightRun.data.vacuum, undefined, "light 模式不做 vacuum");
+assert.equal(readFileSync(join(dreamProject, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").length, 7, "light 不减少主文件行数");
+
+const fullDry = await dreamTool.execute({ mode: "full", dryRun: true, path: dreamProject }, dreamExec);
+assert.ok(fullDry.data.vacuum, "full + dryRun 会给出 vacuum 计划");
+assert.equal(fullDry.data.summary.vacuumCandidates > 0, true, "计划里报了待搬行数");
+assert.equal(readFileSync(join(dreamProject, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").length, 7, "full + dryRun 仍然不碰文件");
+
+const fullRun = await dreamTool.execute({ mode: "full", dryRun: false, path: dreamProject }, dreamExec);
+assert.equal(fullRun.ok, true, "full 模式执行成功");
+assert.ok(fullRun.data.committed.vacuumed > 0, "报告了实际搬走多少行");
+assert.ok(fullRun.data.archives.length > 0, "返回 archive 文件路径供用户查找");
+const dreamMain = readFileSync(join(dreamProject, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n");
+assert.ok(dreamMain.length < 7, "full 模式让主文件真的变小");
+assert.match(fullRun.data.note, /archive/, "note 里说明数据搬到哪了");
+
+// ───────── 并发写入不丢数据 ─────────
+// fs 只有覆盖写，append 是「读全文 → 拼接 → 写全文」。没有串行化时，
+// 并发的 append 会各自基于旧快照写回，后写的把先写的抹掉。
+const concurrentDir = join(root, "concurrent");
+mkdirSync(join(concurrentDir, ".project-brain"), { recursive: true });
+const concurrentFile = join(concurrentDir, ".project-brain", "timeline.jsonl");
+writeFileSync(concurrentFile, "");
+
+const APPEND_N = 40;
+await Promise.all(
+  Array.from({ length: APPEND_N }, (_, i) =>
+    appendJsonl(fsAdapter, concurrentFile, { id: "evt-" + i, seq: i })),
+);
+const appendedRows = readFileSync(concurrentFile, "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(appendedRows.length, APPEND_N, APPEND_N + " 条并发 append 全部落盘，一条都不丢");
+assert.equal(new Set(appendedRows.map((r) => r.seq)).size, APPEND_N, "并发 append 没有重复或覆盖");
+
+// 并发 admit：两条不同记忆同时写入，必须都在
+const concurrentBrain = join(root, "concurrent-admit");
+writeBrain(concurrentBrain, "concurrent", "基线决策");
+const admitCandidate = (n) => ({
+  type: "decision",
+  title: "并发决策 " + n,
+  content: "第 " + n + " 条并发写入的决策，用于验证读整表到写回之间没有被别的序列插进来。",
+  importance: 0.6,
+  source: { kind: "agent" },
+});
+const admitResults = await Promise.all(
+  Array.from({ length: 6 }, (_, i) =>
+    admitMemory({
+      fs: fsAdapter,
+      projectPath: concurrentBrain,
+      candidate: admitCandidate(i),
+      channel: "automatic",
+      llmConfirm: { admit: true },
+    })),
+);
+assert.equal(admitResults.filter((r) => r.ok && r.action === "insert").length, 6, "6 条并发 admit 全部 insert");
+const admitRows = readFileSync(join(concurrentBrain, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(admitRows.filter((m) => /^并发决策/.test(m.title)).length, 6, "并发 admit 的 6 条都在文件里");
+
+// admit 与整表重写（归档）并发：两边的结果都必须保留
+const mixedTarget = admitRows.find((m) => m.title === "并发决策 0");
+await Promise.all([
+  admitMemory({
+    fs: fsAdapter,
+    projectPath: concurrentBrain,
+    candidate: admitCandidate(99),
+    channel: "automatic",
+    llmConfirm: { admit: true },
+  }),
+  withWriteLock(brainTxKey(concurrentBrain, "memory.jsonl"), async () => {
+    const rows = await readJsonl(fsAdapter, join(concurrentBrain, ".project-brain", "memory.jsonl"));
+    const next = applyMemoryStatus(rows, { id: mixedTarget.id, status: "archived", reason: "并发验证" });
+    return writeJsonl(fsAdapter, join(concurrentBrain, ".project-brain", "memory.jsonl"), next.rows);
+  }),
+]);
+const mixedRows = readFileSync(join(concurrentBrain, ".project-brain", "memory.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+assert.equal(mixedRows.filter((m) => m.title === "并发决策 99").length, 1, "整表重写没有吞掉并发 append 的新记忆");
+assert.equal(mixedRows.find((m) => m.id === mixedTarget.id).status, "archived", "append 没有回滚掉并发的整表重写");
+assert.equal(pendingLockCount(), 0, "所有写入完成后锁队列应排空，不泄漏");
+
+// 重入检测：持锁期间再取同一把锁必须当场报错，而不是自己等自己
+await assert.rejects(
+  withWriteLock("reentry-key", () => withWriteLock("reentry-key", async () => "inner")),
+  (e) => e.code === "E_WRITE_LOCK_REENTRY",
+  "嵌套获取同一把锁立刻抛 E_WRITE_LOCK_REENTRY，不挂起",
+);
+// 不同 key 的嵌套是合法的（事务锁套文件锁就是这么用的）
+assert.equal(
+  await withWriteLock("outer-key", () => withWriteLock("inner-key", async () => "ok")),
+  "ok",
+  "不同 key 的嵌套正常放行",
+);
+// 报错之后锁要正常释放，不能把后续任务堵死
+assert.equal(await withWriteLock("reentry-key", async () => "after"), "after", "重入报错不影响后续取锁");
+
+// 人工维护的完整链路必须真的返回。这条曾经因为在锁内调 buildWorkspacePreview
+// （内部会再取同一把事务锁）而永远不 settle：数据写进去了，前端一直转圈。
+const rpcProject = join(root, "rpc-mutation");
+writeBrain(rpcProject, "rpc-mutation", "基线决策");
+writeFileSync(join(rpcProject, ".project-brain", "memory.jsonl"), JSON.stringify({
+  id: "mem-rpc-1", type: "decision", title: "会被归档的决策",
+  content: "用来验证归档 RPC 能在锁释放后正常返回，而不是挂起。",
+  importance: 0.6, status: "active", createdAt: Date.now(), updatedAt: Date.now(),
+}) + "\n");
+
+const mutationArgs = (endpoint, payload) => ({
+  endpoint, payload, projectPath: rpcProject, fs: fsAdapter, ctx: null, getMemoryConfig: () => ({}),
+});
+const withTimeout = (promise, ms, label) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error("timeout: " + label)), ms)),
+]);
+
+const archiveRpc = await withTimeout(
+  handleMemoryMutation(mutationArgs("memory.status", { id: "mem-rpc-1", status: "archived" })),
+  5000,
+  "归档 RPC 未在 5 秒内返回（疑似死锁）",
+);
+assert.equal(archiveRpc.ok, true, "归档 RPC 正常返回");
+assert.equal(archiveRpc.value.changed, true, "归档确实生效");
+assert.ok(archiveRpc.value.preview, "返回里带上了最新 preview");
+
+const restoreRpc = await withTimeout(
+  handleMemoryMutation(mutationArgs("memory.status", { id: "mem-rpc-1", status: "active" })),
+  5000,
+  "恢复 RPC 未在 5 秒内返回（疑似死锁）",
+);
+assert.equal(restoreRpc.ok, true, "恢复 RPC 正常返回");
+assert.equal(restoreRpc.value.memory.status, "active", "恢复后状态回到 active");
+
+const editRpc = await withTimeout(
+  handleMemoryMutation(mutationArgs("memory.update", { id: "mem-rpc-1", patch: { title: "改过标题的决策" } })),
+  5000,
+  "编辑 RPC 未在 5 秒内返回（疑似死锁）",
+);
+assert.equal(editRpc.value.memory.title, "改过标题的决策", "编辑 RPC 正常返回并生效");
+
+const deleteRpc = await withTimeout(
+  handleMemoryMutation(mutationArgs("memory.delete", { id: "mem-rpc-1", confirm: true })),
+  5000,
+  "删除 RPC 未在 5 秒内返回（疑似死锁）",
+);
+assert.equal(deleteRpc.value.deletedId, "mem-rpc-1", "删除 RPC 正常返回被删 id");
+assert.equal(pendingLockCount(), 0, "RPC 跑完锁队列排空");
+
 rmSync(root, { recursive: true, force: true });
-console.log("project memory isolation: 59 assertions PASS");
+console.log("project memory isolation: 207 assertions PASS");

@@ -119,6 +119,9 @@ window.__ModuleLoader__.load({
         "dash.memory.dormant": "休眠（不注入，可用 project_ask）",
         "dash.memory.dormantShow": "展开休眠记忆",
         "dash.memory.dormantHide": "收起休眠记忆",
+        "dash.memory.archived": "已归档（不注入、不检索，可恢复或永久删除）",
+        "dash.memory.archivedShow": "展开已归档",
+        "dash.memory.archivedHide": "收起已归档",
         "dash.tab.overview": "概览",
         "dash.tab.architecture": "架构",
         "dash.tab.work": "任务动态",
@@ -165,6 +168,7 @@ window.__ModuleLoader__.load({
         "mem.type.change": "变更",
         "mem.type.context": "备注",
         "mem.type.issue": "问题",
+        "mem.type.preference": "偏好",
       },
       "en-US": {
         "tab.label": "Project",
@@ -268,6 +272,9 @@ window.__ModuleLoader__.load({
         "dash.memory.dormant": "Dormant (askable, not injected)",
         "dash.memory.dormantShow": "Show dormant memories",
         "dash.memory.dormantHide": "Hide dormant memories",
+        "dash.memory.archived": "Archived (not injected or retrieved; restore or delete permanently)",
+        "dash.memory.archivedShow": "Show archived",
+        "dash.memory.archivedHide": "Hide archived",
         "dash.tab.overview": "Overview",
         "dash.tab.architecture": "Architecture",
         "dash.tab.work": "Work & activity",
@@ -314,6 +321,7 @@ window.__ModuleLoader__.load({
         "mem.type.change": "Change",
         "mem.type.context": "Note",
         "mem.type.issue": "Issue",
+        "mem.type.preference": "Preference",
       },
     };
 
@@ -1356,7 +1364,7 @@ window.__ModuleLoader__.load({
       const memories = data.memories || [];
       if (memories.length === 0) return null;
       const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
-      const typeIcon = (type) => ({ decision: "💡", bug: "🐛", lesson: "📖", requirement: "📌", architecture: "🏛️", change: "🔄", context: "💬", issue: "❓" })[type] || "📝";
+      const typeIcon = (type) => ({ decision: "💡", bug: "🐛", lesson: "📖", requirement: "📌", architecture: "🏛️", change: "🔄", context: "💬", issue: "❓", preference: "🎯" })[type] || "📝";
       const importanceStars = (imp) => {
         const stars = Math.max(0, Math.min(5, Math.round((imp || 0) * 5)));
         return "★".repeat(stars) + "☆".repeat(5 - stars);
@@ -3532,15 +3540,106 @@ window.__ModuleLoader__.load({
       const todos = data.todos || [];
       const timelineAll = data.timelineAll || [];
       const memoriesAll = data.memoriesAll || [];
+      const memoriesArchived = data.memoriesArchived || [];
       const retrieval = data.retrieval || {};
       const [quickActionState, setQuickActionState] = React.useState({});
       const [activeTab, setActiveTab] = React.useState("overview");
       // v1.1.x-fix：项目记忆卡片点击 → 弹框展示完整内容（避免 inline 展开撑爆页面）
       const [memoryModal, setMemoryModal] = React.useState(null);
       const [dormantOpen, setDormantOpen] = React.useState(false);
-      const openMemoryModal = React.useCallback((m) => { setMemoryModal(m); }, []);
-      const closeMemoryModal = React.useCallback(() => { setMemoryModal(null); }, []);
+      const [archivedOpen, setArchivedOpen] = React.useState(false);
+      // 人工维护记忆：draft 非空 = 编辑态；confirmDelete = 永久删除的二次确认
+      const [memoryDraft, setMemoryDraft] = React.useState(null);
+      const [memoryBusy, setMemoryBusy] = React.useState(false);
+      const [memoryError, setMemoryError] = React.useState(null);
+      const [confirmDelete, setConfirmDelete] = React.useState(false);
+      const resetMemoryEditing = React.useCallback(() => {
+        setMemoryDraft(null);
+        setMemoryError(null);
+        setConfirmDelete(false);
+        setMemoryBusy(false);
+      }, []);
+      const openMemoryModal = React.useCallback((m) => { resetMemoryEditing(); setMemoryModal(m); }, [resetMemoryEditing]);
+      const closeMemoryModal = React.useCallback(() => { resetMemoryEditing(); setMemoryModal(null); }, [resetMemoryEditing]);
       const rpc = connection && connection.rpc;
+      // 记忆的增删改共用一条调用路径：失败留在弹框里显示，成功就用 host 回传的 preview 刷新页面。
+      const callMemoryRpc = React.useCallback(async (endpoint, extra) => {
+        if (!rpc || typeof rpc.call !== "function") {
+          setMemoryError("DSH Connection RPC 不可用");
+          return null;
+        }
+        setMemoryBusy(true);
+        setMemoryError(null);
+        try {
+          // host 端万一不返回（比如写入路径里出现死锁），没有超时的话按钮会一直转圈，
+          // 用户既看不到结果也不知道该不该重试。
+          const res = await Promise.race([
+            rpc.call("/project-brain", endpoint, Object.assign({ sessionId: sessionId || undefined }, extra || {})),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("操作超时，请刷新后确认是否已生效")), 15000)),
+          ]);
+          if (!res || !res.ok || !res.value) {
+            setMemoryError((res && res.error && res.error.message) || "操作失败");
+            return null;
+          }
+          if (res.value.preview && typeof onPreviewUpdate === "function") {
+            try { onPreviewUpdate(res.value); } catch (e) {}
+          }
+          return res.value;
+        } catch (e) {
+          setMemoryError(String((e && e.message) || e));
+          return null;
+        } finally {
+          setMemoryBusy(false);
+        }
+      }, [rpc, sessionId, onPreviewUpdate]);
+
+      const startMemoryEdit = React.useCallback((m) => {
+        setConfirmDelete(false);
+        setMemoryError(null);
+        setMemoryDraft({
+          title: m.title || "",
+          content: m.content || "",
+          type: m.type || "context",
+          importance: typeof m.importance === "number" ? m.importance : 0.5,
+          status: m.status === "dormant" ? "dormant" : "active",
+          pinned: m.pinned === true,
+          tags: Array.isArray(m.tags) ? m.tags.join(", ") : "",
+        });
+      }, []);
+
+      const saveMemoryEdit = React.useCallback(async () => {
+        if (!memoryModal || !memoryDraft) return;
+        const patch = {
+          title: memoryDraft.title,
+          content: memoryDraft.content,
+          type: memoryDraft.type,
+          importance: Number(memoryDraft.importance),
+          status: memoryDraft.status,
+          pinned: memoryDraft.pinned === true,
+          tags: String(memoryDraft.tags || "").split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+        };
+        const value = await callMemoryRpc("memory.update", { id: memoryModal.id, patch });
+        if (!value) return;
+        setMemoryDraft(null);
+        setMemoryModal(value.memory || null);
+      }, [memoryModal, memoryDraft, callMemoryRpc]);
+
+      const setMemoryStatus = React.useCallback(async (status) => {
+        if (!memoryModal) return;
+        const value = await callMemoryRpc("memory.status", { id: memoryModal.id, status });
+        if (!value) return;
+        // 归档后这条已从当前列表移走，留着弹框会让人以为没生效。
+        if (status === "archived") closeMemoryModal();
+        else setMemoryModal(value.memory || null);
+      }, [memoryModal, callMemoryRpc, closeMemoryModal]);
+
+      const deleteMemory = React.useCallback(async () => {
+        if (!memoryModal) return;
+        const value = await callMemoryRpc("memory.delete", { id: memoryModal.id, confirm: true });
+        if (!value) return;
+        closeMemoryModal();
+      }, [memoryModal, callMemoryRpc, closeMemoryModal]);
+
       // 架构兜底条专用重试：独立 promise-based（避开 quickActionState 的 stale 闭包）
       const runArchRescan = React.useCallback(async () => {
         if (!sessionId || !rpc || typeof rpc.call !== "function") throw new Error(t("arch.retryFailed"));
@@ -3837,6 +3936,42 @@ window.__ModuleLoader__.load({
       );
       const typeLabel = (type) => t("mem.type." + type) !== "mem.type." + type ? t("mem.type." + type) : type;
       const typeChipStyle = { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", fontWeight: "600", border: "1px solid var(--dsw-alias-border-l1)" };
+      // 记忆编辑表单：与 host 端 MEMORY_TYPES 保持一致
+      const MEMORY_TYPE_OPTIONS = ["decision", "requirement", "architecture", "bug", "lesson", "preference", "context", "issue", "change"];
+      const memoryInputStyle = {
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "8px 10px",
+        fontSize: "12.5px",
+        borderRadius: "8px",
+        border: "1px solid var(--dsw-alias-border-l1)",
+        background: "var(--dsw-alias-bg-layer-2)",
+        color: "var(--dsw-alias-label-primary)",
+        fontFamily: "inherit",
+      };
+      const memoryField = (label, control) => React.createElement("label", { style: { display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 } },
+        React.createElement("span", { style: { fontSize: "10.5px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)" } }, label),
+        control,
+      );
+      const updateDraft = (patch) => setMemoryDraft((prev) => (prev ? Object.assign({}, prev, patch) : prev));
+      const isArchivedMemory = (m) => Boolean(m) && (m.status === "archived" || m.status === "superseded");
+      const memoryButtonStyle = (tone) => {
+        const accent = tone === "danger"
+          ? "var(--dsw-alias-state-error-primary)"
+          : (tone === "primary" ? "var(--dsw-alias-brand-primary)" : null);
+        return {
+          fontSize: "11px",
+          padding: "4px 10px",
+          borderRadius: "6px",
+          background: accent || "transparent",
+          border: "1px solid " + (accent || "var(--dsw-alias-border-l1)"),
+          color: accent ? "var(--dsw-alias-bg-base)" : "var(--dsw-alias-label-primary)",
+          cursor: memoryBusy ? "wait" : "pointer",
+          opacity: memoryBusy ? 0.6 : 1,
+          fontFamily: "inherit",
+          fontWeight: "500",
+        };
+      };
       const dashPanelStyle = { padding: "14px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-primary)", borderRadius: "10px", border: "1px solid var(--dsw-alias-border-l1)", minWidth: 0 };
       const dashSection = (icon, titleKey, children) =>
         React.createElement("section", { style: dashPanelStyle },
@@ -4245,7 +4380,8 @@ window.__ModuleLoader__.load({
         },
           React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "flex-start", flexWrap: "wrap" } },
             React.createElement("span", { style: Object.assign({}, typeChipStyle, { marginTop: "1px" }) }, typeLabel(m.type)),
-            m.status === "dormant" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, "dormant") : null,
+            m.pinned === true ? React.createElement("span", { title: "已置顶：Core 满员时不会被挤掉", style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontWeight: "600" } }, "置顶") : null,
+            m.status && m.status !== "active" ? React.createElement("span", { style: { fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-2)", color: "var(--dsw-alias-label-secondary)", fontWeight: "600" } }, m.status) : null,
             React.createElement("span", { style: { fontSize: "13px", fontWeight: "600", flex: "1 1 200px", minWidth: 0, wordBreak: "break-word", lineHeight: 1.4, color: "var(--dsw-alias-label-primary)" } }, m.title),
           ),
           contentStr ? React.createElement("div", { style: { fontSize: "11px", color: "var(--dsw-alias-label-secondary)", lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", flex: "1 1 auto" } }, summary + (hasLongContent ? "…" : "")) : null,
@@ -4262,6 +4398,32 @@ window.__ModuleLoader__.load({
       const coreMemList = memoriesAll.filter((m) => m && m.status !== "dormant");
       const dormantMemList = memoriesAll.filter((m) => m && m.status === "dormant");
       const memoryGrid = (items) => React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "8px" } }, items.slice(0, 20).map(renderMemoryCard));
+      // 归档区：默认收起。点进卡片就能「恢复」或「永久删除」，误清理有地方找回来。
+      const archivedSection = memoriesArchived.length > 0
+        ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+            React.createElement("button", {
+              type: "button",
+              "data-action": "toggle-archived-memories",
+              onClick: () => setArchivedOpen((open) => !open),
+              style: {
+                alignSelf: "flex-start",
+                background: "transparent",
+                border: "1px solid var(--dsw-alias-border-l1)",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                fontWeight: "600",
+                color: "var(--dsw-alias-label-secondary)",
+                padding: "4px 10px",
+                fontFamily: "inherit",
+              },
+            }, (archivedOpen ? t("dash.memory.archivedHide") : t("dash.memory.archivedShow")) + " · " + memoriesArchived.length),
+            archivedOpen ? React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)", marginBottom: "8px" } }, t("dash.memory.archived")),
+              memoryGrid(memoriesArchived),
+            ) : null,
+          )
+        : null;
       const memoryNode = memoriesAll.length > 0
         ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } },
             React.createElement("div", { style: { fontSize: "11px", fontWeight: "700", color: "var(--dsw-alias-label-secondary)" } }, t("dash.memory.core") + " · " + coreMemList.length),
@@ -4289,8 +4451,11 @@ window.__ModuleLoader__.load({
                 memoryGrid(dormantMemList),
               ) : null,
             ) : null,
+            archivedSection,
           )
-        : emptyNode;
+        : (memoriesArchived.length > 0
+            ? React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } }, emptyNode, archivedSection)
+            : emptyNode);
 
       // v1.1.x-fix：项目记忆详情弹框（避免 inline 展开撑爆网格）
       const memoryModalNode = memoryModal ? React.createElement(
@@ -4332,6 +4497,7 @@ window.__ModuleLoader__.load({
           // 头部：type chip + title + close
           React.createElement("div", { style: { padding: "14px 18px", borderBottom: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "flex-start", gap: "10px", background: "linear-gradient(90deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-layer-2))" } },
             React.createElement("span", { style: typeChipStyle }, typeLabel(memoryModal.type)),
+            memoryModal.pinned === true ? React.createElement("span", { title: "已置顶", style: { flex: "0 0 auto", fontSize: "10px", padding: "1px 7px", borderRadius: "8px", background: "var(--dsw-alias-brand-primary)", color: "var(--dsw-alias-bg-base)", fontWeight: "600" } }, "置顶") : null,
             React.createElement("span", { style: { fontSize: "15px", fontWeight: "600", flex: "1 1 auto", minWidth: 0, wordBreak: "break-word", lineHeight: 1.45 } }, memoryModal.title || "(无标题)"),
             React.createElement("button", {
               type: "button",
@@ -4353,37 +4519,164 @@ window.__ModuleLoader__.load({
               },
             }, "×"),
           ),
-          // 主体：完整内容（v1.2.x 走 markdown 渲染：标题/列表/代码块/链接等）
+          // 主体：只读时渲染 markdown，编辑态换成表单（v1.2.x 起正文走 markdown：标题/列表/代码块/链接等）
           React.createElement("div", {
             "data-block": "memory-modal-body",
             style: { padding: "20px 24px 24px", overflowY: "auto", flex: "1 1 auto", color: "var(--dsw-alias-label-primary)" },
-          }, memoryModal.content ? renderMarkdown(String(memoryModal.content), React) : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "（无内容）")),
+          }, memoryDraft
+            ? React.createElement("div", { "data-block": "memory-edit-form", style: { display: "flex", flexDirection: "column", gap: "14px" } },
+                memoryField("标题", React.createElement("input", {
+                  type: "text",
+                  "data-field": "memory-title",
+                  value: memoryDraft.title,
+                  maxLength: 200,
+                  onChange: (e) => updateDraft({ title: e.target.value }),
+                  style: memoryInputStyle,
+                })),
+                memoryField("正文（至少 12 个字符）", React.createElement("textarea", {
+                  "data-field": "memory-content",
+                  value: memoryDraft.content,
+                  rows: 10,
+                  maxLength: 4000,
+                  onChange: (e) => updateDraft({ content: e.target.value }),
+                  style: Object.assign({}, memoryInputStyle, { resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" }),
+                })),
+                React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" } },
+                  memoryField("类型", React.createElement("select", {
+                    "data-field": "memory-type",
+                    value: memoryDraft.type,
+                    onChange: (e) => updateDraft({ type: e.target.value }),
+                    style: memoryInputStyle,
+                  }, MEMORY_TYPE_OPTIONS.map((v) => React.createElement("option", { key: v, value: v }, typeLabel(v))))),
+                  memoryField("重要性 " + Number(memoryDraft.importance).toFixed(2), React.createElement("input", {
+                    type: "range",
+                    "data-field": "memory-importance",
+                    min: 0, max: 1, step: 0.05,
+                    value: memoryDraft.importance,
+                    onChange: (e) => updateDraft({ importance: Number(e.target.value) }),
+                    style: { width: "100%", accentColor: "var(--dsw-alias-brand-primary)" },
+                  })),
+                  memoryField("状态", React.createElement("select", {
+                    "data-field": "memory-status",
+                    value: memoryDraft.status,
+                    onChange: (e) => updateDraft({ status: e.target.value }),
+                    style: memoryInputStyle,
+                  },
+                    React.createElement("option", { value: "active" }, "Core（每轮注入）"),
+                    React.createElement("option", { value: "dormant" }, "休眠（不注入）"),
+                  )),
+                  memoryField("置顶", React.createElement("label", {
+                    style: { display: "flex", alignItems: "center", gap: "7px", fontSize: "12px", padding: "8px 0", cursor: "pointer", color: "var(--dsw-alias-label-secondary)" },
+                  },
+                    React.createElement("input", {
+                      type: "checkbox",
+                      "data-field": "memory-pinned",
+                      checked: memoryDraft.pinned === true,
+                      onChange: (e) => updateDraft({ pinned: e.target.checked }),
+                      style: { accentColor: "var(--dsw-alias-brand-primary)", margin: 0 },
+                    }),
+                    React.createElement("span", null, "Core 满员时不被挤掉"),
+                  )),
+                ),
+                memoryField("标签（逗号分隔）", React.createElement("input", {
+                  type: "text",
+                  "data-field": "memory-tags",
+                  value: memoryDraft.tags,
+                  onChange: (e) => updateDraft({ tags: e.target.value }),
+                  style: memoryInputStyle,
+                })),
+              )
+            : (memoryModal.content
+                ? renderMarkdown(String(memoryModal.content), React)
+                : React.createElement("div", { style: { fontSize: "13.5px", color: "var(--dsw-alias-label-secondary)" } }, "（无内容）"))),
+          memoryError ? React.createElement("div", {
+            "data-block": "memory-modal-error",
+            style: { padding: "8px 18px", fontSize: "11.5px", color: "var(--dsw-alias-state-error-primary)", background: "var(--dsw-alias-bg-layer-2)", borderTop: "1px solid var(--dsw-alias-border-l1)" },
+          }, "⚠ " + memoryError) : null,
           // 底部：importance + 时间 + tags + 复制
           React.createElement("div", { style: { padding: "10px 18px", borderTop: "1px solid var(--dsw-alias-border-l1)", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", fontSize: "11px", color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-2)" } },
             memoryModal.importance ? React.createElement("span", { title: "importance " + memoryModal.importance, style: { color: "var(--dsw-alias-brand-primary)", letterSpacing: "1px", fontWeight: "600" } }, importanceStars(memoryModal.importance)) : null,
             memoryModal.createdAt ? React.createElement("span", { style: { fontVariantNumeric: "tabular-nums" } }, formatMemTime(memoryModal.createdAt)) : null,
             Array.isArray(memoryModal.tags) && memoryModal.tags.length > 0 ? React.createElement("span", null, memoryModal.tags.map((tag) => "#" + tag).join(" ")) : null,
             React.createElement("span", { style: { flex: "1 1 auto" } }),
-            React.createElement("button", {
-              type: "button",
-              "data-action": "memory-modal-copy",
-              onClick: (e) => {
-                // 复制原始 markdown 字符串：title 一行 + 空行 + 原文（content 本身就是带 markdown 格式的原文，未做任何转换）
-                const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
-                copyPrompt(text, e, "✓ 已复制", "复制失败");
-              },
-              style: {
-                fontSize: "11px",
-                padding: "4px 10px",
-                borderRadius: "6px",
-                background: "transparent",
-                border: "1px solid var(--dsw-alias-border-l1)",
-                color: "var(--dsw-alias-label-primary)",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontWeight: "500",
-              },
-            }, "📋 复制全文"),
+            memoryDraft
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("button", {
+                    type: "button",
+                    "data-action": "memory-edit-cancel",
+                    disabled: memoryBusy,
+                    onClick: () => { setMemoryDraft(null); setMemoryError(null); },
+                    style: memoryButtonStyle(),
+                  }, "取消"),
+                  React.createElement("button", {
+                    type: "button",
+                    "data-action": "memory-edit-save",
+                    disabled: memoryBusy,
+                    onClick: saveMemoryEdit,
+                    style: memoryButtonStyle("primary"),
+                  }, memoryBusy ? "保存中…" : "✓ 保存"),
+                )
+              : (confirmDelete
+                  ? React.createElement(React.Fragment, null,
+                      React.createElement("span", { style: { color: "var(--dsw-alias-state-error-primary)", fontWeight: "600" } }, "永久删除后无法恢复，确定？"),
+                      React.createElement("button", {
+                        type: "button",
+                        "data-action": "memory-delete-cancel",
+                        disabled: memoryBusy,
+                        onClick: () => setConfirmDelete(false),
+                        style: memoryButtonStyle(),
+                      }, "取消"),
+                      React.createElement("button", {
+                        type: "button",
+                        "data-action": "memory-delete-confirm",
+                        disabled: memoryBusy,
+                        onClick: deleteMemory,
+                        style: memoryButtonStyle("danger"),
+                      }, memoryBusy ? "删除中…" : "确认永久删除"),
+                    )
+                  : React.createElement(React.Fragment, null,
+                      React.createElement("button", {
+                        type: "button",
+                        "data-action": "memory-modal-copy",
+                        onClick: (e) => {
+                          // 复制原始 markdown 字符串：title 一行 + 空行 + 原文（content 本身就是带 markdown 格式的原文，未做任何转换）
+                          const text = (memoryModal.title || "") + "\n\n" + (memoryModal.content || "");
+                          copyPrompt(text, e, "✓ 已复制", "复制失败");
+                        },
+                        style: memoryButtonStyle(),
+                      }, "📋 复制全文"),
+                      React.createElement("button", {
+                        type: "button",
+                        "data-action": "memory-edit-start",
+                        disabled: memoryBusy,
+                        onClick: () => startMemoryEdit(memoryModal),
+                        style: memoryButtonStyle(),
+                      }, "✏️ 编辑"),
+                      isArchivedMemory(memoryModal)
+                        ? React.createElement("button", {
+                            type: "button",
+                            "data-action": "memory-restore",
+                            disabled: memoryBusy,
+                            onClick: () => setMemoryStatus("active"),
+                            style: memoryButtonStyle(),
+                          }, "↩ 恢复")
+                        : React.createElement("button", {
+                            type: "button",
+                            "data-action": "memory-archive",
+                            disabled: memoryBusy,
+                            onClick: () => setMemoryStatus("archived"),
+                            title: "从 Core 和检索中移除，之后可在「已归档」里恢复",
+                            style: memoryButtonStyle(),
+                          }, "🗂 归档"),
+                      React.createElement("button", {
+                        type: "button",
+                        "data-action": "memory-delete",
+                        disabled: memoryBusy,
+                        onClick: () => setConfirmDelete(true),
+                        title: "物理删除，不可恢复",
+                        style: memoryButtonStyle(),
+                      }, "🗑 删除"),
+                    )),
           ),
         ),
       ) : null;

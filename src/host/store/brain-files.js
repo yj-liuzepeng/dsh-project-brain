@@ -6,6 +6,11 @@
 //   fs.readText(target) / fs.writeText(target, content)
 //   fs.listDir(target)
 // 本模块只依赖 resolve/readText/writeText（+ 可选 mkdir），全部容错。
+//
+// fs 只有覆盖写，所以每次 append 都是读全文再写全文。writeText / appendLine
+// 都按路径串行化，保证单个文件上的写入不会互相覆盖。
+
+import { withWriteLock } from "./write-lock.js";
 
 export function assertSafeProjectPath(projectPath) {
   const rawBase = typeof projectPath === "string" ? projectPath.trim() : "";
@@ -53,7 +58,8 @@ function resolveWritePolicy(fs, writePolicy) {
   return null;
 }
 
-export async function writeText(fs, path, content, writePolicy) {
+// 不加锁的底层覆盖写。只有已经持有同一把文件锁的调用方（appendLine）可以直接用它。
+async function writeTextRaw(fs, path, content, writePolicy) {
   const policy = resolveWritePolicy(fs, writePolicy);
   try {
     try {
@@ -83,6 +89,10 @@ export async function writeText(fs, path, content, writePolicy) {
   }
 }
 
+export async function writeText(fs, path, content, writePolicy) {
+  return withWriteLock(path, () => writeTextRaw(fs, path, content, writePolicy));
+}
+
 // v0.4.0：appendLine — 直接追加单行内容到文件末尾（避免 O(N) 反序列化）
 //   DSH fs service 没暴露原生 appendFile，但 writeText 是覆盖写。
 //   优化方案：先 readText 拿当前内容（跳过 parseJsonl 反序列化），补换行，
@@ -98,25 +108,29 @@ export async function appendLine(fs, path, line, writePolicy) {
   if (line == null) return false;
   // 确保 line 以 \n 结尾（但不强制要求 — 兼容空行）
   const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
-  try {
-    const target = await fs.resolve(path);
-    let existing = null;
-    try { existing = await fs.readText(target); } catch (e) { /* 文件不存在或不可读 → 当作空 */ }
-    let next;
-    if (existing == null || existing === "") {
-      // 文件不存在或空 → 直接写 line
-      next = normalizedLine;
-    } else if (existing.endsWith("\n")) {
-      // 文件末尾有换行 → 直接拼接
-      next = existing + normalizedLine;
-    } else {
-      // 文件末尾无换行 → 补换行（边界保护）
-      next = existing + "\n" + normalizedLine;
+  // 读全文和写全文之间不能插进别的写入，否则并发 append 会互相覆盖。
+  return withWriteLock(path, async () => {
+    try {
+      const target = await fs.resolve(path);
+      let existing = null;
+      try { existing = await fs.readText(target); } catch (e) { /* 文件不存在或不可读 → 当作空 */ }
+      let next;
+      if (existing == null || existing === "") {
+        // 文件不存在或空 → 直接写 line
+        next = normalizedLine;
+      } else if (existing.endsWith("\n")) {
+        // 文件末尾有换行 → 直接拼接
+        next = existing + normalizedLine;
+      } else {
+        // 文件末尾无换行 → 补换行（边界保护）
+        next = existing + "\n" + normalizedLine;
+      }
+      // 已经持有这把文件锁，必须走不加锁的底层写，否则自己等自己。
+      return writeTextRaw(fs, path, next, writePolicy);
+    } catch (e) {
+      return false;
     }
-    return writeText(fs, path, next, writePolicy);
-  } catch (e) {
-    return false;
-  }
+  });
 }
 
 export function parseJsonl(text) {

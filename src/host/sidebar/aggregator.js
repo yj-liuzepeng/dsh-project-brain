@@ -8,10 +8,9 @@
 // P0.4.1：stats/activity 改为真实数据（todo.jsonl / memory.jsonl / timeline.jsonl），
 // 与 build.js 的 embed 口径一致；删除已死的 writePreviewCache（webServer 路由方案遗留）。
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { todoStats, recentTimeline, techStackToType, activeTodos, isCoreMemory } from "../store/brain-logic.js";
-import { serializeJsonl } from "../store/brain-files.js";
 import { housekeepMemories, persistHousekeep } from "../memory/admit.js";
 import { sanitizeProjectDescription } from "../../scanner.js";
 import { mergeStackWithArchitecture, mergeTechStackWithArchitecture } from "../../stack-taxonomy.js";
@@ -66,12 +65,13 @@ function readJsonlSync(filePath) {
   return out;
 }
 
+// 只在内存里整理一遍供展示，绝不回写。
+// 这条是同步路径，用 writeFileSync 落盘的话会绕过 write-lock，和异步的 admit /
+// 人工编辑互相覆盖。落盘交给 ensureHousekeepOnRead 与 persistHousekeep。
 function readMemoriesHousekeptSync(filePath) {
   const memories = readJsonlSync(filePath);
   const hk = housekeepMemories(memories);
-  if (!hk.changed) return memories;
-  try { writeFileSync(filePath, serializeJsonl(hk.rows), "utf8"); } catch (e) {}
-  return hk.rows;
+  return hk.changed ? hk.rows : memories;
 }
 
 function deriveFallbackPhase(p) {
@@ -217,6 +217,7 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       recentActivity: [],
       memories: [],
       memoriesAll: [],
+      memoriesArchived: [],
       todos: [],
       timelineAll: [],
       architecture: null,
@@ -279,6 +280,12 @@ export async function buildWorkspacePreview(fs, workspaceRoot) {
       if (ac !== bc) return ac - bc;
       return (b.importance || 0) - (a.importance || 0);
     }).slice(0, 50),
+    // 归档不是删除：页面要能看到它们才谈得上「恢复」。
+    memoriesArchived: (Array.isArray(memoriesAll) ? memoriesAll : [])
+      .filter((m) => m && (m.status === "archived" || m.status === "superseded"))
+      .slice()
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
+      .slice(0, 50),
     todos: todos,
     timelineAll: timeline.slice(0, 50),
     codegraph: codegraph,

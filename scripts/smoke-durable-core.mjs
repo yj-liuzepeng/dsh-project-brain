@@ -149,8 +149,10 @@ const uninit = evaluateAdmit(durable, { memories: [], channel: "user_explicit", 
 check("uninitialized rejects", uninit.action === "reject" && uninit.code === "E_NOT_INITIALIZED");
 
 console.log("=== cap + housekeep ===");
+// 显式给上限，测的是淘汰行为本身，不跟着默认配置走。
+const CAP = { maxItems: 15, maxTokens: 800 };
 const actives = [];
-for (let i = 0; i < 15; i++) {
+for (let i = 0; i < CAP.maxItems; i++) {
   actives.push(makeMemoryEntry({
     type: "decision",
     title: "旧决策 " + i,
@@ -164,11 +166,11 @@ const pinned = makeMemoryEntry({
   content: "刚确认：改 host 必须重启 DSH Desktop，不要指望热重载。",
   importance: 0.2,
 }, now);
-const capped = enforceCoreCap(actives.concat([pinned]), { pinnedIds: [pinned.id], now });
+const capped = enforceCoreCap(actives.concat([pinned]), { pinnedIds: [pinned.id], now, limits: CAP });
 const dormant = capped.rows.filter((m) => m.status === "dormant");
 const stillActive = capped.rows.filter((m) => isCoreMemory(m));
 check("cap evicts an older row not the pinned one", dormant.some((m) => m.title.startsWith("旧决策")) && stillActive.some((m) => m.id === pinned.id));
-check("active count <= 15", stillActive.length <= 15);
+check("active count <= cap", stillActive.length <= CAP.maxItems);
 
 const longFact = "这是一条跨会话仍为真的项目约束，默认路径必须读 session cwd，不要猜测安装目录。" + "必须保留。".repeat(90);
 const closeOld = makeMemoryEntry({
@@ -189,7 +191,7 @@ const closeMid = makeMemoryEntry({
   content: longFact,
   importance: 0.88,
 }, now - 10 * 86400000);
-const closeCap = enforceCoreCap([closeOld, closeNew, closeMid], { pinnedIds: [], now });
+const closeCap = enforceCoreCap([closeOld, closeNew, closeMid], { pinnedIds: [], now, limits: CAP });
 const closeDormant = closeCap.rows.filter((m) => m.status === "dormant");
 check(
   "close importance evicts older not the newer 0.85",

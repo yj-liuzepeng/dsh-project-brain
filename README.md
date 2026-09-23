@@ -2,7 +2,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.19-339933)](./package.json)
 [![Status](https://img.shields.io/badge/status-stable-success)](./RELEASE_CHECKLIST.md)
@@ -11,7 +11,7 @@
 
 Instead of making every new conversation rediscover the repository, dsh-project-brain stores structured knowledge inside the project itself and keeps getting more useful as the project evolves.
 
-> Current release: `1.3.1` — adds **import / export / local backup restore** (cross-machine sync). End-to-end 20/20 smoke suites + 46/46 host-acceptance pass; data format fully backward-compatible with v1.3.0.
+> Current release: `1.4.0` — the release that makes project memory actually usable: deictic references are resolved before a memory is stored, memories can be edited / pinned / archived / deleted from the dashboard, concurrent writes no longer silently drop rows, and Core has configurable capacity with pinning. Data format stays backward-compatible with v1.3.x.
 
 **v1.3.1 新特性**：📦 **导入导出 / 备份恢复**
 - Dashboard 顶部新增 **💾 备份 / 📥 恢复 / ↶ 回滚** 三个按钮（与项目名 + techStack chip 同一行）

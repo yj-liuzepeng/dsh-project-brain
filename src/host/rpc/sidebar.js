@@ -17,6 +17,9 @@ import { probeEmbedding, probeSessionLlm } from "../settings-probe.js";
 import { getGitHistory, getGitBranches, getWorkTreeChanges } from "../git/history.js";
 import { unwrapToolResult } from "../transfer/tool-result.js";
 import { shapeImportPreviewData, shapeRollbackPreviewData } from "../transfer/rpc-payload.js";
+import { applyMemoryDelete, applyMemoryEdit, applyMemoryStatus } from "../memory/edit.js";
+import { appendJsonl, brainPath, readJsonl, writeJsonl } from "../store/brain-files.js";
+import { brainTxKey, withWriteLock } from "../store/write-lock.js";
 import { promises as fsp } from "node:fs";
 import path from "node:path";
 
@@ -42,6 +45,14 @@ function sanitizeSettings(config) {
     sessionSemanticMaxChars: source.sessionSemanticMaxChars,
     sessionSemanticMaxItems: source.sessionSemanticMaxItems,
     sessionSemanticTimeoutMs: source.sessionSemanticTimeoutMs,
+    realtimeMemoryEnabled: source.realtimeMemoryEnabled,
+    realtimeMemoryTimeoutMs: source.realtimeMemoryTimeoutMs,
+    coreMaxItems: source.coreMaxItems,
+    coreMaxTokens: source.coreMaxTokens,
+    vacuumMemoryRetainDays: source.vacuumMemoryRetainDays,
+    vacuumMemoryMinRetained: source.vacuumMemoryMinRetained,
+    vacuumTimelineMaxEvents: source.vacuumTimelineMaxEvents,
+    vacuumTimelineRetainDays: source.vacuumTimelineRetainDays,
     architectureEnabled: source.architectureEnabled,
     architectureLlmEnabled: source.architectureLlmEnabled,
     architectureLlmIncludeSource: source.architectureLlmIncludeSource,
@@ -424,6 +435,18 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
         });
       }
 
+      // ─── 人工维护记忆：编辑 / 归档 / 恢复 / 永久删除 ───
+      if (endpoint === "memory.update" || endpoint === "memory.status" || endpoint === "memory.delete") {
+        return handleMemoryMutation({
+          endpoint,
+          payload: payload || {},
+          projectPath,
+          fs,
+          ctx,
+          getMemoryConfig,
+        });
+      }
+
       // ─── v1.3.1：导入导出 / 备份恢复 RPC ───
       // 不走 tools.execute：Connection RPC 里它可能 ok 却不调用 tool.execute。
 
@@ -755,6 +778,105 @@ export function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tool
     { authority: "loopback" },
   );
   return true;
+}
+
+const MEMORY_TIMELINE_EVENTS = {
+  edit: { eventType: "memory_edit", verb: "编辑记忆" },
+  archived: { eventType: "memory_archive", verb: "归档记忆" },
+  active: { eventType: "memory_restore", verb: "恢复记忆" },
+  dormant: { eventType: "memory_archive", verb: "休眠记忆" },
+  delete: { eventType: "memory_delete", verb: "永久删除记忆" },
+};
+
+// 编辑 / 归档 / 恢复 / 永久删除共用一条通道。
+//
+// 分两段很关键：锁内只做「读整表 → 改 → 写整表」，preview 必须留在锁外——
+// buildWorkspacePreview 内部会调 persistHousekeep，那也要抢 memory.jsonl 的事务锁，
+// 在锁里调它就是自己等自己：数据写进去了，RPC 却永远不返回，前端一直转圈。
+export async function handleMemoryMutation(args) {
+  const { endpoint, projectPath, fs, ctx, getMemoryConfig } = args;
+  const id = typeof args.payload.id === "string" ? args.payload.id.trim() : "";
+  if (!id) return rpcError("bad-request", "id 必填", { endpoint });
+
+  // 和 admit / housekeep 抢同一把事务锁，避免人工编辑和自动写入互相覆盖。
+  const result = await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => mutateMemoryFile(args, id));
+  if (!result.ok) return rpcError(result.code || "internal", result.message || "记忆操作失败", { endpoint, id });
+
+  const { outcome, changed, now, timelineKey } = result;
+
+  if (changed) {
+    const meta = MEMORY_TIMELINE_EVENTS[timelineKey] || MEMORY_TIMELINE_EVENTS.edit;
+    try {
+      await appendJsonl(fs, brainPath(projectPath, "timeline.jsonl"), {
+        id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+        title: meta.verb + "[" + outcome.entry.type + "]：" + outcome.entry.title,
+        eventType: meta.eventType,
+        occurredAt: now,
+        detail: "id=" + outcome.entry.id + " by=user",
+      });
+    } catch (e) { /* timeline 失败不阻断本次操作 */ }
+
+    invalidateAggregatorCache(projectPath);
+    // 注入用的是 injector 自己的缓存，只认这个事件。不发的话页面已经变了、模型那边还是旧的。
+    try {
+      if (ctx && typeof ctx.emit === "function") {
+        ctx.emit("project_brain/preview.changed", { projectPath });
+      }
+    } catch (e) { /* emit 失败不阻断本次操作 */ }
+  }
+
+  const preview = await buildWorkspacePreview(fs, projectPath);
+  preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+  return rpcOk({
+    projectPath,
+    preview,
+    changed,
+    memory: endpoint === "memory.delete" ? null : outcome.entry,
+    deletedId: endpoint === "memory.delete" && changed ? outcome.entry.id : null,
+  });
+}
+
+// 锁内的那一段。只碰 memory.jsonl，不做任何可能再次取锁的事。
+async function mutateMemoryFile({ endpoint, payload, projectPath, fs }, id) {
+  const memoryFile = brainPath(projectPath, "memory.jsonl");
+  let rows;
+  try {
+    rows = await readJsonl(fs, memoryFile);
+  } catch (e) {
+    return { ok: false, code: "internal", message: "读取 memory.jsonl 失败：" + String((e && e.message) || e) };
+  }
+
+  const now = Date.now();
+  let outcome;
+  let timelineKey;
+  if (endpoint === "memory.update") {
+    const patch = payload.patch && typeof payload.patch === "object" ? payload.patch : null;
+    if (!patch) return { ok: false, code: "bad-request", message: "patch 必填" };
+    outcome = applyMemoryEdit(rows, { id, patch, now });
+    timelineKey = "edit";
+  } else if (endpoint === "memory.status") {
+    const status = typeof payload.status === "string" ? payload.status : "";
+    if (["active", "dormant", "archived"].indexOf(status) < 0) {
+      return { ok: false, code: "bad-request", message: "status 只能是 active / dormant / archived" };
+    }
+    const reason = typeof payload.reason === "string" ? payload.reason.trim().slice(0, 500) : "";
+    outcome = applyMemoryStatus(rows, { id, status, reason, now });
+    timelineKey = status;
+  } else {
+    // 物理删除不可恢复，要求调用方显式带上 confirm，避免误点或脏调用直接抹掉数据。
+    if (payload.confirm !== true) {
+      return { ok: false, code: "bad-request", message: "永久删除需要 confirm=true" };
+    }
+    outcome = applyMemoryDelete(rows, { id });
+    timelineKey = "delete";
+  }
+
+  if (!outcome.ok) return { ok: false, code: outcome.code || "internal", message: outcome.message };
+  if (outcome.changed === false) return { ok: true, outcome, changed: false, now, timelineKey };
+
+  const wrote = await writeJsonl(fs, memoryFile, outcome.rows);
+  if (!wrote) return { ok: false, code: "internal", message: "写入 memory.jsonl 失败" };
+  return { ok: true, outcome, changed: true, now, timelineKey };
 }
 
 async function attachRescanAndPreview({ result, projectPath, fs, sandboxPolicy, architectureRuntime, getMemoryConfig }) {

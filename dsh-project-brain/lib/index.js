@@ -19,6 +19,41 @@ var __export = (target, all) => {
     __defProp(target, name2, { get: all[name2], enumerable: true });
 };
 
+// src/host/store/write-lock.js
+import { AsyncLocalStorage } from "node:async_hooks";
+function withWriteLock(key, task) {
+  const k = String(key || "default");
+  const held = heldKeys.getStore();
+  if (held && held.has(k)) {
+    return Promise.reject(Object.assign(
+      new Error("write-lock re-entered, would deadlock: " + k),
+      { code: "E_WRITE_LOCK_REENTRY" }
+    ));
+  }
+  const nextHeld = new Set(held || []);
+  nextHeld.add(k);
+  const run = () => heldKeys.run(nextHeld, task);
+  const prev = chains.get(k);
+  const result = prev ? prev.then(run) : (async () => run())();
+  let tail;
+  const settle = () => {
+    if (chains.get(k) === tail) chains.delete(k);
+  };
+  tail = result.then(settle, settle);
+  chains.set(k, tail);
+  return result;
+}
+function brainTxKey(projectPath, file) {
+  return String(projectPath || "") + "::tx::" + String(file || "memory.jsonl");
+}
+var chains, heldKeys;
+var init_write_lock = __esm({
+  "src/host/store/write-lock.js"() {
+    chains = /* @__PURE__ */ new Map();
+    heldKeys = new AsyncLocalStorage();
+  }
+});
+
 // src/host/store/brain-files.js
 var brain_files_exports = {};
 __export(brain_files_exports, {
@@ -77,7 +112,7 @@ function resolveWritePolicy(fs, writePolicy) {
   }
   return null;
 }
-async function writeText(fs, path7, content, writePolicy) {
+async function writeTextRaw(fs, path7, content, writePolicy) {
   const policy = resolveWritePolicy(fs, writePolicy);
   try {
     try {
@@ -117,28 +152,33 @@ async function writeText(fs, path7, content, writePolicy) {
     return false;
   }
 }
+async function writeText(fs, path7, content, writePolicy) {
+  return withWriteLock(path7, () => writeTextRaw(fs, path7, content, writePolicy));
+}
 async function appendLine(fs, path7, line, writePolicy) {
   if (line == null) return false;
   const normalizedLine = String(line).endsWith("\n") ? String(line) : String(line) + "\n";
-  try {
-    const target = await fs.resolve(path7);
-    let existing = null;
+  return withWriteLock(path7, async () => {
     try {
-      existing = await fs.readText(target);
+      const target = await fs.resolve(path7);
+      let existing = null;
+      try {
+        existing = await fs.readText(target);
+      } catch (e) {
+      }
+      let next;
+      if (existing == null || existing === "") {
+        next = normalizedLine;
+      } else if (existing.endsWith("\n")) {
+        next = existing + normalizedLine;
+      } else {
+        next = existing + "\n" + normalizedLine;
+      }
+      return writeTextRaw(fs, path7, next, writePolicy);
     } catch (e) {
+      return false;
     }
-    let next;
-    if (existing == null || existing === "") {
-      next = normalizedLine;
-    } else if (existing.endsWith("\n")) {
-      next = existing + normalizedLine;
-    } else {
-      next = existing + "\n" + normalizedLine;
-    }
-    return writeText(fs, path7, next, writePolicy);
-  } catch (e) {
-    return false;
-  }
+  });
 }
 function parseJsonl(text) {
   if (!text) return [];
@@ -193,6 +233,7 @@ async function readBrain(fs, projectPath) {
 }
 var init_brain_files = __esm({
   "src/host/store/brain-files.js"() {
+    init_write_lock();
   }
 });
 
@@ -4133,12 +4174,13 @@ var MEMORY_TYPES = [
   "bug",
   "lesson",
   "issue",
-  "context"
+  "context",
+  "preference"
 ];
 var TODO_STATUSES = ["pending", "in_progress", "blocked", "done", "cancelled"];
 var TODO_PRIORITIES = ["low", "medium", "high", "urgent"];
 var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
-var HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true };
+var HIGH_VALUE_MEMORY_TYPES = { decision: true, architecture: true, bug: true, lesson: true, preference: true };
 function makeId(prefix, now, rand) {
   const t = (now != null ? now : Date.now()).toString(36);
   const r = rand != null ? rand : Math.random().toString(36).slice(2, 8);
@@ -4673,10 +4715,44 @@ import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
 // src/host/memory/admit.js
 import { createHash } from "node:crypto";
 init_brain_files();
-var CORE_MAX_ITEMS = 15;
-var CORE_MAX_TOKENS = 800;
+init_write_lock();
+var CORE_MAX_ITEMS = 25;
+var CORE_MAX_TOKENS = 1500;
 var TITLE_JACCARD_SUGGEST = 0.85;
-var DURABLE_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson"]);
+var PINNED_RATIO = 0.5;
+var coreLimits = { maxItems: CORE_MAX_ITEMS, maxTokens: CORE_MAX_TOKENS };
+function setCoreLimits(config) {
+  const items = Number(config && config.coreMaxItems);
+  const tokens = Number(config && config.coreMaxTokens);
+  coreLimits = {
+    maxItems: Number.isFinite(items) && items > 0 ? Math.round(items) : CORE_MAX_ITEMS,
+    maxTokens: Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : CORE_MAX_TOKENS
+  };
+  return coreLimits;
+}
+function maxPinnedCount(limits) {
+  const resolved = limits || coreLimits;
+  return Math.max(1, Math.floor(resolved.maxItems * PINNED_RATIO));
+}
+function pinnedMemories(rows) {
+  return (rows || []).filter((m) => m && m.pinned === true && isCoreMemory(m));
+}
+var DURABLE_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "preference"]);
+var DEIXIS_RE = /(这个|这些|这条|这段|这句|这点|这样|这种|这方面|这角度|那个|那些|上述|上面(?:说|提|讲)?的|前面(?:说|提|讲)?的|刚才(?:说|提|讲)?的|如上|此事|本次讨论|你说的|我说的|上文)|\b(?:this|these|those|the above)\b/i;
+var ANCHOR_RE = /[A-Za-z][A-Za-z0-9._/-]{1,}|[「『《"'`\[(][^\s」』》"'`\])]{2,}[」』》"'`\])]/;
+var DEIXIS_SELF_CONTAINED_CHARS = 30;
+function findDeixis(text) {
+  const hit = String(text || "").match(DEIXIS_RE);
+  return hit ? hit[0] : "";
+}
+function hasUnresolvedReference(title, content, { maxSelfContainedChars = DEIXIS_SELF_CONTAINED_CHARS } = {}) {
+  const body = String(content || "").trim();
+  const blob = String(title || "") + "\n" + body;
+  if (!findDeixis(blob)) return false;
+  if (maxSelfContainedChars <= 0) return true;
+  if (ANCHOR_RE.test(blob)) return false;
+  return body.replace(/\s+/g, "").length <= maxSelfContainedChars;
+}
 function memoryFingerprint(item) {
   const type = String(item && item.type || "").toLowerCase();
   const title = String(item && item.title || "");
@@ -4780,8 +4856,12 @@ function ruleGate(candidate) {
   } else if (!DURABLE_TYPES.has(type)) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "type_forbidden" };
   }
-  if (content.length < 20) {
+  const minContent = sourceKind === "user_explicit" ? 12 : 20;
+  if (content.length < minContent) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "content_too_short" };
+  }
+  if (hasUnresolvedReference(title, content)) {
+    return { ok: false, code: "E_ADMIT_RULE", reason: "unresolved_reference" };
   }
   if (isChangelogGenre(title, content)) {
     return { ok: false, code: "E_ADMIT_RULE", reason: "changelog_genre", route: "timeline" };
@@ -4793,17 +4873,39 @@ function coreTokenSum(rows) {
     return sum + estimateTokens(String(m.title || "") + String(m.content || ""));
   }, 0);
 }
-function enforceCoreCap(rows, { pinnedIds = [], now = Date.now() } = {}) {
+function isUserAuthored(memory) {
+  const source = memory && memory.source;
+  if (!source) return false;
+  return source.kind === "user_explicit" || source.editedBy === "user";
+}
+var RECENT_ACCESS_WINDOW_MS = 7 * 864e5;
+function wasRecentlyAccessed(memory, now) {
+  const at = Number(memory && memory.lastAccessedAt) || 0;
+  return at > 0 && now - at <= RECENT_ACCESS_WINDOW_MS;
+}
+function enforceCoreCap(rows, { pinnedIds = [], now = Date.now(), limits } = {}) {
   const list = (rows || []).map((m) => Object.assign({}, m));
   const pinned = new Set(pinnedIds || []);
+  const { maxItems, maxTokens } = limits || coreLimits;
   let changed = false;
   function actives() {
     return list.filter(isCoreMemory);
   }
   function pickVictim(active) {
-    const unpinned = active.filter((m) => !pinned.has(m.id));
-    const pool = unpinned.length ? unpinned.slice() : active.slice();
+    const pools = [
+      active.filter((m) => !pinned.has(m.id) && m.pinned !== true),
+      active.filter((m) => !pinned.has(m.id)),
+      active.slice()
+    ];
+    const pool = pools.find((p) => p.length > 0);
+    if (!pool) return null;
     pool.sort((a, b) => {
+      const ua = isUserAuthored(a) ? 1 : 0;
+      const ub = isUserAuthored(b) ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      const ra = wasRecentlyAccessed(a, now) ? 1 : 0;
+      const rb = wasRecentlyAccessed(b, now) ? 1 : 0;
+      if (ra !== rb) return ra - rb;
       const ia = Math.round((Number(a.importance) || 0) * 10);
       const ib = Math.round((Number(b.importance) || 0) * 10);
       if (ia !== ib) return ia - ib;
@@ -4813,7 +4915,7 @@ function enforceCoreCap(rows, { pinnedIds = [], now = Date.now() } = {}) {
   }
   while (true) {
     const active = actives();
-    if (active.length <= CORE_MAX_ITEMS && coreTokenSum(active) <= CORE_MAX_TOKENS) break;
+    if (active.length <= maxItems && coreTokenSum(active) <= maxTokens) break;
     if (!active.length) break;
     const victim = pickVictim(active);
     if (!victim) break;
@@ -4869,10 +4971,10 @@ function collectSuggestSupersede(rows) {
   }
   return actions;
 }
-function housekeepMemories(rows, { now = Date.now(), pinnedIds = [] } = {}) {
+function housekeepMemories(rows, { now = Date.now(), pinnedIds = [], limits } = {}) {
   const before = (rows || []).slice();
   const bf = backfillMemoryStatuses(before, now);
-  const cap = enforceCoreCap(bf.rows, { pinnedIds, now });
+  const cap = enforceCoreCap(bf.rows, { pinnedIds, now, limits });
   const suggestions = collectSuggestSupersede(cap.rows);
   const changed = bf.changed || cap.changed;
   const actions = [];
@@ -4906,7 +5008,7 @@ function evaluateAdmit(candidate, ctx) {
     return { action: "reject", code: "E_NOT_INITIALIZED", reason: "project not initialized" };
   }
   const working = compactCandidate(Object.assign({}, candidate), channel);
-  const gated = ruleGate(candidate);
+  const gated = ruleGate(working);
   if (!gated.ok) {
     return { action: "reject", code: gated.code, reason: gated.reason, route: gated.route };
   }
@@ -5034,7 +5136,14 @@ async function persistAdmitted({ fs, projectPath, memories, entry, supersedesId,
   if (!ok2) return { ok: false, code: "E_WRITE_FAILED" };
   return { ok: true, entry, rows: capped.rows };
 }
-async function admitMemory({
+async function admitMemory(options = {}) {
+  const { fs, projectPath } = options;
+  if (!fs || !projectPath) {
+    return { ok: false, code: "E_NOT_INITIALIZED", message: "missing fs/projectPath" };
+  }
+  return withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => admitMemoryTx(options));
+}
+async function admitMemoryTx({
   fs,
   projectPath,
   candidate,
@@ -5043,9 +5152,6 @@ async function admitMemory({
   now = Date.now(),
   pinnedIds
 } = {}) {
-  if (!fs || !projectPath) {
-    return { ok: false, code: "E_NOT_INITIALIZED", message: "missing fs/projectPath" };
-  }
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     return { ok: false, code: "E_NOT_INITIALIZED", message: "project not initialized" };
@@ -5134,7 +5240,10 @@ async function admitMemory({
     suggestions: decision.suggestions || []
   };
 }
-async function persistHousekeep(fs, projectPath, { now = Date.now(), pinnedIds = [], writeTimeline = true } = {}) {
+async function persistHousekeep(fs, projectPath, options = {}) {
+  return withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => persistHousekeepTx(fs, projectPath, options));
+}
+async function persistHousekeepTx(fs, projectPath, { now = Date.now(), pinnedIds = [], writeTimeline = true } = {}) {
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     return { ok: false, code: "E_NOT_INITIALIZED", changed: false };
@@ -5165,6 +5274,7 @@ async function ensureHousekeepOnRead(fs, projectPath) {
 }
 
 // src/tools/memory.js
+init_write_lock();
 function emitPreviewChanged2(exec, projectPath) {
   try {
     const executor = exec && exec.ctx || null;
@@ -5184,7 +5294,7 @@ function executionSessionId2(exec) {
 function buildMemoryAddTool({ fs, sandboxPolicy, getLlm }) {
   return defineTool2({
     name: "project_memory_add",
-    description: "dsh-project-brain: \u5199\u5165\u4E00\u6761\u8DE8\u4F1A\u8BDD\u4ECD\u4E3A\u771F\u7684\u9879\u76EE\u8BB0\u5FC6\uFF08decision/requirement/architecture/bug/lesson\uFF09\u3002\u4E0D\u8981\u5199\u5165 changelog\u3001\u672C\u6B21\u6539\u4E86\u54EA\u4E9B\u6587\u4EF6\u6216\u4F1A\u8BDD\u6D41\u6C34\u8D26\uFF1B\u8FDB\u884C\u4E2D\u7684\u5DE5\u4F5C\u7528 project_todo_*\u3002 importance 0~1\u3002\u5DE5\u5177\u53EF\u80FD\u56E0\u89C4\u5219\u6216\u6A21\u578B\u786E\u8BA4\u62D2\u7EDD\uFF0C\u4E0D\u8981\u6539\u5199\u6210 changelog \u518D\u8BD5\u3002",
+    description: "dsh-project-brain: \u5199\u5165\u4E00\u6761\u8DE8\u4F1A\u8BDD\u4ECD\u4E3A\u771F\u7684\u9879\u76EE\u8BB0\u5FC6\uFF08decision/requirement/architecture/bug/lesson/preference\uFF09\u3002\u7528\u6237\u660E\u786E\u8868\u8FBE\u7684\u957F\u671F\u534F\u4F5C\u53E3\u5F84\u4E0E\u5DE5\u4F5C\u504F\u597D\u7528 preference\u3002\u4E0D\u8981\u5199\u5165 changelog\u3001\u672C\u6B21\u6539\u4E86\u54EA\u4E9B\u6587\u4EF6\u6216\u4F1A\u8BDD\u6D41\u6C34\u8D26\uFF1B\u8FDB\u884C\u4E2D\u7684\u5DE5\u4F5C\u7528 project_todo_*\u3002 content \u5FC5\u987B\u81EA\u5305\u542B\uFF1A\u4E0D\u8981\u51FA\u73B0\u300C\u8FD9\u4E2A/\u90A3\u4E2A/\u4E0A\u9762\u8BF4\u7684\u300D\u8FD9\u7C7B\u6307\u4EE3\u8BCD\uFF0C\u6362\u6210\u5B83\u771F\u6B63\u6307\u7684\u4E1C\u897F\u3002 importance 0~1\u3002\u5DE5\u5177\u53EF\u80FD\u56E0\u89C4\u5219\u6216\u6A21\u578B\u786E\u8BA4\u62D2\u7EDD\uFF0C\u4E0D\u8981\u6539\u5199\u6210 changelog \u518D\u8BD5\u3002",
     parameters: {
       type: { type: "string", description: "\u8BB0\u5FC6\u7C7B\u578B\uFF0C\u679A\u4E3E\uFF1A" + MEMORY_TYPES.join(" | ") },
       title: { type: "string", description: "\u6807\u9898\uFF08\u4E00\u53E5\u8BDD\uFF0C<=200 \u5B57\u7B26\uFF09" },
@@ -5389,29 +5499,32 @@ function buildMemoryArchiveTool({ fs, sandboxPolicy }) {
         if (!idPrefix) {
           return { ok: false, code: "E_NO_ID", message: "id \u5FC5\u586B" };
         }
-        const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
-        const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
-        if (matches.length === 0) {
-          return { ok: false, code: "E_NOT_FOUND", message: `\u672A\u627E\u5230 id=${idPrefix} \u7684\u6D3B\u8DC3\u8BB0\u5FC6` };
-        }
-        if (matches.length > 1) {
-          return { ok: false, code: "E_AMBIGUOUS_ID", message: `id=${idPrefix} \u5339\u914D\u5230 ${matches.length} \u6761\uFF0C\u8BF7\u63D0\u4F9B\u66F4\u7CBE\u786E\u7684 id` };
-        }
-        const target = matches[0];
         const now = Date.now();
-        const updated = memories.map((m) => {
-          if (m.id !== target.id) return m;
-          return Object.assign({}, m, {
-            status: "archived",
-            updatedAt: now,
-            lastAccessedAt: now,
-            ...reason ? { archiveReason: reason } : {}
+        const archived = await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+          const memories = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
+          const matches = memories.filter((m) => m && m.id && (m.id === idPrefix || m.id.indexOf(idPrefix) === 0) && isRetrievableMemory(m));
+          if (matches.length === 0) {
+            return { ok: false, code: "E_NOT_FOUND", message: `\u672A\u627E\u5230 id=${idPrefix} \u7684\u6D3B\u8DC3\u8BB0\u5FC6` };
+          }
+          if (matches.length > 1) {
+            return { ok: false, code: "E_AMBIGUOUS_ID", message: `id=${idPrefix} \u5339\u914D\u5230 ${matches.length} \u6761\uFF0C\u8BF7\u63D0\u4F9B\u66F4\u7CBE\u786E\u7684 id` };
+          }
+          const hit = matches[0];
+          const updated = memories.map((m) => {
+            if (m.id !== hit.id) return m;
+            return Object.assign({}, m, {
+              status: "archived",
+              updatedAt: now,
+              lastAccessedAt: now,
+              ...reason ? { archiveReason: reason } : {}
+            });
           });
+          const ok2 = await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), updated);
+          if (!ok2) return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
+          return { ok: true, target: hit };
         });
-        const wrote = await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), updated);
-        if (!wrote) {
-          return { ok: false, code: "E_WRITE_FAILED", message: "failed to write memory.jsonl" };
-        }
+        if (!archived.ok) return archived;
+        const target = archived.target;
         await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
           title: "\u5F52\u6863\u8BB0\u5FC6[" + target.type + "]\uFF1A" + target.title + (reason ? "\uFF08" + reason + "\uFF09" : ""),
@@ -5505,12 +5618,14 @@ function buildMemorySupersedeTool({ fs, sandboxPolicy }) {
         }
         const newEntry = admitted.entry || { id: admitted.id, type, title };
         if (reason && admitted.action === "insert") {
-          const latest = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
-          const withReason = latest.map((m) => {
-            if (m.id !== oldTarget.id) return m;
-            return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
+          await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+            const latest = await readJsonl(fs, brainPath2(projectPath, "memory.jsonl"));
+            const withReason = latest.map((m) => {
+              if (m.id !== oldTarget.id) return m;
+              return Object.assign({}, m, { supersededReason: reason, supersededBy: newEntry.id });
+            });
+            return writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), withReason);
           });
-          await writeJsonl(fs, brainPath2(projectPath, "memory.jsonl"), withReason);
         }
         await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
           id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
@@ -6578,9 +6693,19 @@ function normalizeScoreMap(map) {
   return out;
 }
 function recencyScore(memory, now) {
-  const created = memory.updatedAt || memory.createdAt || 0;
-  const ageDays2 = Math.max(0, (now - created) / 864e5);
+  const touched = Math.max(
+    Number(memory.lastAccessedAt) || 0,
+    Number(memory.updatedAt) || 0,
+    Number(memory.createdAt) || 0
+  );
+  const ageDays2 = Math.max(0, (now - touched) / 864e5);
   return ageDays2 <= 7 ? 1 : Math.max(0, 1 - ageDays2 / 180);
+}
+var TRUSTED_CONFIDENCE = 0.6;
+function trustFactor(confidence) {
+  const value = typeof confidence === "number" ? confidence : 0.6;
+  if (value >= TRUSTED_CONFIDENCE) return 1;
+  return Math.max(0.35, value / TRUSTED_CONFIDENCE);
 }
 function tokenJaccard(a, b) {
   const aa = new Set(tokenizeMemoryText(memoryDocument(a)));
@@ -6638,8 +6763,9 @@ function retrieveMemories({ memories, query = "", topK = 5, now = Date.now(), ve
   const ranked = candidates.map((memory) => {
     const importance = typeof memory.importance === "number" ? memory.importance : 0.5;
     const confidence = typeof memory.confidence === "number" ? memory.confidence : 0.6;
-    const stableType = ["decision", "requirement", "architecture", "bug", "lesson"].includes(memory.type) ? 1 : 0.35;
-    const relevance = (keyword.get(memory.id) || 0) * weights.keyword + (vector.get(memory.id) || 0) * weights.vector + importance * weights.importance + confidence * weights.confidence + recencyScore(memory, now) * weights.recency + stableType * weights.type;
+    const stableType = ["decision", "requirement", "architecture", "bug", "lesson", "preference"].includes(memory.type) ? 1 : 0.35;
+    const weighted = (keyword.get(memory.id) || 0) * weights.keyword + (vector.get(memory.id) || 0) * weights.vector + importance * weights.importance + confidence * weights.confidence + recencyScore(memory, now) * weights.recency + stableType * weights.type;
+    const relevance = weighted * trustFactor(confidence);
     return { memory, relevance, keywordScore: keyword.get(memory.id) || 0, vectorScore: vector.get(memory.id) || 0 };
   }).sort((a, b) => b.relevance - a.relevance);
   return diverseSelect(ranked, topK);
@@ -6667,6 +6793,14 @@ var Config = z.object({
   sessionSemanticMaxChars: z.number().step(1).min(2e3).max(4e4).default(16e3),
   sessionSemanticMaxItems: z.number().step(1).min(1).max(8).default(4),
   sessionSemanticTimeoutMs: z.number().step(1).min(5e3).max(12e4).default(3e4),
+  realtimeMemoryEnabled: z.boolean().default(true),
+  realtimeMemoryTimeoutMs: z.number().step(1).min(5e3).max(6e4).default(2e4),
+  coreMaxItems: z.number().step(1).min(5).max(60).default(25),
+  coreMaxTokens: z.number().step(1).min(400).max(4e3).default(1500),
+  vacuumMemoryRetainDays: z.number().step(1).min(7).max(3650).default(90),
+  vacuumMemoryMinRetained: z.number().step(1).min(0).max(1e4).default(200),
+  vacuumTimelineMaxEvents: z.number().step(1).min(200).max(1e5).default(2e3),
+  vacuumTimelineRetainDays: z.number().step(1).min(7).max(3650).default(180),
   architectureEnabled: z.boolean().default(true),
   architectureLlmEnabled: z.boolean().default(true),
   architectureLlmIncludeSource: z.boolean().default(true),
@@ -6701,6 +6835,14 @@ function normalizeMemoryConfig(value) {
     sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16e3, 2e3, 4e4),
     sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
     sessionSemanticTimeoutMs: integer("sessionSemanticTimeoutMs", 3e4, 5e3, 12e4),
+    realtimeMemoryEnabled: input.realtimeMemoryEnabled !== false,
+    realtimeMemoryTimeoutMs: integer("realtimeMemoryTimeoutMs", 2e4, 5e3, 6e4),
+    coreMaxItems: integer("coreMaxItems", 25, 5, 60),
+    coreMaxTokens: integer("coreMaxTokens", 1500, 400, 4e3),
+    vacuumMemoryRetainDays: integer("vacuumMemoryRetainDays", 90, 7, 3650),
+    vacuumMemoryMinRetained: integer("vacuumMemoryMinRetained", 200, 0, 1e4),
+    vacuumTimelineMaxEvents: integer("vacuumTimelineMaxEvents", 2e3, 200, 1e5),
+    vacuumTimelineRetainDays: integer("vacuumTimelineRetainDays", 180, 7, 3650),
     architectureEnabled: input.architectureEnabled !== false,
     architectureLlmEnabled: input.architectureLlmEnabled !== false,
     architectureLlmIncludeSource: input.architectureLlmIncludeSource !== false,
@@ -6748,6 +6890,15 @@ function publicMemoryConfig(config) {
       maxChars: c.sessionSemanticMaxChars,
       maxItems: c.sessionSemanticMaxItems
     },
+    realtimeMemory: {
+      enabled: c.realtimeMemoryEnabled,
+      timeoutMs: c.realtimeMemoryTimeoutMs
+    },
+    core: {
+      maxItems: c.coreMaxItems,
+      maxTokens: c.coreMaxTokens,
+      maxPinned: maxPinnedCount({ maxItems: c.coreMaxItems, maxTokens: c.coreMaxTokens })
+    },
     architecture: {
       enabled: c.architectureEnabled,
       llmEnabled: c.architectureLlmEnabled,
@@ -6759,6 +6910,7 @@ function publicMemoryConfig(config) {
 }
 function createMemoryConfigRuntime(ctx, entryConfig) {
   let current = normalizeMemoryConfig(entryConfig);
+  setCoreLimits(current);
   let credentials = null;
   let settingsService = null;
   let settingsScope = null;
@@ -6776,11 +6928,13 @@ function createMemoryConfigRuntime(ctx, entryConfig) {
         settingsScope = settings.register(MEMORY_SETTINGS_NS, Config, { base: entryConfig || {} });
         try {
           current = normalizeMemoryConfig(settingsScope.get());
+          setCoreLimits(current);
         } catch (e) {
         }
         if (settingsScope && typeof settingsScope.watch === "function") {
           settingsScope.watch((next) => {
             current = normalizeMemoryConfig(next);
+            setCoreLimits(current);
           });
         }
       });
@@ -6951,6 +7105,43 @@ function renderStatus(value) {
 init_brain_files();
 import { defineTool as defineTool8 } from "@deepseek-ai/dsh-tools";
 
+// src/host/memory/access.js
+init_brain_files();
+init_write_lock();
+var ACCESS_THROTTLE_MS = 5 * 60 * 1e3;
+var MAX_ACCESS_COUNT = 9999;
+function applyAccessTouch(rows, ids, now = Date.now(), throttleMs = ACCESS_THROTTLE_MS) {
+  const wanted = new Set((ids || []).map(String).filter(Boolean));
+  if (wanted.size === 0) return { changed: false, rows: rows || [], touched: [] };
+  const touched = [];
+  const next = (rows || []).map((m) => {
+    if (!m || !wanted.has(String(m.id))) return m;
+    const last = Number(m.lastAccessedAt) || 0;
+    if (last && now - last < throttleMs) return m;
+    touched.push(m.id);
+    return Object.assign({}, m, {
+      lastAccessedAt: now,
+      accessCount: Math.min(MAX_ACCESS_COUNT, (Number(m.accessCount) || 0) + 1)
+    });
+  });
+  return { changed: touched.length > 0, rows: next, touched };
+}
+async function recordMemoryAccess({ fs, projectPath, ids, now = Date.now() } = {}) {
+  if (!fs || !projectPath || !ids || ids.length === 0) return { changed: false, touched: [] };
+  try {
+    return await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+      const file = brainPath2(projectPath, "memory.jsonl");
+      const rows = await readJsonl(fs, file);
+      const result = applyAccessTouch(rows, ids, now);
+      if (!result.changed) return { changed: false, touched: [] };
+      const wrote = await writeJsonl(fs, file, result.rows);
+      return { changed: wrote, touched: result.touched };
+    });
+  } catch (e) {
+    return { changed: false, touched: [], error: String(e && e.message || e) };
+  }
+}
+
 // src/host/memory/embeddings.js
 init_brain_files();
 import { createHash as createHash2 } from "node:crypto";
@@ -7015,7 +7206,7 @@ async function readCache(fs, projectPath) {
     return [];
   }
 }
-async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolveCredential, signal, fetchImpl } = {}) {
+async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolveCredential, signal, fetchImpl, knownMemoryIds } = {}) {
   const active = activeMemories(memories);
   const modelKey = embeddingModelKey(config);
   const rows = await readCache(fs, projectPath);
@@ -7068,8 +7259,9 @@ async function ensureEmbeddingIndex({ fs, projectPath, memories, config, resolve
     }
   }
   if (indexedNow > 0) {
-    const activeIds = new Set(active.map((memory) => memory.id));
-    const wrote = await writeJsonl(fs, brainPath2(projectPath, CACHE_FILE), [...currentById.values()].filter((row) => activeIds.has(row.memoryId)));
+    const keepIds = Array.isArray(knownMemoryIds) && knownMemoryIds.length ? new Set(knownMemoryIds.map(String)) : null;
+    const nextRows = keepIds ? [...currentById.values()].filter((row) => keepIds.has(String(row.memoryId))) : [...currentById.values()];
+    const wrote = await writeJsonl(fs, brainPath2(projectPath, CACHE_FILE), nextRows);
     if (!wrote && !error) {
       error = Object.assign(new Error("Embedding cache could not be written"), { code: "EMBEDDING_CACHE_WRITE_FAILED" });
     }
@@ -7233,7 +7425,8 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
               projectPath,
               memories: activeMemoryList,
               config: memoryConfig,
-              resolveCredential: resolveEmbeddingCredential
+              resolveCredential: resolveEmbeddingCredential,
+              knownMemoryIds: (memories || []).map((m) => m && m.id).filter(Boolean)
             });
             vectors = indexState.vectors;
             vectorState = { ...vectorState, ...indexState, requested: true, used: false, fallbackReason: indexState.error };
@@ -7279,6 +7472,11 @@ function buildAskTool({ fs, sandboxPolicy, getMemoryConfig, resolveEmbeddingCred
           return s < 0 ? null : { ...e, _score: s };
         }).filter(Boolean);
         tlScored.sort((a, b) => (b._score || 0) - (a._score || 0));
+        await recordMemoryAccess({
+          fs,
+          projectPath,
+          ids: memScored.map((hit) => hit.memory && hit.memory.id).filter(Boolean)
+        });
         const memSources = memScored.map((hit) => ({
           kind: "memory",
           id: hit.memory.id,
@@ -7414,6 +7612,149 @@ function renderAsk(value) {
 // src/tools/dream.js
 init_brain_files();
 import { defineTool as defineTool9 } from "@deepseek-ai/dsh-tools";
+
+// src/host/memory/vacuum.js
+init_brain_files();
+init_write_lock();
+var DAY_MS2 = 864e5;
+var VACUUM_DEFAULTS = Object.freeze({
+  // 归档多久之后才允许搬走
+  memoryRetainDays: 90,
+  // 即使全都超期，也至少留这么多条归档在主文件里
+  memoryMinRetained: 200,
+  timelineMaxEvents: 2e3,
+  timelineRetainDays: 180
+});
+function resolveOptions(config) {
+  const num2 = (key, fallback, min, max) => {
+    const raw = Number(config && config[key]);
+    if (!Number.isFinite(raw)) return fallback;
+    return Math.round(Math.min(max, Math.max(min, raw)));
+  };
+  return {
+    memoryRetainDays: num2("vacuumMemoryRetainDays", VACUUM_DEFAULTS.memoryRetainDays, 7, 3650),
+    memoryMinRetained: num2("vacuumMemoryMinRetained", VACUUM_DEFAULTS.memoryMinRetained, 0, 1e4),
+    timelineMaxEvents: num2("vacuumTimelineMaxEvents", VACUUM_DEFAULTS.timelineMaxEvents, 200, 1e5),
+    timelineRetainDays: num2("vacuumTimelineRetainDays", VACUUM_DEFAULTS.timelineRetainDays, 7, 3650)
+  };
+}
+function ageMs(entry, now) {
+  const at = Number(entry && (entry.updatedAt || entry.createdAt || entry.occurredAt)) || 0;
+  return at > 0 ? now - at : Infinity;
+}
+function referencedIds(rows) {
+  const referenced = /* @__PURE__ */ new Set();
+  for (const m of rows || []) {
+    if (!m) continue;
+    if (m.supersededBy) referenced.add(String(m.supersededBy));
+    if (m.source && m.source.supersedes) referenced.add(String(m.source.supersedes));
+  }
+  return referenced;
+}
+function planMemoryVacuum(rows, { now = Date.now(), config } = {}) {
+  const opts = resolveOptions(config);
+  const all = (rows || []).filter(Boolean);
+  const cutoff = opts.memoryRetainDays * DAY_MS2;
+  const referenced = referencedIds(all);
+  const dead = all.filter((m) => !isCoreMemory(m) && m.status !== "dormant");
+  const evictable = dead.filter((m) => !referenced.has(String(m.id))).filter((m) => m.pinned !== true).filter((m) => ageMs(m, now) > cutoff).sort((a, b) => ageMs(b, now) - ageMs(a, now));
+  const overflow = Math.max(0, dead.length - opts.memoryMinRetained);
+  const evict = evictable.slice(0, overflow);
+  const evictIds = new Set(evict.map((m) => String(m.id)));
+  return {
+    evict,
+    keep: all.filter((m) => !evictIds.has(String(m.id))),
+    stats: {
+      total: all.length,
+      dead: dead.length,
+      expired: evictable.length,
+      evicted: evict.length,
+      retainDays: opts.memoryRetainDays,
+      minRetained: opts.memoryMinRetained
+    }
+  };
+}
+function isTimelineAnchor(event, latestSummaryId) {
+  if (!event) return false;
+  if (event.eventType === "init") return true;
+  return latestSummaryId && event.id === latestSummaryId;
+}
+function planTimelineTrim(events, { now = Date.now(), config } = {}) {
+  const opts = resolveOptions(config);
+  const all = (events || []).filter(Boolean);
+  const cutoff = opts.timelineRetainDays * DAY_MS2;
+  const summaries = all.filter((e) => e.eventType === "session_summary").sort((a, b) => (Number(b.occurredAt) || 0) - (Number(a.occurredAt) || 0));
+  const latestSummaryId = summaries.length ? summaries[0].id : null;
+  const byRecency = all.slice().sort((a, b) => (Number(b.occurredAt) || 0) - (Number(a.occurredAt) || 0));
+  const keepIds = /* @__PURE__ */ new Set();
+  for (const event of byRecency) {
+    if (isTimelineAnchor(event, latestSummaryId)) {
+      keepIds.add(event.id);
+      continue;
+    }
+    if (keepIds.size >= opts.timelineMaxEvents) continue;
+    if (ageMs(event, now) > cutoff) continue;
+    keepIds.add(event.id);
+  }
+  const evict = all.filter((e) => !keepIds.has(e.id));
+  return {
+    evict,
+    keep: all.filter((e) => keepIds.has(e.id)),
+    stats: {
+      total: all.length,
+      evicted: evict.length,
+      maxEvents: opts.timelineMaxEvents,
+      retainDays: opts.timelineRetainDays,
+      anchorsKept: all.filter((e) => isTimelineAnchor(e, latestSummaryId)).length
+    }
+  };
+}
+function archiveFileName(kind, now) {
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return "archive/" + kind + "-" + stamp + ".jsonl";
+}
+async function relocate({ fs, projectPath, kind, mainFile, plan, now }) {
+  if (!plan.evict.length) return { ok: true, moved: 0, archivePath: null };
+  const archiveRel = archiveFileName(kind, now);
+  const wroteArchive = await writeJsonl(fs, brainPath2(projectPath, archiveRel), plan.evict);
+  if (!wroteArchive) {
+    return { ok: false, code: "E_ARCHIVE_WRITE_FAILED", moved: 0, archivePath: archiveRel };
+  }
+  const wroteMain = await writeJsonl(fs, brainPath2(projectPath, mainFile), plan.keep);
+  if (!wroteMain) {
+    return { ok: false, code: "E_MAIN_WRITE_FAILED", moved: 0, archivePath: archiveRel };
+  }
+  return { ok: true, moved: plan.evict.length, archivePath: archiveRel };
+}
+async function vacuumBrain({ fs, projectPath, config, now = Date.now(), dryRun = true } = {}) {
+  const memoryFile = brainPath2(projectPath, "memory.jsonl");
+  const timelineFile = brainPath2(projectPath, "timeline.jsonl");
+  const [memoryRows, timelineRows] = await Promise.all([
+    readJsonl(fs, memoryFile),
+    readJsonl(fs, timelineFile)
+  ]);
+  const memoryPlan = planMemoryVacuum(memoryRows, { now, config });
+  const timelinePlan = planTimelineTrim(timelineRows, { now, config });
+  const plan = {
+    memory: memoryPlan.stats,
+    timeline: timelinePlan.stats,
+    totalEvicted: memoryPlan.stats.evicted + timelinePlan.stats.evicted
+  };
+  if (dryRun) return { ok: true, dryRun: true, plan, archives: [] };
+  if (plan.totalEvicted === 0) return { ok: true, dryRun: false, plan, archives: [], changed: false };
+  return withWriteLock(brainTxKey(projectPath, "memory.jsonl"), async () => {
+    const archives = [];
+    const memoryMoved = await relocate({ fs, projectPath, kind: "memory", mainFile: "memory.jsonl", plan: memoryPlan, now });
+    if (!memoryMoved.ok) return { ok: false, code: memoryMoved.code, plan, archives };
+    if (memoryMoved.archivePath) archives.push({ kind: "memory", path: memoryMoved.archivePath, rows: memoryMoved.moved });
+    const timelineMoved = await relocate({ fs, projectPath, kind: "timeline", mainFile: "timeline.jsonl", plan: timelinePlan, now });
+    if (!timelineMoved.ok) return { ok: false, code: timelineMoved.code, plan, archives };
+    if (timelineMoved.archivePath) archives.push({ kind: "timeline", path: timelineMoved.archivePath, rows: timelineMoved.moved });
+    return { ok: true, dryRun: false, plan, archives, changed: true };
+  });
+}
+
+// src/tools/dream.js
 var baseOutputSchema6 = {
   type: "object",
   additionalProperties: true,
@@ -7422,12 +7763,12 @@ var baseOutputSchema6 = {
     data: { type: "object", additionalProperties: true }
   }
 };
-function buildDreamTool({ fs, sandboxPolicy }) {
+function buildDreamTool({ fs, sandboxPolicy, getMemoryConfig }) {
   return defineTool9({
     name: "project_dream",
-    description: "dsh-project-brain: \u6574\u7406\u8BB0\u5FC6\uFF08\u5F52\u6863 changelog \u4F53\u88C1\u3001\u8D85\u989D Core \u964D\u4E3A dormant\u3001\u62A5\u544A\u6807\u9898\u76F8\u4F3C\u5EFA\u8BAE\uFF09\u3002\u9ED8\u8BA4 dryRun=true\uFF1BdryRun=false \u65F6\u53EA\u5E94\u7528\u5F52\u6863\u4E0E\u4F11\u7720\uFF0C\u7EDD\u4E0D\u56E0\u6807\u9898\u76F8\u4F3C\u5220\u9664\u3002mode=full \u5728 v1 \u4E0D\u4F1A\u7269\u7406\u5220\u9664 archived \u884C\u3002",
+    description: "dsh-project-brain: \u6574\u7406\u8BB0\u5FC6\uFF08\u5F52\u6863 changelog \u4F53\u88C1\u3001\u8D85\u989D Core \u964D\u4E3A dormant\u3001\u62A5\u544A\u6807\u9898\u76F8\u4F3C\u5EFA\u8BAE\uFF09\u3002\u9ED8\u8BA4 dryRun=true\uFF1BdryRun=false \u65F6\u53EA\u5E94\u7528\u5F52\u6863\u4E0E\u4F11\u7720\uFF0C\u7EDD\u4E0D\u56E0\u6807\u9898\u76F8\u4F3C\u5220\u9664\u3002mode=full \u989D\u5916\u505A\u4E00\u6B21 vacuum\uFF1A\u628A\u8D85\u671F\u7684\u5F52\u6863\u8BB0\u5FC6\u4E0E\u65E7\u65F6\u95F4\u7EBF\u642C\u5230 .project-brain/archive/\uFF0C\u4E3B\u6587\u4EF6\u53D8\u5C0F\u4F46\u6570\u636E\u4ECD\u53EF\u627E\u56DE\uFF1B\u6D3B\u8DC3\u8BB0\u5FC6\u3001\u7F6E\u9876\u3001\u8BC1\u636E\u94FE\u5F15\u7528\u4E0E\u7B2C\u4E00\u5C4F\u4F9D\u8D56\u7684\u951A\u70B9\u90FD\u4E0D\u4F1A\u88AB\u642C\u8D70\u3002",
     parameters: {
-      mode: { type: "string", description: "light\uFF08\u9ED8\u8BA4\uFF09\u6216 full\uFF08v1 \u4E0E light \u76F8\u540C\uFF0C\u4E0D\u771F\u7A7A\u5220\u9664\uFF09" },
+      mode: { type: "string", description: "light\uFF08\u9ED8\u8BA4\uFF0C\u53EA\u6574\u7406\u72B6\u6001\uFF09\u6216 full\uFF08\u989D\u5916 vacuum \u4E3B\u6587\u4EF6\uFF09" },
       dryRun: { type: "boolean", description: "\u53EA\u8FD4\u56DE\u8BA1\u5212\uFF08\u9ED8\u8BA4 true\uFF09" },
       path: { type: "string", description: "\u9879\u76EE\u6839\u8DEF\u5F84\uFF08\u9ED8\u8BA4\u4ECE session cwd \u63A8\u65AD\uFF09" }
     },
@@ -7447,6 +7788,8 @@ function buildDreamTool({ fs, sandboxPolicy }) {
         const archiveCount = plannedActions.filter((a) => a.action === "archive_rule").length;
         const evictCount = plannedActions.filter((a) => a.action === "evict_to_dormant").length;
         const suggestCount = plannedActions.filter((a) => a.action === "suggest_supersede").length;
+        const memoryConfig = getMemoryConfig ? getMemoryConfig() : {};
+        const vacuumPlanned = mode === "full" ? await vacuumBrain({ fs, projectPath, config: memoryConfig, now, dryRun: true }) : null;
         if (dryRun) {
           return {
             ok: true,
@@ -7455,14 +7798,16 @@ function buildDreamTool({ fs, sandboxPolicy }) {
               dryRun: true,
               scannedMemories: memories.length,
               plannedActions,
+              ...vacuumPlanned ? { vacuum: vacuumPlanned.plan } : {},
               summary: {
                 archiveCandidates: archiveCount,
                 evictCandidates: evictCount,
                 suggestSupersede: suggestCount,
                 mergeCandidates: 0,
+                vacuumCandidates: vacuumPlanned ? vacuumPlanned.plan.totalEvicted : 0,
                 estimatedMs: 0
               },
-              note: "dryRun=true\uFF0C\u672A\u5199\u6587\u4EF6\uFF1Bcommit \u53EA\u5E94\u7528 archive_rule / evict_to_dormant\uFF0C\u4E0D\u4F1A Jaccard \u5220\u9664\u3002"
+              note: mode === "full" ? "dryRun=true\uFF0C\u672A\u5199\u6587\u4EF6\uFF1Bcommit \u4F1A\u5E94\u7528 archive_rule / evict_to_dormant\uFF0C\u5E76\u628A\u8D85\u671F\u6B7B\u884C\u642C\u5230 archive/\u3002" : "dryRun=true\uFF0C\u672A\u5199\u6587\u4EF6\uFF1Bcommit \u53EA\u5E94\u7528 archive_rule / evict_to_dormant\uFF0C\u4E0D\u4F1A Jaccard \u5220\u9664\u3002"
             }
           };
         }
@@ -7473,12 +7818,20 @@ function buildDreamTool({ fs, sandboxPolicy }) {
         if (!persisted.ok && persisted.code === "E_WRITE_FAILED") {
           return { ok: false, data: { error: { code: "E_DREAM_WRITE_FAILED", message: "write memory.jsonl failed" } } };
         }
+        let vacuum = null;
+        if (mode === "full") {
+          vacuum = await vacuumBrain({ fs, projectPath, config: memoryConfig, now, dryRun: false });
+          if (!vacuum.ok) {
+            return { ok: false, data: { error: { code: vacuum.code || "E_VACUUM_FAILED", message: "vacuum \u672A\u80FD\u5B8C\u6210\uFF0C\u4E3B\u6587\u4EF6\u4FDD\u6301\u539F\u6837" } } };
+          }
+        }
         try {
           if (exec && exec.ctx && typeof exec.ctx.emit === "function") {
             exec.ctx.emit("project_brain/preview.changed", { projectPath });
           }
         } catch (e) {
         }
+        const vacuumNote = vacuum && vacuum.changed ? " vacuum \u642C\u8D70 " + vacuum.plan.totalEvicted + " \u884C\u5230 archive/\u3002" : mode === "full" ? " \u6CA1\u6709\u8D85\u671F\u7684\u6B7B\u884C\u9700\u8981\u642C\u8D70\u3002" : "";
         return {
           ok: true,
           data: {
@@ -7486,20 +7839,23 @@ function buildDreamTool({ fs, sandboxPolicy }) {
             dryRun: false,
             scannedMemories: memories.length,
             plannedActions,
+            ...vacuum ? { vacuum: vacuum.plan, archives: vacuum.archives } : {},
             committed: {
               beforeCount: memories.length,
               afterCount: (persisted.rows || memories).length,
               archived: archiveCount,
-              evicted: evictCount
+              evicted: evictCount,
+              vacuumed: vacuum ? vacuum.plan.totalEvicted : 0
             },
             summary: {
               archiveCandidates: archiveCount,
               evictCandidates: evictCount,
               suggestSupersede: suggestCount,
               mergeCandidates: 0,
+              vacuumCandidates: vacuum ? vacuum.plan.totalEvicted : 0,
               estimatedMs: Date.now() - now
             },
-            note: persisted.changed ? "housekeep \u5DF2\u5199 memory.jsonl\uFF1B\u76F8\u4F3C\u6807\u9898\u4EC5\u4F5C\u4E3A suggest_supersede\u3002" : "housekeep \u65E0\u53D8\u5316\uFF0C\u672A\u5199\u6587\u4EF6\u3002"
+            note: (persisted.changed ? "housekeep \u5DF2\u5199 memory.jsonl\uFF1B\u76F8\u4F3C\u6807\u9898\u4EC5\u4F5C\u4E3A suggest_supersede\u3002" : "housekeep \u65E0\u53D8\u5316\uFF0C\u672A\u5199\u6587\u4EF6\u3002") + vacuumNote
           }
         };
       } catch (e) {
@@ -7520,6 +7876,12 @@ function renderDream(value) {
       if (a.action === "archive_rule") lines.push({ type: "text", text: `  [archive_rule] ${a.id} (${a.title})` });
       else if (a.action === "evict_to_dormant") lines.push({ type: "text", text: `  [dormant] ${a.id} (${a.title})` });
       else if (a.action === "suggest_supersede") lines.push({ type: "text", text: `  [suggest_supersede] ${(a.titles || []).join(" \u2248 ")}` });
+    }
+    if (d.vacuum) {
+      lines.push({ type: "text", text: `  vacuum: memory ${d.vacuum.memory.evicted}/${d.vacuum.memory.dead} dead rows, timeline ${d.vacuum.timeline.evicted}/${d.vacuum.timeline.total} events` });
+    }
+    for (const a of d.archives || []) {
+      lines.push({ type: "text", text: `  [archived-to] ${a.path} (${a.rows} rows)` });
     }
     if (d.committed) {
       lines.push({ type: "text", text: `  \u2713 ${d.committed.beforeCount} -> ${d.committed.afterCount} memories` });
@@ -8895,9 +9257,8 @@ function renderRollback(_args, value) {
 }
 
 // src/host/sidebar/aggregator.js
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import path5 from "node:path";
-init_brain_files();
 
 // src/host/memory/session-graph.js
 var FILE_SHOW = 5;
@@ -9018,7 +9379,7 @@ function pickDetail(g, label, summary) {
   return "";
 }
 var SKIP_EVENT_TYPES = /* @__PURE__ */ new Set(["rescan", "export", "import", "rollback"]);
-var SUBSTANTIVE_EVENT_TYPES = /* @__PURE__ */ new Set(["session_summary", "todo", "todo_update", "memory", "memory_supersede"]);
+var SUBSTANTIVE_EVENT_TYPES = /* @__PURE__ */ new Set(["session_summary", "todo", "todo_update", "memory", "memory_supersede", "memory_rejected"]);
 function dayKey(ts) {
   const n = Number(ts) || 0;
   if (!n) return "";
@@ -9138,6 +9499,10 @@ function buildSessionGraph(brain) {
         g.hasMemory = true;
         g.titles.push(memTitle);
       }
+    }
+    if (event.eventType === "memory_rejected") {
+      const rejectedTitle = displayTitle(event);
+      if (rejectedTitle) g.titles.push(rejectedTitle);
     }
     if (event.eventType === "rescan" || event.architectureMode === "full") {
       const triggers = parseTriggerFiles(event);
@@ -9348,21 +9713,16 @@ function readJsonlSync(filePath) {
 function readMemoriesHousekeptSync(filePath) {
   const memories = readJsonlSync(filePath);
   const hk = housekeepMemories(memories);
-  if (!hk.changed) return memories;
-  try {
-    writeFileSync(filePath, serializeJsonl(hk.rows), "utf8");
-  } catch (e) {
-  }
-  return hk.rows;
+  return hk.changed ? hk.rows : memories;
 }
 function deriveFallbackPhase(p) {
   const now = Date.now();
   const ts = p && (p.updatedAt || p.lastScannedAt) || now;
-  const ageMs = now - ts;
-  if (ageMs < 6e4) {
+  const ageMs2 = now - ts;
+  if (ageMs2 < 6e4) {
     return { title: "Project Brain \u5DF2\u5C31\u7EEA", progress: { done: 1, total: 1 } };
   }
-  if (ageMs < 24 * 36e5) {
+  if (ageMs2 < 24 * 36e5) {
     return { title: "\u4ECA\u65E5\u6D3B\u8DC3", progress: { done: 1, total: 2 } };
   }
   return { title: "\u7EF4\u62A4\u4E2D", progress: { done: 1, total: 3 } };
@@ -9486,6 +9846,7 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       recentActivity: [],
       memories: [],
       memoriesAll: [],
+      memoriesArchived: [],
       todos: [],
       timelineAll: [],
       architecture: null,
@@ -9544,6 +9905,8 @@ async function buildWorkspacePreview(fs, workspaceRoot) {
       if (ac !== bc) return ac - bc;
       return (b.importance || 0) - (a.importance || 0);
     }).slice(0, 50),
+    // 归档不是删除：页面要能看到它们才谈得上「恢复」。
+    memoriesArchived: (Array.isArray(memoriesAll) ? memoriesAll : []).filter((m) => m && (m.status === "archived" || m.status === "superseded")).slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)).slice(0, 50),
     todos,
     timelineAll: timeline.slice(0, 50),
     codegraph,
@@ -10057,7 +10420,135 @@ function shapeRollbackPreviewData(preview, backupTimestamp, confirmToken) {
   };
 }
 
+// src/host/memory/edit.js
+var EDITABLE_STATUSES = ["active", "dormant"];
+var MIN_EDITED_CONTENT_CHARS = 12;
+var MAX_EDITED_TITLE_CHARS = 200;
+var MAX_EDITED_CONTENT_CHARS = 4e3;
+function fail2(code, message) {
+  return { ok: false, code, message };
+}
+function findMemoryById(rows, idPrefix, { includeArchived = false } = {}) {
+  const needle = String(idPrefix || "").trim();
+  if (!needle) return fail2("E_NO_ID", "id \u5FC5\u586B");
+  const pool = (rows || []).filter((m) => m && m.id && (includeArchived || isRetrievableMemory(m)));
+  const matches = pool.filter((m) => m.id === needle || m.id.indexOf(needle) === 0);
+  if (matches.length === 0) return fail2("E_NOT_FOUND", "\u672A\u627E\u5230 id=" + needle + " \u7684\u8BB0\u5FC6");
+  if (matches.length > 1) return fail2("E_AMBIGUOUS_ID", "id=" + needle + " \u5339\u914D\u5230 " + matches.length + " \u6761\uFF0C\u8BF7\u63D0\u4F9B\u66F4\u7CBE\u786E\u7684 id");
+  return { ok: true, entry: matches[0] };
+}
+function normalizeTags(value, previous) {
+  if (value === void 0) return previous;
+  if (!Array.isArray(value)) return previous;
+  const out = [];
+  for (const tag of value) {
+    const clean2 = String(tag == null ? "" : tag).trim().slice(0, 50);
+    if (clean2 && out.indexOf(clean2) < 0) out.push(clean2);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+function applyMemoryEdit(rows, { id, patch = {}, now = Date.now(), limits } = {}) {
+  const found = findMemoryById(rows, id);
+  if (!found.ok) return found;
+  const target = found.entry;
+  const next = Object.assign({}, target);
+  if (patch.title !== void 0) {
+    const title = String(patch.title).trim();
+    if (!title) return fail2("E_NO_TITLE", "\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A");
+    next.title = title.slice(0, MAX_EDITED_TITLE_CHARS);
+  }
+  if (patch.content !== void 0) {
+    const content = String(patch.content).trim();
+    if (content.length < MIN_EDITED_CONTENT_CHARS) {
+      return fail2("E_CONTENT_TOO_SHORT", "\u6B63\u6587\u81F3\u5C11 " + MIN_EDITED_CONTENT_CHARS + " \u4E2A\u5B57\u7B26");
+    }
+    next.content = content.slice(0, MAX_EDITED_CONTENT_CHARS);
+  }
+  if (patch.type !== void 0) {
+    const type = normalizeMemoryType(patch.type);
+    if (!type) return fail2("E_INVALID_TYPE", "\u8BB0\u5FC6\u7C7B\u578B\u4E0D\u5408\u6CD5");
+    next.type = type;
+  }
+  if (patch.importance !== void 0) {
+    const importance = Number(patch.importance);
+    if (!Number.isFinite(importance) || importance < 0 || importance > 1) {
+      return fail2("E_INVALID_IMPORTANCE", "\u91CD\u8981\u6027\u5FC5\u987B\u662F 0~1 \u4E4B\u95F4\u7684\u6570\u5B57");
+    }
+    next.importance = Math.round(importance * 100) / 100;
+  }
+  if (patch.status !== void 0) {
+    const status = String(patch.status).trim();
+    if (EDITABLE_STATUSES.indexOf(status) < 0) {
+      return fail2("E_INVALID_STATUS", "\u72B6\u6001\u53EA\u80FD\u662F " + EDITABLE_STATUSES.join(" / "));
+    }
+    next.status = status;
+  }
+  if (patch.pinned !== void 0) {
+    const pinned = patch.pinned === true;
+    if (pinned && target.pinned !== true) {
+      const cap = maxPinnedCount(limits);
+      const current = pinnedMemories(rows).filter((m) => m.id !== target.id).length;
+      if (current >= cap) {
+        return fail2("E_PIN_LIMIT", "\u7F6E\u9876\u6700\u591A " + cap + " \u6761\uFF0C\u8BF7\u5148\u53D6\u6D88\u5176\u4ED6\u7F6E\u9876");
+      }
+    }
+    if (pinned) next.pinned = true;
+    else delete next.pinned;
+  }
+  const tags = normalizeTags(patch.tags, target.tags);
+  if (tags && tags.length) next.tags = tags;
+  else delete next.tags;
+  const unchanged = ["title", "content", "type", "importance", "status"].every((key) => next[key] === target[key]) && next.pinned === true === (target.pinned === true) && JSON.stringify(next.tags || []) === JSON.stringify(target.tags || []);
+  if (unchanged) return { ok: true, changed: false, rows: (rows || []).slice(), entry: target };
+  next.source = Object.assign({}, target.source || {}, {
+    fingerprint: memoryFingerprint(next),
+    editedBy: "user",
+    editedAt: now
+  });
+  next.updatedAt = now;
+  const replaced = (rows || []).map((m) => m && m.id === target.id ? next : m);
+  const capped = enforceCoreCap(replaced, { pinnedIds: [target.id], now, limits });
+  return { ok: true, changed: true, rows: capped.rows, entry: next, previous: target };
+}
+function applyMemoryStatus(rows, { id, status, reason = "", now = Date.now(), limits } = {}) {
+  const found = findMemoryById(rows, id, { includeArchived: true });
+  if (!found.ok) return found;
+  const target = found.entry;
+  const archiving = status === "archived";
+  if (target.status === status) {
+    return { ok: true, changed: false, rows: (rows || []).slice(), entry: target };
+  }
+  const next = Object.assign({}, target, { status, updatedAt: now, lastAccessedAt: now });
+  if (archiving) {
+    if (reason) next.archiveReason = reason;
+  } else {
+    delete next.archiveReason;
+    delete next.supersededBy;
+    delete next.supersededReason;
+  }
+  const replaced = (rows || []).map((m) => m && m.id === target.id ? next : m);
+  if (status !== "active") return { ok: true, changed: true, rows: replaced, entry: next, previous: target };
+  const capped = enforceCoreCap(replaced, { pinnedIds: [target.id], now, limits });
+  return { ok: true, changed: true, rows: capped.rows, entry: next, previous: target };
+}
+function applyMemoryDelete(rows, { id } = {}) {
+  const found = findMemoryById(rows, id, { includeArchived: true });
+  if (!found.ok) return found;
+  const target = found.entry;
+  const remaining = (rows || []).filter((m) => !(m && m.id === target.id));
+  const cleaned = remaining.map((m) => {
+    if (!m || m.supersededBy !== target.id) return m;
+    const copy = Object.assign({}, m);
+    delete copy.supersededBy;
+    return copy;
+  });
+  return { ok: true, changed: true, rows: cleaned, entry: target };
+}
+
 // src/host/rpc/sidebar.js
+init_brain_files();
+init_write_lock();
 import { promises as fsp4 } from "node:fs";
 import path6 from "node:path";
 function sanitizeSettings(config) {
@@ -10081,6 +10572,14 @@ function sanitizeSettings(config) {
     sessionSemanticMaxChars: source.sessionSemanticMaxChars,
     sessionSemanticMaxItems: source.sessionSemanticMaxItems,
     sessionSemanticTimeoutMs: source.sessionSemanticTimeoutMs,
+    realtimeMemoryEnabled: source.realtimeMemoryEnabled,
+    realtimeMemoryTimeoutMs: source.realtimeMemoryTimeoutMs,
+    coreMaxItems: source.coreMaxItems,
+    coreMaxTokens: source.coreMaxTokens,
+    vacuumMemoryRetainDays: source.vacuumMemoryRetainDays,
+    vacuumMemoryMinRetained: source.vacuumMemoryMinRetained,
+    vacuumTimelineMaxEvents: source.vacuumTimelineMaxEvents,
+    vacuumTimelineRetainDays: source.vacuumTimelineRetainDays,
     architectureEnabled: source.architectureEnabled,
     architectureLlmEnabled: source.architectureLlmEnabled,
     architectureLlmIncludeSource: source.architectureLlmIncludeSource,
@@ -10452,6 +10951,16 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
           preview
         });
       }
+      if (endpoint === "memory.update" || endpoint === "memory.status" || endpoint === "memory.delete") {
+        return handleMemoryMutation({
+          endpoint,
+          payload: payload || {},
+          projectPath,
+          fs,
+          ctx,
+          getMemoryConfig
+        });
+      }
       if (endpoint === "export.run") {
         let outputPath = payload && typeof payload.outputPath === "string" ? payload.outputPath : "";
         try {
@@ -10765,6 +11274,87 @@ function registerConnectionRpc({ connection, ctx, fs, sandboxPolicy, tools, logg
     { authority: "loopback" }
   );
   return true;
+}
+var MEMORY_TIMELINE_EVENTS = {
+  edit: { eventType: "memory_edit", verb: "\u7F16\u8F91\u8BB0\u5FC6" },
+  archived: { eventType: "memory_archive", verb: "\u5F52\u6863\u8BB0\u5FC6" },
+  active: { eventType: "memory_restore", verb: "\u6062\u590D\u8BB0\u5FC6" },
+  dormant: { eventType: "memory_archive", verb: "\u4F11\u7720\u8BB0\u5FC6" },
+  delete: { eventType: "memory_delete", verb: "\u6C38\u4E45\u5220\u9664\u8BB0\u5FC6" }
+};
+async function handleMemoryMutation(args) {
+  const { endpoint, projectPath, fs, ctx, getMemoryConfig } = args;
+  const id = typeof args.payload.id === "string" ? args.payload.id.trim() : "";
+  if (!id) return rpcError("bad-request", "id \u5FC5\u586B", { endpoint });
+  const result = await withWriteLock(brainTxKey(projectPath, "memory.jsonl"), () => mutateMemoryFile(args, id));
+  if (!result.ok) return rpcError(result.code || "internal", result.message || "\u8BB0\u5FC6\u64CD\u4F5C\u5931\u8D25", { endpoint, id });
+  const { outcome, changed, now, timelineKey } = result;
+  if (changed) {
+    const meta = MEMORY_TIMELINE_EVENTS[timelineKey] || MEMORY_TIMELINE_EVENTS.edit;
+    try {
+      await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
+        id: "evt-" + now.toString(36) + "-" + Math.random().toString(36).slice(2, 8),
+        title: meta.verb + "[" + outcome.entry.type + "]\uFF1A" + outcome.entry.title,
+        eventType: meta.eventType,
+        occurredAt: now,
+        detail: "id=" + outcome.entry.id + " by=user"
+      });
+    } catch (e) {
+    }
+    invalidateAggregatorCache(projectPath);
+    try {
+      if (ctx && typeof ctx.emit === "function") {
+        ctx.emit("project_brain/preview.changed", { projectPath });
+      }
+    } catch (e) {
+    }
+  }
+  const preview = await buildWorkspacePreview(fs, projectPath);
+  preview.retrieval = publicMemoryConfig(getMemoryConfig ? getMemoryConfig() : {});
+  return rpcOk({
+    projectPath,
+    preview,
+    changed,
+    memory: endpoint === "memory.delete" ? null : outcome.entry,
+    deletedId: endpoint === "memory.delete" && changed ? outcome.entry.id : null
+  });
+}
+async function mutateMemoryFile({ endpoint, payload, projectPath, fs }, id) {
+  const memoryFile = brainPath2(projectPath, "memory.jsonl");
+  let rows;
+  try {
+    rows = await readJsonl(fs, memoryFile);
+  } catch (e) {
+    return { ok: false, code: "internal", message: "\u8BFB\u53D6 memory.jsonl \u5931\u8D25\uFF1A" + String(e && e.message || e) };
+  }
+  const now = Date.now();
+  let outcome;
+  let timelineKey;
+  if (endpoint === "memory.update") {
+    const patch = payload.patch && typeof payload.patch === "object" ? payload.patch : null;
+    if (!patch) return { ok: false, code: "bad-request", message: "patch \u5FC5\u586B" };
+    outcome = applyMemoryEdit(rows, { id, patch, now });
+    timelineKey = "edit";
+  } else if (endpoint === "memory.status") {
+    const status = typeof payload.status === "string" ? payload.status : "";
+    if (["active", "dormant", "archived"].indexOf(status) < 0) {
+      return { ok: false, code: "bad-request", message: "status \u53EA\u80FD\u662F active / dormant / archived" };
+    }
+    const reason = typeof payload.reason === "string" ? payload.reason.trim().slice(0, 500) : "";
+    outcome = applyMemoryStatus(rows, { id, status, reason, now });
+    timelineKey = status;
+  } else {
+    if (payload.confirm !== true) {
+      return { ok: false, code: "bad-request", message: "\u6C38\u4E45\u5220\u9664\u9700\u8981 confirm=true" };
+    }
+    outcome = applyMemoryDelete(rows, { id });
+    timelineKey = "delete";
+  }
+  if (!outcome.ok) return { ok: false, code: outcome.code || "internal", message: outcome.message };
+  if (outcome.changed === false) return { ok: true, outcome, changed: false, now, timelineKey };
+  const wrote = await writeJsonl(fs, memoryFile, outcome.rows);
+  if (!wrote) return { ok: false, code: "internal", message: "\u5199\u5165 memory.jsonl \u5931\u8D25" };
+  return { ok: true, outcome, changed: true, now, timelineKey };
 }
 async function attachRescanAndPreview({ result, projectPath, fs, sandboxPolicy, architectureRuntime, getMemoryConfig }) {
   invalidateAggregatorCache(projectPath);
@@ -11180,7 +11770,7 @@ function detectSessionChanges({ projectPath, sinceMs, now = Date.now(), maxFiles
 
 // src/host/memory/session-extractor.js
 import { isAbsolute, normalize, sep as sep3 } from "node:path";
-var ALLOWED_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "context"]);
+var ALLOWED_TYPES = /* @__PURE__ */ new Set(["decision", "requirement", "architecture", "bug", "lesson", "context", "preference"]);
 function clean(value, limit) {
   return String(value == null ? "" : value).replace(/\u0000/g, "").trim().slice(0, limit);
 }
@@ -11192,19 +11782,23 @@ function textFromContent(content) {
   if (!Array.isArray(content)) return "";
   return content.filter((block) => block && block.type === "text").map((block) => block.text || "").join("\n");
 }
-function boundedSessionTranscript(session, maxChars = 16e3) {
+function sessionMessageLines(session, perMessageChars = 6e3) {
   let messages = [];
   try {
     messages = session && typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
   } catch (e) {
-    return "";
+    return [];
   }
-  const parts = (Array.isArray(messages) ? messages : []).map((message) => {
+  return (Array.isArray(messages) ? messages : []).map((message) => {
     const role = message && message.role;
     if (role !== "user" && role !== "assistant") return "";
     const value = redactSessionText(textFromContent(message.content));
-    return value ? `${role.toUpperCase()}: ${value.slice(0, 6e3)}` : "";
+    return value ? `${role.toUpperCase()}: ${value.slice(0, perMessageChars)}` : "";
   }).filter(Boolean);
+}
+function boundedSessionTranscript(session, maxChars = 16e3, maxMessages = 0) {
+  const all = sessionMessageLines(session);
+  const parts = maxMessages > 0 ? all.slice(-maxMessages) : all;
   const selected = [];
   let used = 0;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
@@ -11246,6 +11840,8 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
   const parts = [
     "\u4ECE\u4E0B\u9762\u7684\u8F6F\u4EF6\u5F00\u53D1 Session \u4E2D\u63D0\u53D6\u503C\u5F97\u8DE8\u4F1A\u8BDD\u957F\u671F\u4FDD\u5B58\u7684\u9879\u76EE\u77E5\u8BC6\uFF0C\u5E76\u603B\u7ED3\u672C\u6B21\u4F1A\u8BDD\u505A\u4E86\u4EC0\u4E48\u3002",
     "\u53EA\u4FDD\u7559\u6709\u660E\u786E\u8BC1\u636E\u7684\u67B6\u6784\u51B3\u7B56\u3001\u7A33\u5B9A\u9700\u6C42\u3001Bug \u6839\u56E0\u4E0E\u4FEE\u590D\u3001\u53EF\u590D\u7528\u6559\u8BAD\u3001\u957F\u671F\u95EE\u9898\u6216\u91CD\u8981\u9879\u76EE\u80CC\u666F\u3002",
+    "\u7528\u6237\u660E\u786E\u8868\u8FBE\u7684\u957F\u671F\u534F\u4F5C\u53E3\u5F84\u4E0E\u5DE5\u4F5C\u504F\u597D\uFF08\u8F93\u51FA\u7ED3\u6784\u3001\u6C89\u6DC0\u76EE\u6807\u3001\u8BED\u6C14\u8981\u6C42\u7B49\uFF09\u7528 type=preference \u8BB0\u4E0B\u6765\uFF0C\u5B83\u548C\u6280\u672F\u4E8B\u5B9E\u540C\u6837\u91CD\u8981\u3002",
+    "\u6BCF\u6761\u8BB0\u5FC6\u5FC5\u987B\u80FD\u8131\u79BB\u672C\u6B21\u5BF9\u8BDD\u72EC\u7ACB\u9605\u8BFB\uFF1A\u6B63\u6587\u91CC\u4E0D\u5141\u8BB8\u51FA\u73B0\u300C\u8FD9\u4E2A / \u90A3\u4E2A / \u4E0A\u9762\u8BF4\u7684 / \u8FD9\u6837 / this / that\u300D\u8FD9\u7C7B\u6307\u4EE3\u8BCD\uFF0C\u4E00\u5F8B\u66FF\u6362\u6210\u5B83\u771F\u6B63\u6307\u7684\u4E1C\u897F\u3002",
     "\u5FFD\u7565\u5BD2\u6684\u3001\u4E34\u65F6\u6B65\u9AA4\u3001\u547D\u4EE4\u8F93\u51FA\u3001\u672A\u786E\u8BA4\u731C\u6D4B\u3001\u4E2A\u4EBA\u4FE1\u606F\u3001\u51ED\u636E\uFF1B\u6CA1\u6709\u7A33\u5B9A\u77E5\u8BC6\u65F6 memories \u8FD4\u56DE\u7A7A\u6570\u7EC4\u3002",
     "summary \u7528 1\u20133 \u53E5\u8BDD\u5199\u672C\u6B21\u505A\u6210\u4E86\u4EC0\u4E48\u91CD\u8981\u7684\u4EE5\u53CA\u4E3A\u4EC0\u4E48\uFF0C\u4F5C\u4E3A\u4E0B\u4E00\u4E2A Session \u7684\u7EED\u63A5\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u7F16\u9020\u3002\u7981\u6B62\u5199\u6210\u300C\u6539\u4E86 N \u4E2A\u6587\u4EF6\u300D\u3001\u9A8C\u6536\u6E05\u5355\u6216 changelog\u3002",
     `\u6700\u591A ${maxItems} \u6761\u8BB0\u5FC6\u3002\u53EA\u8F93\u51FA\u4E25\u683C JSON \u5BF9\u8C61\uFF0C\u4E0D\u8981 Markdown\u3002`,
@@ -11253,7 +11849,7 @@ function sessionMemoryPrompt(transcript, maxItems, diffEvidence) {
     "\u5982\u679C\u67D0\u6761\u8BB0\u5FC6\u65E0\u6CD5\u5728\u539F\u6587\u4E2D\u627E\u5230\u5BF9\u5E94\u8BC1\u636E\uFF0C\u8BF7\u964D\u4F4E confidence \u6216\u4E0D\u8F93\u51FA\u3002",
     "durable=true \u4EC5\u5F53\u8BE5\u4E8B\u5B9E\u53BB\u6389\u65E5\u671F/\u7248\u672C\u53F7\u540E\u4ECD\u4E3A\u771F\uFF1Bchangelog\u3001\u672C\u6B21\u6539\u4E86\u54EA\u4E9B\u6587\u4EF6\u3001\u4F1A\u8BDD\u6D41\u6C34\u8D26\u5FC5\u987B durable=false\u3002",
     "title \u5199\u6210\u7AD9\u7ACB\u4E8B\u5B9E\u53E5\uFF08\u4F8B\u5982\u300C\u8DEF\u5F84\u4EE5 session cwd \u4E3A\u51C6\u300D\uFF09\uFF0C\u4E0D\u8981\u5199\u6210 v1.2.0 patch \u6216\u9A8C\u6536\u6E05\u5355\u3002content \u7528 2\u20134 \u53E5\u628A what+why \u5199\u5B8C\u3002",
-    "\u683C\u5F0F\uFF1A" + JSON.stringify({ summary: "\u672C\u6B21\u4F1A\u8BDD\u603B\u7ED3\uFF082-4 \u53E5\u8BDD\uFF09", memories: [{ type: "decision|requirement|architecture|bug|lesson", title: "\u7B80\u6D01\u6807\u9898", content: "\u81EA\u5305\u542B\u7684\u4E8B\u5B9E\u4E0E\u7406\u7531", evidence: "\u539F\u6587\u7247\u6BB5\uFF088-60 \u5B57\uFF09", durable: true, importance: 0.8, confidence: 0.9, relatedFiles: ["\u76F8\u5BF9\u8DEF\u5F84"], tags: ["\u6807\u7B7E"], supersedes: null }] })
+    "\u683C\u5F0F\uFF1A" + JSON.stringify({ summary: "\u672C\u6B21\u4F1A\u8BDD\u603B\u7ED3\uFF082-4 \u53E5\u8BDD\uFF09", memories: [{ type: "decision|requirement|architecture|bug|lesson|preference", title: "\u7B80\u6D01\u6807\u9898", content: "\u81EA\u5305\u542B\u7684\u4E8B\u5B9E\u4E0E\u7406\u7531", evidence: "\u539F\u6587\u7247\u6BB5\uFF088-60 \u5B57\uFF09", durable: true, importance: 0.8, confidence: 0.9, relatedFiles: ["\u76F8\u5BF9\u8DEF\u5F84"], tags: ["\u6807\u7B7E"], supersedes: null }] })
   ];
   if (diffEvidence && String(diffEvidence).trim()) {
     parts.push("\u3010git diff \u53C2\u8003\u8BC1\u636E\uFF08\u4EC5\u8F85\u52A9\u6838\u5BF9\u6587\u4EF6\u7EA7\u4E8B\u5B9E\uFF0C\u4E0D\u8981\u9010\u6761\u590D\u8FF0\u4E3A\u8BB0\u5FC6\uFF09\u3011\n" + String(diffEvidence).trim());
@@ -11656,29 +12252,208 @@ function sessionCwd2(session) {
 }
 var projectState = /* @__PURE__ */ new Map();
 var MAX_PER_SESSION = 5;
+var MAX_REFINE_CALLS = 12;
+var CONTEXT_HEAD_MESSAGES = 4;
+var CONTEXT_TAIL_MESSAGES = 10;
+var CONTEXT_MAX_CHARS = 7e3;
+var CONTEXT_PER_MESSAGE_CHARS = 1200;
+var CONTEXT_GAP_MARK = "\uFF08\u2026\u2026\u4E2D\u95F4\u7701\u7565\u82E5\u5E72\u8F6E\u2026\u2026\uFF09";
+var REFINE_TIMEOUT_MS = 2e4;
+var SUPERSEDE_JACCARD = 0.72;
+var REFINE_TYPES = /* @__PURE__ */ new Set(["preference", "decision", "requirement", "architecture", "bug", "lesson"]);
+function contextWindow(session) {
+  try {
+    const lines = sessionMessageLines(session, CONTEXT_PER_MESSAGE_CHARS);
+    if (lines.length === 0) return "";
+    let selected;
+    if (lines.length <= CONTEXT_HEAD_MESSAGES + CONTEXT_TAIL_MESSAGES) {
+      selected = lines;
+    } else {
+      selected = lines.slice(0, CONTEXT_HEAD_MESSAGES).concat([CONTEXT_GAP_MARK]).concat(lines.slice(-CONTEXT_TAIL_MESSAGES));
+    }
+    let text = selected.join("\n\n");
+    if (text.length > CONTEXT_MAX_CHARS) {
+      const budget = Math.max(200, Math.floor(CONTEXT_MAX_CHARS / selected.length) - 8);
+      text = selected.map((line) => line.length > budget ? line.slice(0, budget) + "\u2026" : line).join("\n\n");
+    }
+    return text;
+  } catch (e) {
+    return "";
+  }
+}
+function refinePrompt(triggerText, transcript) {
+  return [
+    "\u7528\u6237\u5728\u5BF9\u8BDD\u91CC\u660E\u786E\u8981\u6C42\u300C\u8BB0\u4F4F\u300D\u67D0\u4EF6\u4E8B\u3002\u628A\u5B83\u6574\u7406\u6210\u4E00\u6761\u80FD\u8131\u79BB\u672C\u6B21\u5BF9\u8BDD\u72EC\u7ACB\u9605\u8BFB\u7684\u957F\u671F\u8BB0\u5FC6\u3002",
+    "",
+    "\u7528\u6237\u539F\u8BDD\uFF08\u89E6\u53D1\u8BED\uFF09\uFF1A",
+    triggerText,
+    "",
+    "\u5BF9\u8BDD\u4E0A\u4E0B\u6587\uFF08\u6309\u65F6\u95F4\u5148\u540E\u6392\u5217\uFF1B\u82E5\u51FA\u73B0\u7701\u7565\u6807\u8BB0\uFF0C\u8BF4\u660E\u4E2D\u95F4\u8F6E\u6B21\u672A\u63D0\u4F9B\uFF0C\u4F46\u9996\u5C3E\u90FD\u5728\uFF09\uFF1A",
+    transcript || "\uFF08\u65E0\u4E0A\u4E0B\u6587\uFF09",
+    "",
+    "\u8981\u6C42\uFF1A",
+    "1. \u6D88\u89E3\u5168\u90E8\u6307\u4EE3\u3002\u6B63\u6587\u91CC\u4E0D\u5141\u8BB8\u51FA\u73B0\u300C\u8FD9\u4E2A / \u90A3\u4E2A / \u4E0A\u9762\u8BF4\u7684 / \u8FD9\u6837 / this / that\u300D\uFF0C\u4E00\u5F8B\u66FF\u6362\u6210\u4E0A\u4E0B\u6587\u91CC\u5B83\u771F\u6B63\u6307\u7684\u4E1C\u897F\uFF08\u76EE\u6807\u3001\u53E3\u5F84\u3001\u6280\u672F\u9009\u578B\u3001\u6587\u4EF6\u540D\u7B49\uFF09\u3002",
+    "2. \u6B63\u6587\u5199 what + why\uFF1A\u7528\u6237\u8981\u6C42\u7684\u662F\u4EC0\u4E48\u3001\u9002\u7528\u8303\u56F4\u548C\u539F\u56E0\uFF0C2\u20134 \u53E5\uFF0C\u81EA\u5305\u542B\u3002",
+    "3. \u7528\u6237\u8BF4\u300C\u8FD9\u4E2A\u5BF9\u8BDD\u7684\u7B2C\u4E00\u53E5\u300D\u300C\u6700\u5F00\u59CB\u8BF4\u7684\u300D\u65F6\uFF0C\u6307\u7684\u5C31\u662F\u4E0A\u9762\u4E0A\u4E0B\u6587\u91CC\u6700\u65E9\u90A3\u6761 USER \u6D88\u606F\uFF1B\u8BF4\u300C\u521A\u624D\u8BF4\u7684\u300D\u5219\u6307\u6700\u540E\u51E0\u6761\u3002\u6309\u8FD9\u4E2A\u7406\u89E3\u53BB\u53D6\u5185\u5BB9\u3002",
+    "4. \u53EA\u6709\u4E0A\u4E0B\u6587\u91CC\u786E\u5B9E\u6CA1\u6709\u53EF\u5BF9\u5E94\u7684\u5185\u5BB9\u65F6\uFF0Cresolved \u624D\u8FD4\u56DE false\u3002\u4E0D\u8981\u56E0\u4E3A\u4E0D\u786E\u5B9A\u5C31\u653E\u5F03\uFF0C\u4E5F\u4E0D\u8981\u7F16\u9020\u3002",
+    "5. title \u5199\u6210\u7AD9\u7ACB\u4E8B\u5B9E\u53E5\uFF0C\u4E0D\u8981\u5199\u6210\u300C\u8BB0\u4F4F XXX\u300D\u300C\u7528\u6237\u8981\u6C42 XXX\u300D\u3002",
+    "6. type\uFF1A\u5BF9\u534F\u4F5C\u65B9\u5F0F\u3001\u8F93\u51FA\u7ED3\u6784\u3001\u957F\u671F\u53E3\u5F84\u7684\u8981\u6C42\u7528 preference\uFF1B\u6280\u672F\u9009\u578B\u7528 decision\uFF1B\u5176\u4F59\u6309\u8BED\u4E49\u9009\u3002",
+    "",
+    "\u8F93\u51FA\u683C\u5F0F\uFF08\u4E25\u683C\u9075\u5B88\uFF09\uFF1A\u7B2C\u4E00\u4E2A\u5B57\u7B26\u5FC5\u987B\u662F {\uFF0C\u6700\u540E\u4E00\u4E2A\u5B57\u7B26\u5FC5\u987B\u662F }\u3002",
+    "\u4E0D\u8981\u5199\u4EFB\u4F55\u89E3\u91CA\u3001\u524D\u8A00\u3001\u7ED3\u8BED\uFF0C\u4E0D\u8981\u7528 Markdown \u4EE3\u7801\u5757\u5305\u88F9\u3002",
+    JSON.stringify({ resolved: true, type: "preference", title: "\u7AD9\u7ACB\u4E8B\u5B9E\u53E5", content: "\u81EA\u5305\u542B\u7684 what + why", importance: 0.8 })
+  ].join("\n");
+}
+function repairPrompt(rawText) {
+  return [
+    "\u4E0B\u9762\u8FD9\u6BB5\u8F93\u51FA\u672C\u5E94\u662F\u4E25\u683C JSON\uFF0C\u4F46\u65E0\u6CD5\u89E3\u6790\u3002\u8BF7\u539F\u6837\u63D0\u53D6\u5176\u4E2D\u7684\u4FE1\u606F\uFF0C\u91CD\u65B0\u8F93\u51FA\u4E3A\u5408\u6CD5 JSON\u3002",
+    "\u7B2C\u4E00\u4E2A\u5B57\u7B26\u5FC5\u987B\u662F {\uFF0C\u6700\u540E\u4E00\u4E2A\u5B57\u7B26\u5FC5\u987B\u662F }\uFF0C\u4E0D\u8981\u4EFB\u4F55\u89E3\u91CA\u6216\u4EE3\u7801\u5757\u6807\u8BB0\u3002",
+    "\u5B57\u6BB5\uFF1A" + JSON.stringify({ resolved: true, type: "preference", title: "", content: "", importance: 0.8 }),
+    "",
+    "\u539F\u59CB\u8F93\u51FA\uFF1A",
+    String(rawText || "").slice(0, 2e3)
+  ].join("\n");
+}
+async function refineSignal({ llm, route, sessionId, signal, transcript, timeoutMs, log }) {
+  if (!llm || typeof llm.stream !== "function" || !route || !route.provider || !route.model) {
+    return { status: "llm_unavailable", candidate: null };
+  }
+  const ask = (prompt) => streamLlmText(llm, route, prompt, sessionId, timeoutMs || REFINE_TIMEOUT_MS, {
+    system: "Resolve every deictic reference using the provided conversation. Return strict JSON only, with no prose before or after.",
+    maxTokens: 1e3,
+    purpose: "project-memory-realtime-refine"
+  });
+  let text;
+  try {
+    text = await ask(refinePrompt(signal.fullText || signal.content, transcript));
+  } catch (e) {
+    log("warn", "realtime-memory: refine failed: " + String(e && e.message || e));
+    return { status: "refine_failed", candidate: null };
+  }
+  if (isMockLlmPayload(text)) return { status: "llm_unavailable", candidate: null };
+  let parsed;
+  try {
+    parsed = parseArchitectureJson(text);
+  } catch (e) {
+    log("info", "realtime-memory: refine output unparseable, retrying once");
+    try {
+      parsed = parseArchitectureJson(await ask(repairPrompt(text)));
+    } catch (retryError) {
+      return { status: "refine_unparseable", candidate: null, sample: String(text || "").slice(0, 160) };
+    }
+  }
+  if (!parsed || parsed.resolved !== true) {
+    return {
+      status: "unresolved",
+      candidate: null,
+      sample: "\u6A21\u578B\u5224\u5B9A\u65E0\u6CD5\u6D88\u89E3\uFF1B\u4E0A\u4E0B\u6587\u7A97\u53E3 " + String(transcript || "").length + " \u5B57\u7B26"
+    };
+  }
+  const type = normalizeMemoryType(parsed.type);
+  const title = cleanRememberContent(parsed.title).slice(0, 120);
+  const content = cleanRememberContent(parsed.content).slice(0, 800);
+  if (!REFINE_TYPES.has(type) || !title || content.length < 12) {
+    return { status: "refine_invalid", candidate: null };
+  }
+  if (hasUnresolvedReference(title, content, { maxSelfContainedChars: 0 })) {
+    return { status: "unresolved", candidate: null };
+  }
+  const importance = Number(parsed.importance);
+  return {
+    status: "refined",
+    candidate: {
+      type,
+      title,
+      content,
+      importance: Number.isFinite(importance) ? Math.min(0.95, Math.max(0.5, importance)) : 0.8,
+      confidence: 0.85,
+      resolved: true
+    }
+  };
+}
+function fallbackCandidate(signal) {
+  const cleaned = cleanRememberContent(signal && signal.content);
+  if (cleaned.length < 12) return null;
+  if (hasUnresolvedReference(rememberTitle(cleaned), cleaned, { maxSelfContainedChars: 0 })) return null;
+  return {
+    type: "preference",
+    title: rememberTitle(cleaned),
+    content: cleaned,
+    importance: 0.7,
+    confidence: 0.6,
+    resolved: false
+  };
+}
+var REJECT_REASON_TEXT = {
+  unresolved_reference: "\u6CA1\u80FD\u4ECE\u4E0A\u4E0B\u6587\u91CC\u8BA4\u51FA\u300C\u8FD9\u4E2A / \u90A3\u4E2A\u300D\u6307\u7684\u662F\u4EC0\u4E48",
+  needs_context: "\u7F3A\u5C11\u53EF\u7528\u7684\u4E0A\u4E0B\u6587\uFF0C\u65E0\u6CD5\u6574\u7406\u6210\u81EA\u5305\u542B\u7684\u8BB0\u5FC6"
+};
+var REFINE_STATUS_TEXT = {
+  llm_unavailable: "\u5F53\u524D Session \u8FD8\u6CA1\u6709\u53EF\u590D\u7528\u7684\u6A21\u578B\u8DEF\u7531\uFF0C\u5148\u5B8C\u6210\u4E00\u6B21\u6B63\u5E38\u5BF9\u8BDD\u518D\u8BD5",
+  refine_failed: "\u6574\u7406\u8BB0\u5FC6\u65F6\u6A21\u578B\u8C03\u7528\u5931\u8D25\uFF08\u8D85\u65F6\u6216\u4E2D\u65AD\uFF09",
+  refine_unparseable: "\u6A21\u578B\u4E24\u6B21\u90FD\u6CA1\u6309\u8981\u6C42\u8FD4\u56DE JSON",
+  refine_invalid: "\u6A21\u578B\u8FD4\u56DE\u7684\u5185\u5BB9\u4E0D\u5B8C\u6574\uFF0C\u7F3A\u5C11\u6807\u9898\u6216\u6B63\u6587"
+};
+var REJECT_NEXT_STEP = "\u53EF\u4EE5\u8865\u4E00\u53E5\u66F4\u5177\u4F53\u7684\u8BF4\u6CD5\uFF0C\u6216\u7B49\u672C\u6B21\u4F1A\u8BDD\u7ED3\u675F\u540E\u81EA\u52A8\u5F52\u7EB3\u3002";
+async function noteRejection({ fs, projectPath, sessionId, signal, reason, refineStatus, sample }) {
+  const now = Date.now();
+  const trigger = String(signal.fullText || signal.content || "").slice(0, 120);
+  const why = REFINE_STATUS_TEXT[refineStatus] || REJECT_REASON_TEXT[reason] || reason;
+  try {
+    await appendJsonl(fs, brainPath2(projectPath, "timeline.jsonl"), {
+      id: makeId("evt", now),
+      title: "\u672A\u8BB0\u4F4F\uFF1A" + trigger,
+      eventType: "memory_rejected",
+      occurredAt: now,
+      sessionId: sessionId || null,
+      detail: why + "\u3002" + REJECT_NEXT_STEP,
+      rejectReason: reason,
+      refineStatus: refineStatus || null,
+      // 模型到底返回了什么，排查时比任何描述都有用。
+      ...sample ? { sample } : {}
+    });
+  } catch (e) {
+  }
+}
+var WEAK_SOURCE_KIND = "user_intent_weak";
+var REALTIME_SOURCE_KINDS = /* @__PURE__ */ new Set(["user_explicit", WEAK_SOURCE_KIND]);
+function findSupersedable(memories, candidate) {
+  let best = null;
+  let bestScore = 0;
+  for (const m of memories || []) {
+    if (!isRetrievableMemory(m) || m.type !== candidate.type) continue;
+    if (!(m.source && REALTIME_SOURCE_KINDS.has(m.source.kind))) continue;
+    const score = titleJaccard(m.title, candidate.title);
+    if (score >= SUPERSEDE_JACCARD && score > bestScore) {
+      best = m;
+      bestScore = score;
+    }
+  }
+  return best;
+}
 function getProjectState(projectPath) {
   let st = projectState.get(projectPath);
   if (!st) {
-    st = { seenFingerprints: /* @__PURE__ */ new Set(), count: 0, sessionStartAt: Date.now() };
+    st = { seenFingerprints: /* @__PURE__ */ new Set(), count: 0, refineCalls: 0, sessionStartAt: Date.now() };
     projectState.set(projectPath, st);
   }
   if (Date.now() - st.sessionStartAt > 30 * 60 * 1e3) {
     st.seenFingerprints.clear();
     st.count = 0;
+    st.refineCalls = 0;
     st.sessionStartAt = Date.now();
   }
   return st;
 }
-async function handleOne({ fs, projectPath, sessionId, signal, logger }) {
+async function handleOne({ fs, projectPath, sessionId, signal, session, llm, route, config = {}, logger }) {
   const log = (level, msg) => {
     try {
       if (logger && typeof logger[level] === "function") logger[level]("[dsh-project-brain] " + msg);
     } catch (e) {
     }
   };
-  if (!signal || signal.strength !== "strong") {
-    return { skipped: "weak_signal" };
-  }
+  if (!signal) return { skipped: "no_signal" };
+  const weak = signal.strength !== "strong";
   const brain = await readBrain(fs, projectPath);
   if (!brain.project || brain.project.__error) {
     log("info", "realtime-memory: project not initialized, skip");
@@ -11689,38 +12464,109 @@ async function handleOne({ fs, projectPath, sessionId, signal, logger }) {
     log("info", "realtime-memory: rate limit reached for " + projectPath + ", skip");
     return { skipped: "rate_limit" };
   }
-  const cleaned = cleanRememberContent(signal.content);
-  const fact = cleaned.length >= 20 ? cleaned : cleaned + "\u3002\u8FD9\u662F\u7528\u6237\u660E\u786E\u8981\u6C42\u8BB0\u4F4F\u7684\u957F\u671F\u504F\u597D\u3002";
-  const title = rememberTitle(cleaned);
+  if (st.refineCalls >= MAX_REFINE_CALLS) {
+    log("info", "realtime-memory: refine budget exhausted for " + projectPath + ", skip");
+    return { skipped: "refine_budget" };
+  }
+  st.refineCalls += 1;
+  const transcript = contextWindow(session);
+  const refined = await refineSignal({
+    llm,
+    route,
+    sessionId,
+    signal,
+    transcript,
+    timeoutMs: Number(config.realtimeMemoryTimeoutMs) || REFINE_TIMEOUT_MS,
+    log
+  });
+  let candidate = refined.candidate;
+  if (!candidate) {
+    if (weak) {
+      log("info", "realtime-memory: weak signal not resolvable (" + refined.status + "), skip");
+      return { skipped: "weak_unresolved", refineStatus: refined.status };
+    }
+    const reason = refined.status === "unresolved" ? "unresolved_reference" : null;
+    if (reason) {
+      log("info", "realtime-memory: reference unresolved, deferring to session summary");
+      await noteRejection({
+        fs,
+        projectPath,
+        sessionId,
+        signal,
+        reason,
+        refineStatus: refined.status,
+        sample: refined.sample
+      });
+      return { skipped: reason, refineStatus: refined.status, noted: true };
+    }
+    candidate = fallbackCandidate(signal);
+    if (!candidate) {
+      log("info", "realtime-memory: no self-contained fact (" + refined.status + "), deferring to session summary");
+      await noteRejection({
+        fs,
+        projectPath,
+        sessionId,
+        signal,
+        reason: "needs_context",
+        refineStatus: refined.status,
+        sample: refined.sample
+      });
+      return { skipped: "needs_context", refineStatus: refined.status, noted: true };
+    }
+  }
+  if (weak) {
+    candidate = Object.assign({}, candidate, {
+      confidence: Math.min(candidate.confidence, 0.7),
+      importance: Math.min(candidate.importance, 0.7)
+    });
+  }
+  const prior = findSupersedable(brain.memories, candidate);
   const result = await admitMemory({
     fs,
     projectPath,
     candidate: {
-      type: "context",
-      title,
-      content: fact.length >= 20 ? fact : fact + "\uFF08\u7528\u6237\u660E\u786E\u8981\u6C42\u8BB0\u4F4F\u7684\u957F\u671F\u7EA6\u675F\uFF09",
-      importance: 0.7,
-      confidence: 0.85,
-      tags: ["realtime", "user_intent", "strong_signal"],
-      source: { kind: "user_explicit", sessionId: sessionId || null, signalKind: signal.kind }
+      type: candidate.type,
+      title: candidate.title,
+      content: candidate.content,
+      importance: candidate.importance,
+      confidence: candidate.confidence,
+      tags: ["realtime", "user_intent", weak ? "weak_signal" : "strong_signal"],
+      source: {
+        kind: weak ? WEAK_SOURCE_KIND : "user_explicit",
+        sessionId: sessionId || null,
+        signalKind: signal.kind,
+        refined: candidate.resolved === true,
+        trigger: String(signal.fullText || signal.content).slice(0, 200),
+        ...prior ? { supersedes: prior.id } : {}
+      }
     },
-    channel: "user_explicit",
+    // 强信号是用户点名要记的，准入没得商量；弱信号是从语气里推断的，走常规通道，
+    // 但内容已经由上面那次提炼产出，不再重复问一遍模型。
+    channel: weak ? "automatic" : "user_explicit",
+    ...weak ? { llmConfirm: { admit: true, type: candidate.type } } : {},
     now: Date.now()
   });
   if (!result.ok) {
     log("info", "realtime-memory: admit refused " + (result.code || "") + " " + (result.reason || ""));
-    return { skipped: result.code || "rejected", result };
+    await noteRejection({
+      fs,
+      projectPath,
+      sessionId,
+      signal,
+      reason: result.reason || result.code || "rejected",
+      refineStatus: refined.status
+    });
+    return { skipped: result.code || "rejected", refineStatus: refined.status, result, noted: true };
   }
   if (result.action === "skip") {
     return { skipped: "duplicate", id: result.id };
   }
   st.count += 1;
-  log("info", 'realtime-memory: admitted "' + title + '"');
-  return { appended: true, entry: result.entry, id: result.id };
+  log("info", "realtime-memory: admitted [" + candidate.type + '] "' + candidate.title + '"' + (refined.status === "refined" ? " (refined)" : " (verbatim)") + (result.supersedesId ? " supersedes=" + result.supersedesId : ""));
+  return { appended: true, entry: result.entry, id: result.id, refineStatus: refined.status, supersedesId: result.supersedesId || null };
 }
 function setupRealtimeMemory(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
-  void runtime;
   void sandboxPolicy;
   let logger = null;
   try {
@@ -11747,8 +12593,20 @@ function setupRealtimeMemory(ctx, fs, sandboxPolicy, runtime = {}) {
       const sessionId = session && (session.id || session.meta && session.meta.id);
       const signal = detectSignal(text);
       if (!signal) return;
-      const work = handleOne({ fs, projectPath, sessionId, signal, logger }).then(async (result) => {
-        if (result && result.appended && ctx && typeof ctx.emit === "function") {
+      const config = runtime.getMemoryConfig ? runtime.getMemoryConfig() : {};
+      if (config.realtimeMemoryEnabled === false) return;
+      const work = handleOne({
+        fs,
+        projectPath,
+        sessionId,
+        signal,
+        session,
+        logger,
+        config,
+        llm: runtime.getLlm ? runtime.getLlm() : null,
+        route: resolveSessionRoute(session)
+      }).then(async (result) => {
+        if (result && (result.appended || result.noted) && ctx && typeof ctx.emit === "function") {
           try {
             ctx.emit("project_brain/preview.changed", { projectPath });
           } catch (e) {
@@ -11780,7 +12638,7 @@ function readPluginVersion() {
     if (pkg.version) return String(pkg.version);
   } catch (e) {
   }
-  return "1.3.1";
+  return "1.4.0";
 }
 var PLUGIN_VERSION = readPluginVersion();
 var name = "dsh-project-brain";
