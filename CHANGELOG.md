@@ -12,6 +12,7 @@
 - **自动沉淀通道从来没通电**：`summarizer` 一直挂在 `session/disposed` 上，而线上探针实测该事件**一次都没派发过**——DSH Desktop 正常使用中会话不会 dispose，用户也不会去「关闭会话」。同期 `session/created` 与 `session/flush` 都能正常收到，所以不是 cordis filter 的问题，是那个事件本身不发生。后果是四个工作区 `session_summary` 全为 0、会话语义记忆全为 0，只有用户显式说「记住」才有东西落盘。改为监听 `session/flush`（DSH 真正会派发的会话信号）并做空闲去抖：每次有动静就把闹钟往后推，安静满 `sessionIdleSummaryMs`（默认 5 分钟）才真正摘要；`session/disposed` 仍然保留，发了就立刻摘一次。
 - **长会话只能沉淀一次**：幂等原本按「这个 sessionId 摘过没」判断，而 DSH Desktop 的会话可以活好几天，导致第一次之后的工作全部沉不下来。改为按消息数增量判断，`session_summary` 事件记录 `messageCount`，新增满 4 条消息才允许再摘一次。
 - **空闲时长可在设置页改**：Dashboard「会话摘要」新增 `sessionIdleSummaryMs`（默认 5 分钟，30 秒–1 小时）。「启用会话摘要」的说明改为安静后触发，不再写成「session 结束才抽取」。
+- **远程 README 截图打不开、简体中文乱码**：截图 URL 锁在远程不存在的 `v1.3.1` tag 上，raw 地址 404。`README.zh-CN.md` 从 v1.3.1 起就是非法 UTF-8，v1.4.0 又被写成替换字符。截图改回已发布的 `v1.3.0` tag（10 张图都在），中文页恢复为合法 UTF-8。
 
 ## [v1.4.0] - 2026-09-23
 
