@@ -1,9 +1,11 @@
-// smoke-session-refresh.mjs — 关会话全链路（DSH 触发的就是这条路径）
+// smoke-session-refresh.mjs — 会话摘要全链路
 //
-// 用真实 setupSummarizer + 伪 ctx 模拟 session/disposed，覆盖三种场景：
-//   A) 只改普通源码  → 写 session_summary + 轻扫；**不得**跑 full 架构
-//   B) 新增源码文件  → 结构变化 → 跑 full 架构 → architectureStale=false
+// 用真实 setupSummarizer + 伪 ctx，覆盖：
+//   A) session/disposed + 只改普通源码 → 写 session_summary + 轻扫；**不得**跑 full 架构
+//   B) 新增源码文件 → 结构变化 → 跑 full 架构 → architectureStale=false
 //   C) full 架构失败 → markArchitectureStale 兜底写 architectureStale=true
+//   D) 主路径 session/flush：事件往往只有 id，cwd 在 live session 上；
+//      空闲未满不摘要，持续 flush 把闹钟往后推，安静够久才写 session_summary
 //
 // 同时校验 session_summary.files 是真实路径（不是 init detail 里的文件计数）。
 
@@ -185,10 +187,45 @@ blockArchitectureWrite = false;
 assert.equal(readProject().architectureStale, true, "full 失败必须置 architectureStale=true，不能拿旧泳道当真理");
 assert.equal(readArchitecture().version, "sentinel", "失败时不得破坏已有 architecture.json");
 
-// 同一个 session 不重复摘要
+// 同一会话没有新增消息（增量 < 4）→ 不再写第二条摘要
 const before = timeline().length;
 await disposeSession("sess-c");
-assert.equal(timeline().length, before, "同一 sessionId 不应写第二条摘要");
+assert.equal(timeline().length, before, "消息没有增长时不应写第二条摘要");
+
+// ── 场景 D：主路径 session/flush。载荷只有 id，cwd / 转写在 live session 上 ──
+async function flushIdle(id) {
+  const pending = [];
+  const handlers = {};
+  const live = makeSession(id);
+  const idleMs = 200;
+  const ctx = {
+    logger: { info() {}, warn() {} },
+    on(evt, cb) { handlers[evt] = cb; },
+    get() { return { get(sid) { return sid === id ? live : null; } }; },
+    emit() {},
+    effect(fn) { pending.push(fn()); },
+  };
+  setupSummarizer(ctx, fsAdapter, null, {
+    getLlm: () => llm,
+    getMemoryConfig: () => ({ sessionIdleSummaryMs: idleMs }),
+  });
+  assert.ok(handlers["session/flush"], "summarizer 必须订阅 session/flush");
+  assert.ok(handlers["session/disposed"], "disposed 仍要订阅，发了就立刻摘");
+  assert.equal(summaryOf(id), undefined, "flush 之前没有摘要");
+  handlers["session/flush"]({ id });
+  await sleep(60);
+  assert.equal(summaryOf(id), undefined, "空闲未满不写摘要");
+  handlers["session/flush"]({ id });
+  await sleep(60);
+  assert.equal(summaryOf(id), undefined, "持续 flush 会把闹钟往后推");
+  await sleep(idleMs + 80);
+  await Promise.all(pending);
+  const ev = summaryOf(id);
+  assert.ok(ev, "空闲满后必须写 session_summary");
+  assert.equal(ev.sessionId, id);
+  assert.equal(ev.messageCount, 2, "摘要记下当时覆盖到的消息数");
+}
+await flushIdle("sess-flush");
 
 rmSync(root, { recursive: true, force: true });
 console.log("smoke-session-refresh: PASS");

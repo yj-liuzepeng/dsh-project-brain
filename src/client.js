@@ -3002,7 +3002,7 @@ window.__ModuleLoader__.load({
     }
 
     // ─── dsh-project-brain Settings Tab (v0.7.x) ────────────────────────────
-    // 把插件所需的全部配置（24 字段）暴露在 Dashboard 的「设置」tab，
+    // 把插件设置暴露在 Dashboard 的「设置」tab（字段与 config.js 手写对齐，不是全量 schema），
     // 不依赖 DSH 桌面设置面板是否渲染第三方插件 settings。
     //   - 字段元数据与 config.js 的 Config schema 保持一致（手写）
     //   - 读：rpc.call("/project-brain", "settings", { action: "get" })
@@ -3048,7 +3048,9 @@ window.__ModuleLoader__.load({
       { group: "summary", icon: "📝", title: { "zh-CN": "会话摘要 (LLM)", "en-US": "Session summary (LLM)" },
         fields: [
           { key: "sessionSemanticMemoryEnabled", label: { "zh-CN": "启用会话摘要", "en-US": "Enable session summary" }, type: "boolean",
-            hint: { "zh-CN": "session 结束自动调 LLM 抽取语义记忆 + 证据校验", "en-US": "Auto-extract semantic memories with grounding check on session end" } },
+            hint: { "zh-CN": "会话安静一段时间后自动调 LLM 抽取语义记忆并做证据校验。不需要关闭会话。", "en-US": "After the session goes quiet, extract semantic memories with a grounding check. Closing the session is not required." } },
+          { key: "sessionIdleSummaryMs", label: { "zh-CN": "空闲多久再摘要 (ms)", "en-US": "Idle before summary (ms)" }, type: "number", min: 30000, max: 3600000, step: 1000,
+            hint: { "zh-CN": "每次会话有动静都重新计时。安静满这段时间才摘要，默认 5 分钟。会话被销毁时仍会立刻摘要。", "en-US": "Each flush resets the timer. A summary runs after this much quiet time (default 5 minutes). Session dispose still summarizes immediately." } },
           { key: "sessionSemanticMaxChars", label: { "zh-CN": "Transcript 截断 (chars)", "en-US": "Transcript truncate (chars)" }, type: "number", min: 2000, max: 40000, step: 1000 },
           { key: "sessionSemanticMaxItems", label: { "zh-CN": "每次最多抽取", "en-US": "Max items per extraction" }, type: "number", min: 1, max: 8 },
           { key: "sessionSemanticTimeoutMs", label: { "zh-CN": "LLM 超时 (ms)", "en-US": "LLM timeout (ms)" }, type: "number", min: 5000, max: 120000, step: 1000 },

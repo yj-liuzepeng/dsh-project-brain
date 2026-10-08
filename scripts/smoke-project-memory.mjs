@@ -7,7 +7,13 @@ import { spawnSync } from "node:child_process";
 import { scanProject } from "../src/scanner.js";
 import { resolveProjectPath } from "../src/host/store/path-resolver.js";
 import { setupInjector } from "../src/host/injector.js";
-import { summarizeOne } from "../src/host/summarizer.js";
+import {
+  MIN_NEW_MESSAGES,
+  countSessionMessages,
+  createIdleSummaryScheduler,
+  lastSummarizedMessageCount,
+  summarizeOne,
+} from "../src/host/summarizer.js";
 import { evidenceMatchesTranscript, extractSessionMemories } from "../src/host/memory/session-extractor.js";
 import { contextWindow, detectSignal, fallbackCandidate, handleOne } from "../src/host/realtime-memory.js";
 import { admitMemory, enforceCoreCap, getCoreLimits, hasUnresolvedReference, maxPinnedCount } from "../src/host/memory/admit.js";
@@ -150,8 +156,15 @@ spawnSync("git", ["commit", "--quiet", "-m", "feature"], { cwd: projectA });
 
 const first = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-1" });
 assert.equal(first.changedFiles > 0, true);
+// 同一会话没有新消息 → 跳过（幂等按消息增量算，不再是「这个 session 摘过就永不再摘」）
 const sameSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-1" });
-assert.equal(sameSession.skipped, "session_already_summarized");
+assert.equal(sameSession.skipped, "no_new_messages");
+// 同一会话又聊了若干轮 → 必须能再沉淀一次，否则长会话第一次之后的工作全丢
+const grownSession = await summarizeOne({
+  fs: fsAdapter, projectPath: projectA, sessionId: "summary-1",
+  session: { deriveMessages: () => Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "m" + i })) },
+});
+assert.equal(grownSession.skipped == null, true, "同一会话有足够新消息时可以再次摘要");
 const secondSession = await summarizeOne({ fs: fsAdapter, projectPath: projectA, sessionId: "summary-2" });
 assert.equal(secondSession.skipped == null, true, "不同 session 仍会写 timeline 摘要");
 assert.equal(secondSession.semanticMemories || 0, 0, "无 LLM 时 git diff 不写 change 记忆");
@@ -677,6 +690,64 @@ assert.equal(deleted.rows.find((m) => m.id === "mem-edit-1"), undefined, "目标
 assert.equal(deleted.rows[0].supersededBy, undefined, "指向被删条目的悬空指针被清理");
 assert.equal(applyMemoryDelete(editRows, { id: "mem-nope" }).code, "E_NOT_FOUND", "删除不存在的 id 会报错");
 
+// ───────── 空闲触发摘要（原先挂 session/disposed，线上一次都没派发过）─────────
+const idleJobs = [];
+const sched = createIdleSummaryScheduler((job) => idleJobs.push(job), 40);
+
+// 会话还在动 → 闹钟一直往后推，不该摘要
+sched.schedule({ projectPath: "/p", session: { id: "s1" }, sessionId: "s1" });
+await new Promise((r) => setTimeout(r, 25));
+sched.schedule({ projectPath: "/p", session: { id: "s1" }, sessionId: "s1" });
+await new Promise((r) => setTimeout(r, 25));
+assert.equal(idleJobs.length, 0, "会话持续有动静时不触发摘要");
+
+// 安静够久 → 触发一次
+await new Promise((r) => setTimeout(r, 60));
+assert.equal(idleJobs.length, 1, "空闲满时长后触发一次摘要");
+assert.equal(idleJobs[0].projectPath, "/p", "带上正确的 workspace");
+assert.equal(sched.size(), 0, "触发后队列清空");
+
+// 不同 workspace 各自排队，互不干扰
+sched.schedule({ projectPath: "/a", sessionId: "sa" });
+sched.schedule({ projectPath: "/b", sessionId: "sb" });
+assert.equal(sched.size(), 2, "两个 workspace 各排各的");
+await new Promise((r) => setTimeout(r, 70));
+assert.equal(idleJobs.length, 3, "两个 workspace 都触发了");
+
+// disposed 真发生时要能取消待触发的闹钟，避免重复摘要
+sched.schedule({ projectPath: "/c", sessionId: "sc" });
+sched.cancel("/c");
+await new Promise((r) => setTimeout(r, 60));
+assert.equal(idleJobs.filter((j) => j.projectPath === "/c").length, 0, "取消后不再触发");
+
+// flushAll 必须带上排队时的 session，不能只剩 sessionId
+const keptSession = { id: "s-keep", cwd: "/keep" };
+sched.schedule({ projectPath: "/keep", session: keptSession, sessionId: "s-keep" });
+assert.equal(sched.size(), 1, "flushAll 前队列里有这一条");
+sched.flushAll();
+assert.equal(sched.size(), 0, "flushAll 后队列清空");
+const flushed = idleJobs.find((j) => j.projectPath === "/keep");
+assert.ok(flushed, "flushAll 会立刻跑摘要");
+assert.equal(flushed.session, keptSession, "flushAll 带上排队时的 session");
+assert.equal(flushed.sessionId, "s-keep", "flushAll 带上 sessionId");
+await new Promise((r) => setTimeout(r, 60));
+assert.equal(idleJobs.filter((j) => j.projectPath === "/keep").length, 1, "flushAll 取消了闹钟，不会再触发第二次");
+
+// 幂等改成按消息增量算：长会话必须能多次沉淀
+const fakeSession = (n) => ({ deriveMessages: () => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "m" + i })) });
+assert.equal(countSessionMessages(fakeSession(7)), 7, "能数出会话消息数");
+assert.equal(countSessionMessages(null), 0, "拿不到会话时返回 0 而不是炸");
+
+const tlWithSummary = [
+  { eventType: "session_summary", sessionId: "s1", messageCount: 10 },
+  { eventType: "session_summary", sessionId: "s1", messageCount: 26 },
+  { eventType: "session_summary", sessionId: "other", messageCount: 99 },
+];
+assert.equal(lastSummarizedMessageCount(tlWithSummary, "s1"), 26, "取该会话最新一次的覆盖点");
+assert.equal(lastSummarizedMessageCount(tlWithSummary, "never"), null, "没摘过返回 null");
+assert.equal(lastSummarizedMessageCount([{ eventType: "session_summary", sessionId: "s1" }], "s1"), 0, "老数据缺字段时当 0，让它还能再摘一次");
+assert.ok(MIN_NEW_MESSAGES > 0, "增量门槛是正数");
+
 // ───────── 热度回升：命中即「用过」 ─────────
 const accessRows = [
   { id: "mem-hot", type: "decision", title: "常被查到的决策", content: "这条会被反复命中，用来验证热度回升。", importance: 0.5, status: "dormant", createdAt: 1000, updatedAt: 1000 },
@@ -1006,4 +1077,4 @@ assert.equal(deleteRpc.value.deletedId, "mem-rpc-1", "删除 RPC 正常返回被
 assert.equal(pendingLockCount(), 0, "RPC 跑完锁队列排空");
 
 rmSync(root, { recursive: true, force: true });
-console.log("project memory isolation: 207 assertions PASS");
+console.log("project memory isolation: 230 assertions PASS");

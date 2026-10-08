@@ -3298,7 +3298,16 @@
               key: "sessionSemanticMemoryEnabled",
               label: { "zh-CN": "\u542F\u7528\u4F1A\u8BDD\u6458\u8981", "en-US": "Enable session summary" },
               type: "boolean",
-              hint: { "zh-CN": "session \u7ED3\u675F\u81EA\u52A8\u8C03 LLM \u62BD\u53D6\u8BED\u4E49\u8BB0\u5FC6 + \u8BC1\u636E\u6821\u9A8C", "en-US": "Auto-extract semantic memories with grounding check on session end" }
+              hint: { "zh-CN": "\u4F1A\u8BDD\u5B89\u9759\u4E00\u6BB5\u65F6\u95F4\u540E\u81EA\u52A8\u8C03 LLM \u62BD\u53D6\u8BED\u4E49\u8BB0\u5FC6\u5E76\u505A\u8BC1\u636E\u6821\u9A8C\u3002\u4E0D\u9700\u8981\u5173\u95ED\u4F1A\u8BDD\u3002", "en-US": "After the session goes quiet, extract semantic memories with a grounding check. Closing the session is not required." }
+            },
+            {
+              key: "sessionIdleSummaryMs",
+              label: { "zh-CN": "\u7A7A\u95F2\u591A\u4E45\u518D\u6458\u8981 (ms)", "en-US": "Idle before summary (ms)" },
+              type: "number",
+              min: 3e4,
+              max: 36e5,
+              step: 1e3,
+              hint: { "zh-CN": "\u6BCF\u6B21\u4F1A\u8BDD\u6709\u52A8\u9759\u90FD\u91CD\u65B0\u8BA1\u65F6\u3002\u5B89\u9759\u6EE1\u8FD9\u6BB5\u65F6\u95F4\u624D\u6458\u8981\uFF0C\u9ED8\u8BA4 5 \u5206\u949F\u3002\u4F1A\u8BDD\u88AB\u9500\u6BC1\u65F6\u4ECD\u4F1A\u7ACB\u523B\u6458\u8981\u3002", "en-US": "Each flush resets the timer. A summary runs after this much quiet time (default 5 minutes). Session dispose still summarizes immediately." }
             },
             { key: "sessionSemanticMaxChars", label: { "zh-CN": "Transcript \u622A\u65AD (chars)", "en-US": "Transcript truncate (chars)" }, type: "number", min: 2e3, max: 4e4, step: 1e3 },
             { key: "sessionSemanticMaxItems", label: { "zh-CN": "\u6BCF\u6B21\u6700\u591A\u62BD\u53D6", "en-US": "Max items per extraction" }, type: "number", min: 1, max: 8 },

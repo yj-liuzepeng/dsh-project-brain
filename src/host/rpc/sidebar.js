@@ -45,6 +45,7 @@ function sanitizeSettings(config) {
     sessionSemanticMaxChars: source.sessionSemanticMaxChars,
     sessionSemanticMaxItems: source.sessionSemanticMaxItems,
     sessionSemanticTimeoutMs: source.sessionSemanticTimeoutMs,
+    sessionIdleSummaryMs: source.sessionIdleSummaryMs,
     realtimeMemoryEnabled: source.realtimeMemoryEnabled,
     realtimeMemoryTimeoutMs: source.realtimeMemoryTimeoutMs,
     coreMaxItems: source.coreMaxItems,

@@ -6793,6 +6793,7 @@ var Config = z.object({
   sessionSemanticMaxChars: z.number().step(1).min(2e3).max(4e4).default(16e3),
   sessionSemanticMaxItems: z.number().step(1).min(1).max(8).default(4),
   sessionSemanticTimeoutMs: z.number().step(1).min(5e3).max(12e4).default(3e4),
+  sessionIdleSummaryMs: z.number().step(1).min(3e4).max(36e5).default(3e5),
   realtimeMemoryEnabled: z.boolean().default(true),
   realtimeMemoryTimeoutMs: z.number().step(1).min(5e3).max(6e4).default(2e4),
   coreMaxItems: z.number().step(1).min(5).max(60).default(25),
@@ -6835,6 +6836,7 @@ function normalizeMemoryConfig(value) {
     sessionSemanticMaxChars: integer("sessionSemanticMaxChars", 16e3, 2e3, 4e4),
     sessionSemanticMaxItems: integer("sessionSemanticMaxItems", 4, 1, 8),
     sessionSemanticTimeoutMs: integer("sessionSemanticTimeoutMs", 3e4, 5e3, 12e4),
+    sessionIdleSummaryMs: integer("sessionIdleSummaryMs", 3e5, 3e4, 36e5),
     realtimeMemoryEnabled: input.realtimeMemoryEnabled !== false,
     realtimeMemoryTimeoutMs: integer("realtimeMemoryTimeoutMs", 2e4, 5e3, 6e4),
     coreMaxItems: integer("coreMaxItems", 25, 5, 60),
@@ -10572,6 +10574,7 @@ function sanitizeSettings(config) {
     sessionSemanticMaxChars: source.sessionSemanticMaxChars,
     sessionSemanticMaxItems: source.sessionSemanticMaxItems,
     sessionSemanticTimeoutMs: source.sessionSemanticTimeoutMs,
+    sessionIdleSummaryMs: source.sessionIdleSummaryMs,
     realtimeMemoryEnabled: source.realtimeMemoryEnabled,
     realtimeMemoryTimeoutMs: source.realtimeMemoryTimeoutMs,
     coreMaxItems: source.coreMaxItems,
@@ -11938,6 +11941,23 @@ function sessionCwd(session) {
   }
   return null;
 }
+var MIN_NEW_MESSAGES = 4;
+function countSessionMessages(session) {
+  try {
+    const messages = session && typeof session.deriveMessages === "function" ? session.deriveMessages() : [];
+    return Array.isArray(messages) ? messages.length : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+function lastSummarizedMessageCount(timeline, sessionId) {
+  if (!sessionId) return null;
+  const mine = (timeline || []).filter(
+    (e) => e && e.eventType === "session_summary" && e.sessionId === sessionId
+  );
+  if (!mine.length) return null;
+  return mine.reduce((max, e) => Math.max(max, Number(e.messageCount) || 0), 0);
+}
 function changeFingerprint(diff) {
   const files = (diff.files || []).filter(Boolean).slice().sort();
   const commits = (diff.commits || []).map((c) => c && (c.hash || c.id || c.commit || c.message || "")).filter(Boolean);
@@ -11963,9 +11983,11 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     log("info", "summarizer: project not initialized, skip");
     return { skipped: "not_initialized", changedFiles: 0, files: [] };
   }
-  if (sessionId && (brain.timeline || []).some((e) => e && e.eventType === "session_summary" && e.sessionId === sessionId)) {
-    log("info", "summarizer: session already summarized, skip " + sessionId);
-    return { skipped: "session_already_summarized", changedFiles: 0, files: [] };
+  const messageCount = countSessionMessages(session);
+  const lastSummarized = lastSummarizedMessageCount(brain.timeline, sessionId);
+  if (sessionId && lastSummarized !== null && messageCount - lastSummarized < MIN_NEW_MESSAGES) {
+    log("info", "summarizer: only " + (messageCount - lastSummarized) + " new messages since last summary, skip " + sessionId);
+    return { skipped: "no_new_messages", changedFiles: 0, files: [] };
   }
   const windowStart = sessionWindowStart(brain, Date.now());
   let diff;
@@ -12045,6 +12067,8 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     detail: "sessionId=" + (sessionId || "?") + " changedFiles=" + changedFiles.length + " semanticMemories=" + admittedIds.length + " semanticStatus=" + semantic.status + (changedFiles.length ? " files=" + changedFiles.slice(0, 20).join(",") : ""),
     sessionId: sessionId || null,
     summary,
+    // 下一次摘要靠它判断「这段之后又聊了多少」，缺了就只能整段重摘。
+    messageCount,
     files: changedFiles.slice(0, 20),
     changes: changeEntries.slice(0, 20),
     windowStart,
@@ -12092,6 +12116,55 @@ async function summarizeOne({ fs, projectPath, sessionId, session, llm, route, c
     autoDream: autoDreamResult
   };
 }
+function describeSessionShape(value) {
+  if (!value || typeof value !== "object") return String(typeof value);
+  const own = Object.keys(value).slice(0, 12);
+  const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(value) || {}).filter((k) => k !== "constructor").slice(0, 12);
+  return "own[" + own.join(",") + "] proto[" + proto.join(",") + "]";
+}
+var IDLE_SUMMARY_MS = 5 * 60 * 1e3;
+function resolveIdleSummaryMs(runtime) {
+  let configured = NaN;
+  try {
+    configured = Number(runtime.getMemoryConfig && runtime.getMemoryConfig().sessionIdleSummaryMs);
+  } catch (e) {
+  }
+  if (!Number.isFinite(configured) || configured <= 0) return IDLE_SUMMARY_MS;
+  return Math.min(36e5, configured);
+}
+function createIdleSummaryScheduler(runSummary, idleMs = IDLE_SUMMARY_MS) {
+  const pending = /* @__PURE__ */ new Map();
+  function cancel(projectPath) {
+    const entry = pending.get(projectPath);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    pending.delete(projectPath);
+  }
+  function schedule({ projectPath, session, sessionId }) {
+    if (!projectPath) return;
+    cancel(projectPath);
+    const timer = setTimeout(() => {
+      pending.delete(projectPath);
+      try {
+        runSummary({ projectPath, session, sessionId });
+      } catch (e) {
+      }
+    }, idleMs);
+    if (typeof timer.unref === "function") timer.unref();
+    pending.set(projectPath, { timer, session, sessionId });
+  }
+  function flushAll() {
+    for (const projectPath of [...pending.keys()]) {
+      const entry = pending.get(projectPath);
+      cancel(projectPath);
+      try {
+        runSummary({ projectPath, session: entry && entry.session, sessionId: entry && entry.sessionId });
+      } catch (e) {
+      }
+    }
+  }
+  return { schedule, cancel, flushAll, size: () => pending.size };
+}
 function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
   if (!ctx || typeof ctx.on !== "function") return;
   let logger = null;
@@ -12107,16 +12180,65 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
     } catch (e) {
     }
   };
-  log("info", "summarizer: subscribed to session/disposed (pure-node git, no shell)");
-  ctx.on("session/disposed", (session) => {
+  const resolveSessionContext = (incoming) => {
+    const sessionId = incoming && (incoming.id || incoming.meta && incoming.meta.id);
+    let session = incoming;
+    let projectPath = sessionCwd(incoming);
+    if (projectPath && typeof incoming.deriveMessages === "function") {
+      return { projectPath, session, sessionId };
+    }
     try {
-      const sessionId = session && (session.id || session.meta && session.meta.id);
-      const projectPath = sessionCwd(session);
+      const sessions = ctx.get ? ctx.get("sessions") : ctx.sessions;
+      const live = sessions && typeof sessions.get === "function" && sessionId ? sessions.get(sessionId) : null;
+      if (live) {
+        session = live;
+        projectPath = projectPath || sessionCwd(live);
+      }
+    } catch (e) {
+    }
+    return { projectPath: projectPath || null, session, sessionId };
+  };
+  const idleMs = resolveIdleSummaryMs(runtime);
+  const scheduler = createIdleSummaryScheduler((job) => runSummary(job, "idle"), idleMs);
+  log("info", "summarizer: subscribed to session/flush + session/disposed\uFF08\u7A7A\u95F2 " + Math.round(idleMs / 1e3) + "s \u89E6\u53D1\u6458\u8981\uFF09");
+  const flushSeen = /* @__PURE__ */ new Set();
+  ctx.on("session/flush", (incoming) => {
+    try {
+      const { projectPath, session, sessionId } = resolveSessionContext(incoming);
+      if (!projectPath) {
+        const key = "nocwd:" + (sessionId || "?");
+        if (!flushSeen.has(key)) {
+          flushSeen.add(key);
+          log("warn", "summarizer: session/flush \u62FF\u4E0D\u5230 cwd\uFF0Cshape=" + describeSessionShape(incoming));
+        }
+        return;
+      }
+      if (!flushSeen.has("ok:" + projectPath)) {
+        flushSeen.add("ok:" + projectPath);
+        log("info", "summarizer: session/flush \u94FE\u8DEF\u5DF2\u901A\uFF0Ccwd=" + projectPath + " messages=" + countSessionMessages(session) + "\uFF08\u7A7A\u95F2\u540E\u5C06\u6458\u8981\uFF09");
+      }
+      scheduler.schedule({ projectPath, session, sessionId });
+    } catch (e) {
+      log("warn", "summarizer: flush listener failed: " + String(e && e.message || e));
+    }
+  });
+  ctx.on("session/disposed", (incoming) => {
+    try {
+      const { projectPath, session, sessionId } = resolveSessionContext(incoming);
       if (!projectPath) {
         log("info", "summarizer: session/disposed without cwd, skip");
         return;
       }
-      log("info", `summarizer: session/disposed cwd=${projectPath}`);
+      scheduler.cancel(projectPath);
+      runSummary({ projectPath, session, sessionId }, "disposed");
+    } catch (e) {
+      log("warn", "summarizer: disposed listener failed: " + String(e && e.message || e));
+    }
+  });
+  function runSummary({ projectPath, session, sessionId }, trigger) {
+    try {
+      if (!projectPath) return;
+      log("info", `summarizer: ${trigger} \u89E6\u53D1\uFF0Ccwd=${projectPath}`);
       const work = summarizeOne({
         fs,
         projectPath,
@@ -12179,9 +12301,9 @@ function setupSummarizer(ctx, fs, sandboxPolicy, runtime = {}) {
         }
       }
     } catch (e) {
-      log("warn", "summarizer: listener failed: " + String(e && e.message || e));
+      log("warn", "summarizer: run failed: " + String(e && e.message || e));
     }
-  });
+  }
 }
 
 // src/host/realtime-memory.js

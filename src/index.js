@@ -19,7 +19,7 @@ import { invalidateAggregatorCache } from "./host/sidebar/aggregator.js";
 import { registerConnectionRpc, registerSidebarRpc } from "./host/rpc/sidebar.js";
 // v0.3.0: Context Injector（自动注入 Top-K 记忆到 system prompt，实现跨 Session 续接）
 import { setupInjector } from "./host/injector.js";
-// P0.5: Session 摘要（监听 session/disposed → 自动写 change memory + timeline 事件）
+// P0.5: Session 摘要（session/flush 空闲去抖；session/disposed 立刻摘要）
 import { setupSummarizer } from "./host/summarizer.js";
 // v0.4.x: 实时交互记忆（监听 agent/inbox/claimed → 检测长期意图信号自动落盘）
 import { setupRealtimeMemory } from "./host/realtime-memory.js";
@@ -220,7 +220,7 @@ function applyImpl(ctx, config) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupInjector failed:", String((e && e.message) || e)); } catch {}
   }
 
-  // 4) Session 摘要：监听 session/disposed → 抽取 durable 记忆 + timeline 摘要
+  // 4) Session 摘要：session/flush 安静一段时间后抽取；session/disposed 立刻抽取
   try {
     setupSummarizer(ctx, fs, sandboxPolicy, {
       getMemoryConfig: memoryRuntime.get,
@@ -230,8 +230,8 @@ function applyImpl(ctx, config) {
     if (ctx.logger) try { ctx.logger.warn("[dsh-project-brain] setupSummarizer failed:", String((e && e.message) || e)); } catch {}
   }
 
-  // 4.5) 实时交互记忆：监听 agent/inbox/claimed → 检测长期意图信号 → 自动落盘 context 记忆
-  //   与 4) 的会话结束摘要形成"双通道"：实时信号 + 会话总结兜底
+  // 4.5) 实时交互记忆：监听 agent/inbox/claimed → 检测长期意图信号 → 自动落盘
+  //   与 4) 的空闲摘要形成双通道：实时信号 + 会话沉淀兜底
   try {
     setupRealtimeMemory(ctx, fs, sandboxPolicy, {
       getMemoryConfig: memoryRuntime.get,
